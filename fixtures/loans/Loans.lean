@@ -299,14 +299,19 @@ end Loans
 
 #eval SpecTools.Audit.run Loans.ledger `Loans
 
+-- The fixture's directory (`SPEC_TOOLS_DIR`, for a copy) and the adapter (`SPEC_TOOLS_ADAPTER`).
+def fixtureDir : IO String := return (← IO.getEnv "SPEC_TOOLS_DIR").getD "fixtures/loans"
+def adapterPath : IO String :=
+  return (← IO.getEnv "SPEC_TOOLS_ADAPTER").getD "../../adapters/python_guards.py"
+
 -- With `SPEC_TOOLS_TESTS` set, the Python tests against the guards of `loans.py`.
 #eval show IO Unit from do
   if (← IO.getEnv "SPEC_TOOLS_TESTS").isSome then
-    SpecTools.Tests.run Loans.ledger "../../adapters/python_guards.py" "loans.py" "test_loans.py"
-      (cwd := some "fixtures/loans")
+    SpecTools.Tests.run Loans.ledger (← adapterPath) "loans.py" "test_loans.py"
+      (cwd := some (← fixtureDir))
 
 -- With `SPEC_TOOLS_GAPS` set to a Claude model, the gaps against `loans.md` too (a live call).
 #eval show Lean.Elab.Command.CommandElabM Unit from do
   if let some model ← IO.getEnv "SPEC_TOOLS_GAPS" then
-    SpecTools.Gaps.run Loans.ledger (← IO.FS.readFile "fixtures/loans/loans.md")
+    SpecTools.Gaps.run Loans.ledger (← IO.FS.readFile (System.FilePath.mk (← fixtureDir) / "loans.md"))
       { harness := .claudeCode, model, dataGoesTo := "Anthropic" }

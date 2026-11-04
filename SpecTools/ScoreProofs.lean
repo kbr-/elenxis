@@ -12,7 +12,7 @@ theorem filter_split {α} (p : α → Bool) (l : List α) :
     (l.filter p).length + (l.filter (fun x => !p x)).length = l.length := by
   induction l with
   | nil => rfl
-  | cons x xs ih => cases h : p x <;> simp [List.filter_cons, h] <;> omega
+  | cons x xs ih => cases h : p x <;> simp [h] <;> omega
 
 /-- Found and missed partition the key. -/
 theorem found_missed (key : List Plant) (fs : List Finding) :

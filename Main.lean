@@ -28,6 +28,50 @@ def synthetic (args : List String) : IO UInt32 := do
         for (f, text) in files do IO.FS.writeFile (dir / f) text
     IO.println s!"{SpecTools.LoansPlants.catalogue.length} single-plant variants in {outDir}"
     return 0
+  | ["run", outDir, agentModel, toolModel] =>
+    -- Each variant to both arms, `width` runs at a time; the key is read only to score.
+    let keyText ← IO.FS.readFile (System.FilePath.mk outDir / "key.jsonl")
+    let keys := (keyText.splitOn "\n").filter (· ≠ "") |>.filterMap fun l => do
+      let j ← (Lean.Json.parse l).toOption
+      let plants ← (j.getObjValAs? (Array Lean.Json) "plants").toOption
+      plants.toList.mapM fun p => do
+        return ({ kind := ← (p.getObjValAs? String "kind").toOption,
+                  clause := ← (p.getObjValAs? String "clause").toOption, edits := [] } : Plant)
+    let root ← IO.currentDir
+    let backend : SpecTools.Model.Backend :=
+      { harness := .claudeCode, model := agentModel, dataGoesTo := "Anthropic" }
+    let width := 6
+    let jobs : List (List Plant × Nat × Bool) :=
+      keys.zipIdx.flatMap fun (k, i) => [(k, i, true), (k, i, false)]
+    let batches := (List.range ((jobs.length + width - 1) / width)).map fun j =>
+      (jobs.drop (j * width)).take width
+    let mut results : Array String := #[]
+    let mut totals : List (Bool × Nat × Nat × Nat) := []
+    for batch in batches do
+      let tasks ← batch.mapM fun ((k, i, ledger) : List Plant × Nat × Bool) => IO.asTask do
+        let r ← SpecTools.SyntheticRun.runArm backend (System.FilePath.mk outDir / s!"v{i}") ledger
+          root.toString toolModel 1200000
+        return (k, i, ledger, r)
+      for t in tasks do
+        let (k, i, ledger, r) ← IO.ofExcept t.get
+        let arm := if ledger then "ledger" else "baseline"
+        match r with
+        | .error e =>
+          IO.println s!"v{i} {arm}: failed: {e}"
+          results := results.push s!"\{\"variant\": {i}, \"arm\": \"{arm}\", \"error\": {e.quote}}"
+        | .ok (fs, cost) =>
+          let s := SpecTools.Score.score k fs
+          let ms := cost.millis
+          let tokens := match cost.tokens with | some t => toString t | none => "null"
+          IO.println s!"v{i} {arm}: found {s.found} missed {s.missed} false alarms {s.falseAlarms} ({ms} ms, {tokens} tokens)"
+          results := results.push s!"\{\"variant\": {i}, \"arm\": \"{arm}\", \"found\": {s.found.length}, \"missed\": {s.missed.length}, \"false_alarms\": {s.falseAlarms}, \"ms\": {ms}, \"tokens\": {tokens}, \"found_kinds\": {(s.found.map (·.quote)).toString}, \"missed_kinds\": {(s.missed.map (·.quote)).toString}, \"findings\": {(fs.map fun f => s!"[{f.clause.quote}, {f.kind.quote}]").toString}}"
+          totals := (ledger, s.found.length, s.missed.length, s.falseAlarms) :: totals
+    IO.FS.writeFile (System.FilePath.mk outDir / "results.jsonl") ("\n".intercalate results.toList ++ "\n")
+    for arm in [true, false] do
+      let ts := totals.filter (·.1 == arm)
+      IO.println s!"{if arm then "ledger" else "baseline"}: {ts.length} runs, found \
+        {(ts.map (·.2.1)).sum}, missed {(ts.map (·.2.2.1)).sum}, false alarms {(ts.map (·.2.2.2)).sum}"
+    return 0
   | [seed, count, empty, fixtureDir, outDir] =>
     let some seed := seed.toNat? | IO.eprintln "SEED is a number"; return 2
     let some count := count.toNat? | IO.eprintln "COUNT is a number"; return 2

@@ -174,24 +174,28 @@ def ask (runner : Runner) (allowed : List Backend) (backend : Backend) (question
   | .ok inv => do
     return finish backend question (← runner inv (readBackFiles backend.harness) question.timeoutMs)
 
-/-- An agent run: `prompt` given to `backend` working in `workdir` (a copy made for the run), able to
-use only `tools`. Claude Code gets exactly those tools, each allowed; Codex gets a sandbox that
-writes only in `workdir`, its tools its own. -/
-def agentInvocation (backend : Backend) (prompt : String) (tools : List String)
+/-- An agent run: `question` given to `backend` working in `workdir` (a copy made for the run), able
+to use only `tools`, each a tool name or a pattern such as `Bash(./check.sh *)`, its final answer
+under the question's schema, read back as a question's is (`finish`). Claude Code gets the tools
+those name and allows exactly the patterns; Codex gets a sandbox that writes only in `workdir`, its
+tools its own. -/
+def agentInvocation (backend : Backend) (question : Question) (tools : List String)
     (workdir : System.FilePath) : Invocation :=
   match backend.harness with
   | .claudeCode =>
-    let list := ",".intercalate tools
+    let names := ",".intercalate (tools.map fun t => (t.splitOn "(").headD t).eraseDups
     { cmd := "claude"
-      args := #["-p", "--safe-mode", "--tools", list, "--allowedTools", list,
-        "--no-session-persistence", "--model", backend.model, "--output-format", "json", "--",
-        prompt]
+      args := #["-p", "--safe-mode", "--tools", names, "--allowedTools", " ".intercalate tools,
+        "--no-session-persistence", "--model", backend.model, "--output-format", "json",
+        "--json-schema", question.schema.compress, "--", question.prompt]
       cwd := workdir }
   | .codex =>
     { cmd := "codex"
       args := #["exec", "--skip-git-repo-check", "--ephemeral", "--sandbox", "workspace-write",
-        "-C", workdir.toString, "-m", backend.model, "--", prompt]
-      cwd := workdir }
+        "-C", workdir.toString, "-m", backend.model, "--output-schema", "schema.json",
+        "-o", "answer.json", "--", question.prompt]
+      cwd := workdir
+      files := [("schema.json", question.schema.compress)] }
 
 /-- Set by the test driver first thing: a live run while it is set is refused, so no test reaches a
 model. -/
