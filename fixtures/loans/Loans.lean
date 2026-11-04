@@ -71,9 +71,6 @@ def placeHold (s : State) (m c : Nat) : Option State :=
 
 def pay (s : State) (m amount : Nat) : State := s.setFine m (s.fine m - amount)
 
-/-- A request's effect: the new state, or the old one when it is refused. -/
-def apply (s : State) (r : Option State) : State := r.getD s
-
 /-! Borrowing -/
 
 theorem borrow_free (s : State) (m c t : Nat) (free : s.onLoan c = false) (few : s.count m < 5)
@@ -209,12 +206,10 @@ theorem hold_own (s : State) (m c : Nat) (h : s.loans.any (fun l => l.copy == c 
 theorem hold_one (s : State) (m c : Nat) (h : s.holds.any (·.1 == c) = true) : placeHold s m c = none := by
   simp [placeHold, h]
 
-/-! Fines and refusals -/
+/-! Fines -/
 
 theorem pay_reduces (s : State) (m a : Nat) : (pay s m a).fine m = s.fine m - a := by
   simp [pay, State.setFine, State.fine]
-
-theorem refused_changes_nothing (s : State) : apply s none = s := rfl
 
 /-! Witnesses: states meeting each theorem's hypotheses. -/
 
@@ -288,9 +283,7 @@ def rows : List Row := [
   { id := "one-hold", clause := "A copy has at most one hold.",
     theorems := [``hold_one], witnesses := [``witness_one_hold] },
   { id := "pay", clause := "Paying reduces a member's fines by the amount paid, and never below zero.",
-    theorems := [``pay_reduces] },
-  { id := "refusal", clause := "A request that is refused changes nothing.",
-    theorems := [``refused_changes_nothing] }
+    theorems := [``pay_reduces] }
 ]
 
 def ledger : List Row := rows.map fun r => { r with tests := pythonTest r.id }

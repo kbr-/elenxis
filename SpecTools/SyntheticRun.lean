@@ -47,6 +47,7 @@ def checkScript (root : String) (model : String) : String :=
     "#!/bin/sh",
     "# The spec tools on this directory: ./check.sh audit | tests | gaps | clauses",
     "D=$(cd \"$(dirname \"$0\")\" && pwd)",
+    "echo \"$1\" >> \"$D/check.log\"",
     s!"cd {root} || exit 1",
     "case \"$1\" in",
     "  audit) exec lake env lean \"$D/Loans.lean\" ;;",
@@ -68,9 +69,11 @@ def armTools (ledger : Bool) : List String :=
   ["Read", "Glob", "Grep", "Bash(python3 -m pytest *)"] ++
     (if ledger then ["Bash(./check.sh *)"] else [])
 
-/-- One arm's run on one variant: its findings and cost, or why there are none. -/
+/-- One arm's run on one variant: its findings, its cost and the `check.sh` commands it ran, or why
+there are none. -/
 def runArm (backend : Backend) (variantDir : System.FilePath) (ledger : Bool) (root : String)
-    (toolModel : String) (timeoutMs : Nat) : IO (Except String (List Finding × Cost)) := do
+    (toolModel : String) (timeoutMs : Nat) :
+    IO (Except String (List Finding × Cost × List String)) := do
   let work := (← IO.FS.createTempDir) / "variant"
   IO.FS.createDirAll work
   for f in files do IO.FS.writeFile (work / f) (← IO.FS.readFile (variantDir / f))
@@ -81,10 +84,14 @@ def runArm (backend : Backend) (variantDir : System.FilePath) (ledger : Bool) (r
     { prompt := task ++ "\n\n" ++ (if ledger then ledgerTools ++ "\n\n" else "") ++ answerFormat,
       schema := findingsSchema, timeoutMs }
   let inv := agentInvocation backend question (armTools ledger) work
-  match finish backend question (← liveRunner inv (readBackFiles backend.harness) timeoutMs) with
+  let ran ← liveRunner inv (readBackFiles backend.harness) timeoutMs
+  let log := work / "check.log"
+  let logText ← if ← log.pathExists then IO.FS.readFile log else pure ""
+  let checks := (logText.splitOn "\n").filter (· ≠ "")
+  match finish backend question ran with
   | .error f => return .error (repr f).pretty
   | .ok o => match findingsOf o.answer with
-    | some fs => return .ok (fs, o.cost)
+    | some fs => return .ok (fs, o.cost, checks)
     | none => return .error "the answer has no findings list"
 
 end SpecTools.SyntheticRun

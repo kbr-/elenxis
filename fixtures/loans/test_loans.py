@@ -182,10 +182,3 @@ def test_one_hold(s, m):  # one-hold
 @given(STATES, MEMBERS, st.integers(0, 50))
 def test_pay(s, m, a):  # pay
     assert pay(s, m, a).fine(m) == max(0, s.fine(m) - a)
-
-
-@settings(max_examples=50)
-@given(STATES, MEMBERS, COPIES, DAYS)
-def test_refusal(s, m, c, t):  # refusal
-    for result in (borrow(s, m, c, t), renew(s, m, c, t), place_hold(s, m, c)):
-        assert result is None or isinstance(result, State)

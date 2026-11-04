@@ -57,7 +57,3 @@ A copy has at most one hold.
 ## Fines
 
 Paying reduces a member's fines by the amount paid, and never below zero.
-
-## Refusals
-
-A request that is refused changes nothing.

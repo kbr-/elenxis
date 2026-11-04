@@ -29,7 +29,8 @@ def synthetic (args : List String) : IO UInt32 := do
     IO.println s!"{SpecTools.LoansPlants.catalogue.length} single-plant variants in {outDir}"
     return 0
   | ["run", outDir, agentModel, toolModel] =>
-    -- Each variant to both arms, `width` runs at a time; the key is read only to score.
+    -- Each variant to both arms, `width` runs at a time (a batch of 10 in two waves); the key is read
+    -- only to score.
     let keyText ← IO.FS.readFile (System.FilePath.mk outDir / "key.jsonl")
     let keys := (keyText.splitOn "\n").filter (· ≠ "") |>.filterMap fun l => do
       let j ← (Lean.Json.parse l).toOption
@@ -40,7 +41,7 @@ def synthetic (args : List String) : IO UInt32 := do
     let root ← IO.currentDir
     let backend : SpecTools.Model.Backend :=
       { harness := .claudeCode, model := agentModel, dataGoesTo := "Anthropic" }
-    let width := 6
+    let width := 10
     let jobs : List (List Plant × Nat × Bool) :=
       keys.zipIdx.flatMap fun (k, i) => [(k, i, true), (k, i, false)]
     let batches := (List.range ((jobs.length + width - 1) / width)).map fun j =>
@@ -59,12 +60,12 @@ def synthetic (args : List String) : IO UInt32 := do
         | .error e =>
           IO.println s!"v{i} {arm}: failed: {e}"
           results := results.push s!"\{\"variant\": {i}, \"arm\": \"{arm}\", \"error\": {e.quote}}"
-        | .ok (fs, cost) =>
+        | .ok (fs, cost, checks) =>
           let s := SpecTools.Score.score k fs
           let ms := cost.millis
           let tokens := match cost.tokens with | some t => toString t | none => "null"
-          IO.println s!"v{i} {arm}: found {s.found} missed {s.missed} false alarms {s.falseAlarms} ({ms} ms, {tokens} tokens)"
-          results := results.push s!"\{\"variant\": {i}, \"arm\": \"{arm}\", \"found\": {s.found.length}, \"missed\": {s.missed.length}, \"false_alarms\": {s.falseAlarms}, \"ms\": {ms}, \"tokens\": {tokens}, \"found_kinds\": {(s.found.map (·.quote)).toString}, \"missed_kinds\": {(s.missed.map (·.quote)).toString}, \"findings\": {(fs.map fun f => s!"[{f.clause.quote}, {f.kind.quote}]").toString}}"
+          IO.println s!"v{i} {arm}: found {s.found} missed {s.missed} false alarms {s.falseAlarms} ({ms} ms, {tokens} tokens; check.sh ran {checks})"
+          results := results.push s!"\{\"variant\": {i}, \"arm\": \"{arm}\", \"found\": {s.found.length}, \"missed\": {s.missed.length}, \"false_alarms\": {s.falseAlarms}, \"ms\": {ms}, \"tokens\": {tokens}, \"checks\": {(checks.map (·.quote)).toString}, \"found_kinds\": {(s.found.map (·.quote)).toString}, \"missed_kinds\": {(s.missed.map (·.quote)).toString}, \"findings\": {(fs.map fun f => s!"[{f.clause.quote}, {f.kind.quote}]").toString}}"
           totals := (ledger, s.found.length, s.missed.length, s.falseAlarms) :: totals
     IO.FS.writeFile (System.FilePath.mk outDir / "results.jsonl") ("\n".intercalate results.toList ++ "\n")
     for arm in [true, false] do

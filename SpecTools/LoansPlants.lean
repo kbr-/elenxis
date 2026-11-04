@@ -28,10 +28,10 @@ def catalogue : List Plant := [
       lean "    theorems := [``borrow_owing], witnesses := [``witness_owing] },"
         "    theorems := [``borrow_owing] },"] },
   { kind := "extra", clause := "Paying the whole fine clears it.", edits := [
-      lean "theorem refused_changes_nothing (s : State) : apply s none = s := rfl\n"
-        "theorem refused_changes_nothing (s : State) : apply s none = s := rfl\n\ntheorem pay_all (s : State) (m : Nat) : (pay s m (s.fine m)).fine m = 0 := by\n  simp [pay, State.setFine, State.fine]\n",
-      lean "  { id := \"refusal\", clause := \"A request that is refused changes nothing.\","
-        "  { id := \"pay-all\", clause := \"Paying the whole fine clears it.\", theorems := [``pay_all] },\n  { id := \"refusal\", clause := \"A request that is refused changes nothing.\","] },
+      lean "  simp [pay, State.setFine, State.fine]\n"
+        "  simp [pay, State.setFine, State.fine]\n\ntheorem pay_all (s : State) (m : Nat) : (pay s m (s.fine m)).fine m = 0 := by\n  simp [pay, State.setFine, State.fine]\n",
+      lean "    theorems := [``pay_reduces] }\n]"
+        "    theorems := [``pay_reduces] },\n  { id := \"pay-all\", clause := \"Paying the whole fine clears it.\", theorems := [``pay_all] }\n]"] },
   { kind := "undecided", clause := "A copy that is not on loan can't be held.", edits := [
       prose "A copy that is not on loan can't be held.\n\n" ""] },
   { kind := "missing test", clause := "A loan cannot be renewed after its due date.", edits := [
