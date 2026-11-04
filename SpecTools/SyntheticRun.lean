@@ -53,7 +53,7 @@ def checkScript (root : String) (model : String) : String :=
     s!"cd {root} || exit 1",
     "case \"$1\" in",
     "  audit) exec lake env lean \"$D/Loans.lean\" ;;",
-    s!"  tests) SPEC_TOOLS_TESTS=1 SPEC_TOOLS_DIR=\"$D\" SPEC_TOOLS_ADAPTER={root}/adapters/python_guards.py exec lake env lean \"$D/Loans.lean\" ;;",
+    s!"  tests) SPEC_TOOLS_GUARD_WORKERS=3 SPEC_TOOLS_TESTS=1 SPEC_TOOLS_DIR=\"$D\" SPEC_TOOLS_ADAPTER={root}/adapters/python_guards.py exec lake env lean \"$D/Loans.lean\" ;;",
     s!"  gaps) SPEC_TOOLS_GAPS={model} SPEC_TOOLS_DIR=\"$D\" exec lake env lean \"$D/Loans.lean\" ;;",
     s!"  clauses) exec {root}/.lake/build/bin/spec-tools clauses claude-code {model} \"$D/loans.md\" ;;",
     "  *) echo \"usage: ./check.sh audit|tests|gaps|clauses\"; exit 2 ;;",

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -80,7 +81,10 @@ def check(module: Path, test_file: str, tests: list[str]) -> list[dict[str, obje
             return {"line": guard.line, "guard": guard.text,
                     "failed": failing_tests(copy, test_file, tests)}
 
-    with ThreadPoolExecutor() as pool:
+    # SPEC_TOOLS_GUARD_WORKERS bounds the pytest copies run at once, for callers running several
+    # adapters together (the synthetic test's agents); unset, the pool's default.
+    workers = int(os.environ.get("SPEC_TOOLS_GUARD_WORKERS", "0")) or None
+    with ThreadPoolExecutor(max_workers=workers) as pool:
         return list(pool.map(one, guards(source)))
 
 
