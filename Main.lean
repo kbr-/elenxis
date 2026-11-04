@@ -147,12 +147,10 @@ def synthetic (args : List String) : IO UInt32 := do
     let mut failed := false
     for batch in batches do
       let tasks ← batch.mapM fun (dir : String) => IO.asTask do
-        let out ← IO.Process.output {
-          cmd := "lake", args := #["env", "lean", (System.FilePath.mk dir / "Loans.lean").toString],
-          cwd := some root.toString,
-          env := #[("SPEC_TOOLS_TESTS", some "1"), ("SPEC_TOOLS_DIR", some dir),
-                   ("SPEC_TOOLS_ADAPTER", some (root / "adapters" / "python_guards.py").toString),
-                   ("SPEC_TOOLS_GUARD_WORKERS", some "3")] }
+        -- What `spec-tools check tests` runs, which asks no model.
+        let some inv := SpecTools.SyntheticRun.checkInvocation root.toString dir "" "tests"
+          | throw (IO.userError "check tests has no invocation")
+        let out ← IO.Process.output { cmd := inv.cmd, args := inv.args, cwd := some inv.cwd, env := inv.env }
         IO.FS.writeFile (System.FilePath.mk dir / "control.txt") (out.stdout ++ out.stderr)
         return (dir, out)
       for t in tasks do
