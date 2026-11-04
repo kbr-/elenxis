@@ -4,8 +4,51 @@ import SpecTools
 def commands : List (String × String) := [
   ("ask", "ask one question of a backend: ask HARNESS MODEL SCHEMA-FILE PROMPT-FILE [TIMEOUT-MS]"),
   ("clauses", "extract a prose file's clauses twice and print the differences: \
-    clauses HARNESS MODEL PROSE-FILE [TIMEOUT-MS]")
+    clauses HARNESS MODEL PROSE-FILE [TIMEOUT-MS]"),
+  ("synthetic", "write a batch of variants of the loans fixture with planted gaps, the key apart: \
+    synthetic SEED COUNT EMPTY FIXTURE-DIR OUT-DIR")
 ]
+
+/-- The loans fixture's files a variant is made of. -/
+def fixtureFiles : List String := ["loans.md", "Loans.lean", "loans.py", "test_loans.py"]
+
+open SpecTools.Synthetic in
+def synthetic (args : List String) : IO UInt32 := do
+  match args with
+  | ["each", fixtureDir, outDir] =>
+    -- One variant per plant, to check each plant on its own.
+    let fixture ← fixtureFiles.mapM fun (f : String) => do
+      return (f, ← IO.FS.readFile (System.FilePath.mk fixtureDir / f))
+    for (p, i) in SpecTools.LoansPlants.catalogue.zipIdx do
+      match applyEdits fixture p.edits with
+      | .error e => IO.eprintln s!"plant {i} ({p.kind}): {e}"; return 1
+      | .ok files =>
+        let dir := System.FilePath.mk outDir / s!"p{i}"
+        IO.FS.createDirAll dir
+        for (f, text) in files do IO.FS.writeFile (dir / f) text
+    IO.println s!"{SpecTools.LoansPlants.catalogue.length} single-plant variants in {outDir}"
+    return 0
+  | [seed, count, empty, fixtureDir, outDir] =>
+    let some seed := seed.toNat? | IO.eprintln "SEED is a number"; return 2
+    let some count := count.toNat? | IO.eprintln "COUNT is a number"; return 2
+    let some empty := empty.toNat? | IO.eprintln "EMPTY is a number"; return 2
+    let fixture ← fixtureFiles.mapM fun (f : String) => do
+      return (f, ← IO.FS.readFile (System.FilePath.mk fixtureDir / f))
+    IO.FS.createDirAll outDir
+    let mut key : List String := []
+    for i in List.range count do
+      match variant SpecTools.LoansPlants.catalogue fixture seed i empty with
+      | .error e => IO.eprintln s!"variant {i}: {e}"; return 1
+      | .ok v =>
+        let dir := System.FilePath.mk outDir / s!"v{i}"
+        IO.FS.createDirAll dir
+        for (f, text) in v.files do IO.FS.writeFile (dir / f) text
+        let plants := v.key.map fun p => s!"\{\"kind\": {p.kind.quote}, \"clause\": {p.clause.quote}}"
+        key := key ++ [s!"\{\"variant\": {i}, \"plants\": [{", ".intercalate plants}]}"]
+    IO.FS.writeFile (System.FilePath.mk outDir / "key.jsonl") ("\n".intercalate key ++ "\n")
+    IO.println s!"{count} variants in {outDir}, the key in {outDir}/key.jsonl"
+    return 0
+  | _ => IO.eprintln "usage: spec-tools synthetic SEED COUNT EMPTY FIXTURE-DIR OUT-DIR"; return 2
 
 open SpecTools.Model in
 def harnessOf : String → Option Harness
@@ -65,5 +108,6 @@ def main (args : List String) : IO UInt32 := do
   match args with
   | "ask" :: rest => ask rest
   | "clauses" :: rest => clauses rest
+  | "synthetic" :: rest => synthetic rest
   | [] => IO.eprintln usage; return 2
   | command :: _ => IO.eprintln s!"unknown command `{command}`\n{usage}"; return 2
