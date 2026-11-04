@@ -6,3 +6,5 @@ import SpecTools.LedgerProofs
 import SpecTools.Audit
 import SpecTools.LedgerTable
 import SpecTools.LedgerTableProofs
+import SpecTools.Clauses
+import SpecTools.ClausesProofs
