@@ -1,4 +1,6 @@
 import SpecTools.Audit
+import SpecTools.GapsRun
+import SpecTools.Tests
 
 /-!
 The synthetic fixture's Lean model of `loans.md`: each operation returns the new state, or none for
@@ -129,6 +131,13 @@ theorem borrow_due (s s' : State) (m c t : Nat) (h : borrow s m c t = some s') :
 
 /-! Renewing -/
 
+theorem renew_allowed (s : State) (m c t : Nat) (l : Loan) (hl : s.loanOf c = some l)
+    (mine : l.member = m) (few : l.renewals < 2) (unheld : s.heldByOther c m = false)
+    (onTime : t ≤ l.due) : (renew s m c t).isSome := by
+  have h1 : ¬ 2 ≤ l.renewals := by omega
+  have h2 : ¬ l.due < t := by omega
+  simp [renew, hl, mine, h1, h2, unheld]
+
 theorem renew_limit (s : State) (m c t : Nat) (l : Loan) (hl : s.loanOf c = some l)
     (h : 2 ≤ l.renewals) : renew s m c t = none := by
   simp [renew, hl, h]
@@ -153,6 +162,10 @@ theorem renew_moves_due (s s' : State) (m c t : Nat) (l : Loan) (hl : s.loanOf c
 
 theorem renew_late (s : State) (m c t : Nat) (l : Loan) (hl : s.loanOf c = some l)
     (h : l.due < t) : renew s m c t = none := by
+  simp [renew, hl, h]
+
+theorem renew_not_borrower (s : State) (m c t : Nat) (l : Loan) (hl : s.loanOf c = some l)
+    (h : l.member ≠ m) : renew s m c t = none := by
   simp [renew, hl, h]
 
 /-! Returning -/
@@ -185,6 +198,9 @@ theorem hold_on_loan (s : State) (m c : Nat) (lent : s.onLoan c = true)
     (notMine : s.loans.any (fun l => l.copy == c && l.member == m) = false)
     (none_ : s.holds.any (·.1 == c) = false) : (placeHold s m c).isSome := by
   simp [placeHold, lent, notMine, none_]
+
+theorem hold_not_lent (s : State) (m c : Nat) (h : s.onLoan c = false) : placeHold s m c = none := by
+  simp [placeHold, h]
 
 theorem hold_own (s : State) (m c : Nat) (h : s.loans.any (fun l => l.copy == c && l.member == m) = true) :
     placeHold s m c = none := by
@@ -224,7 +240,12 @@ theorem witness_hold : lent.onLoan 7 = true ∧
 theorem witness_own : lent.loans.any (fun l => l.copy == 7 && l.member == 1) = true := by decide
 theorem witness_one_hold : heldLent.holds.any (·.1 == 7) = true := by decide
 
-def ledger : List Row := [
+/-- The Python property test covering each row, in `test_loans.py`. -/
+def pythonTest : String → List String
+  | "period-standard" | "period-premium" => ["test_periods"]
+  | id => ["test_" ++ id.replace "-" "_"]
+
+def rows : List Row := [
   { id := "borrow-free", clause := "A member may borrow a copy that is not on loan.",
     theorems := [``borrow_free], witnesses := [``witness_free] },
   { id := "never-two-borrowers", clause := "A copy on loan is never lent to a second member.",
@@ -243,11 +264,14 @@ def ledger : List Row := [
     theorems := [``borrow_due], witnesses := [``witness_borrowed] },
   { id := "renew-limits", clause := "A loan may be renewed. It may be renewed at most twice, and \
       never while another member holds the copy.",
-    theorems := [``renew_limit, ``renew_held], witnesses := [``witness_held, ``witness_renewed] },
+    theorems := [``renew_allowed, ``renew_limit, ``renew_held],
+    witnesses := [``witness_held, ``witness_renewed, ``witness_lent] },
   { id := "renew-moves-due", clause := "Renewing a loan moves its due date one loan period past the \
       old due date.", theorems := [``renew_moves_due], witnesses := [``witness_renewed, ``witness_lent] },
   { id := "renew-late", clause := "A loan cannot be renewed after its due date.",
     theorems := [``renew_late], witnesses := [``witness_late] },
+  { id := "renew-borrower", clause := "Only the member who has a loan may renew it.",
+    theorems := [``renew_not_borrower], witnesses := [``witness_lent] },
   { id := "return-ends", clause := "Returning a copy ends its loan.", theorems := [``giveBack_ends] },
   { id := "late-fine", clause := "A copy returned after its due date adds a fine of 1 for each day late.",
     theorems := [``giveBack_fine], witnesses := [``witness_lent] },
@@ -257,6 +281,8 @@ def ledger : List Row := [
     theorems := [``giveBack_not_on_loan], witnesses := [``witness_not_on_loan] },
   { id := "hold-lent", clause := "A member may hold a copy that is on loan to another member.",
     theorems := [``hold_on_loan], witnesses := [``witness_hold] },
+  { id := "hold-unlent", clause := "A copy that is not on loan can't be held.",
+    theorems := [``hold_not_lent], witnesses := [``witness_free] },
   { id := "hold-own", clause := "A member may not hold a copy they have on loan.",
     theorems := [``hold_own], witnesses := [``witness_own] },
   { id := "one-hold", clause := "A copy has at most one hold.",
@@ -267,6 +293,20 @@ def ledger : List Row := [
     theorems := [``refused_changes_nothing] }
 ]
 
+def ledger : List Row := rows.map fun r => { r with tests := pythonTest r.id }
+
 end Loans
 
 #eval SpecTools.Audit.run Loans.ledger `Loans
+
+-- With `SPEC_TOOLS_TESTS` set, the Python tests against the guards of `loans.py`.
+#eval show IO Unit from do
+  if (← IO.getEnv "SPEC_TOOLS_TESTS").isSome then
+    SpecTools.Tests.run Loans.ledger "../../adapters/python_guards.py" "loans.py" "test_loans.py"
+      (cwd := some "fixtures/loans")
+
+-- With `SPEC_TOOLS_GAPS` set to a Claude model, the gaps against `loans.md` too (a live call).
+#eval show Lean.Elab.Command.CommandElabM Unit from do
+  if let some model ← IO.getEnv "SPEC_TOOLS_GAPS" then
+    SpecTools.Gaps.run Loans.ledger (← IO.FS.readFile "fixtures/loans/loans.md")
+      { harness := .claudeCode, model, dataGoesTo := "Anthropic" }

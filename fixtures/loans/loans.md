@@ -32,6 +32,8 @@ Renewing a loan moves its due date one loan period past the old due date.
 
 A loan cannot be renewed after its due date.
 
+Only the member who has a loan may renew it.
+
 ## Returning
 
 Returning a copy ends its loan.
@@ -45,6 +47,8 @@ Returning a copy that is not on loan changes nothing.
 ## Holds
 
 A member may hold a copy that is on loan to another member.
+
+A copy that is not on loan can't be held.
 
 A member may not hold a copy they have on loan.
 

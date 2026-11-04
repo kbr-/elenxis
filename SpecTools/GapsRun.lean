@@ -17,7 +17,9 @@ def gapsPrompt (prose : String) (rows : List Row) (facts : Facts) : String :=
   statements claimed to establish it. Report each gap: `uncovered` (a clause of the prose no row \
   states, or a row whose statements don't establish its clause), `too weak` (a statement weaker \
   than its clause), `undecided` (a case the prose leaves open that the statements decide), \
-  `extra` (a statement the prose doesn't ask for). Name the row each gap concerns by its \
+  `extra` (a statement of behaviour the prose neither asks for nor implies; a statement giving a \
+  clause another form, such as an invariant after a step for a limit at the step, is not extra). \
+  Name the row each gap concerns by its \
   identifier; for a clause no row has, name the row nearest it. Report nothing when there is no \
   gap.\n\n# Prose\n\n" ++ prose ++ "\n\n# Ledger\n\n" ++ "\n".intercalate rowText
 
