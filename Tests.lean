@@ -71,13 +71,14 @@ def testAudit : IO Unit := do
   let vacuous ← IO.asTask <| auditCase dir "vacuous" ("theorem guarded (n : Nat) (h : 0 < n) : n ≠ 0 := by omega\n\
     #eval SpecTools.Audit.run [{ id := \"r1\", clause := \"c\", theorems := [``guarded] }] `AuditCase\n")
   let (code, out) ← auditCase dir "pass" (base ++ rows "one plus one")
-  ensure (code == 0 && has out "proved: r1" && has out "proved: r2" && has out "2 judged")
+  ensure (code == 0 && has out "proved: r1" && has out "proved: r2" &&
+      has out "2 rows: 2 proved, 0 conditional, 0 too weak or vacuous, 0 not stated (2 judged)")
     s!"a complete ledger passes, both rows proved:\n{out}"
   let (code, out) ← auditCase dir "again" (base ++ rows "one plus one")
-  ensure (code == 0 && has out "unchanged: r1" && has out "0 judged")
+  ensure (code == 0 && has out "unchanged: r1" && has out "(0 judged)")
     s!"a second run with nothing changed judges no row:\n{out}"
   let (code, out) ← auditCase dir "changed" (base ++ rows "one and one")
-  ensure (code == 0 && has out "unchanged: r2" && has out "proved: r1" && has out "1 judged")
+  ensure (code == 0 && has out "unchanged: r2" && has out "proved: r1" && has out "(1 judged)")
     s!"a changed clause re-judges that row alone:\n{out}"
   let (code, out) ← IO.ofExcept missing.get
   ensure (code != 0 && has out "names nonexistent, which is no theorem")
@@ -86,7 +87,7 @@ def testAudit : IO Unit := do
   ensure (code != 0 && has out "no row claims theorem guarded")
     s!"a written theorem no row claims fails the audit:\n{out}"
   let (code, out) ← IO.ofExcept axiomCase.get
-  ensure (code == 0 && has out "conditional on [myAxiom]: r1")
+  ensure (code == 0 && has out "conditional: r1" && has out "axioms: [myAxiom]")
     s!"an axiom outside the accepted three makes the row conditional:\n{out}"
   let (code, out) ← IO.ofExcept vacuous.get
   ensure (code == 0 && has out "too weak or vacuous: r1")

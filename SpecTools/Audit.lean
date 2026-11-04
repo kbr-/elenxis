@@ -86,13 +86,16 @@ def run (rows : List Row) (root : Name) (sourceDir : Option System.FilePath := n
     for n in row.theorems ++ row.witnesses do
       if let some f := facts n then
         IO.println s!"  {n} : {f.statement}"
-        IO.println s!"    axioms: {f.axioms}{if f.hypotheses then ", has hypotheses" else ""}"
+        IO.println s!"    axioms: {f.axioms}"
   for n in unclaimed rows (← writtenTheorems env root) do
     errors := errors ++ [s!"no row claims theorem {n}"]
   if let some dir := sourceDir then
     for m in ← missingModules env dir do
       errors := errors ++ [s!"the audit does not import module {m}"]
-  IO.println s!"{rows.length} rows, {judged.length} judged: {counts.reverse}"
+  let count (label : String) := (counts.lookup label).getD 0
+  IO.println s!"{rows.length} rows: {count "proved"} proved, {count "conditional"} conditional, \
+    {count "too weak or vacuous"} too weak or vacuous, {count "not stated"} not stated \
+    ({judged.length} judged)"
   if let some p := digestFile then
     if errors.isEmpty then writeDigests p (digests facts rows)
   unless errors.isEmpty do

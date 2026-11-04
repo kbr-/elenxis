@@ -61,7 +61,7 @@ inductive Verdict where
 def Verdict.label : Verdict → String
   | .missing n => s!"names {n}, which is no theorem"
   | .notStated => "not stated"
-  | .conditional axs => s!"conditional on {axs}"
+  | .conditional _ => "conditional"
   | .tooWeakOrVacuous => "too weak or vacuous"
   | .proved => "proved"
 
