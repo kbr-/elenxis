@@ -43,4 +43,15 @@ theorem score_exact (key : List Plant) :
       List.any_eq_true.mpr ⟨p, hp, by simp [names]⟩
     simp [this]
 
+/-- The bar holds exactly when the ledger finds more blind spots and its false alarms stay within
+the baseline's plus one a variant. -/
+theorem barMet_iff (lb bb la ba n : Nat) :
+    barMet lb bb la ba n = true ↔ bb < lb ∧ la ≤ ba + n := by
+  simp [barMet]
+
+/-- The bar's two ends at their values, and a tie in blind spots failing it whatever the alarms. -/
+example : barMet 8 6 6 3 3 = true := by decide
+example : barMet 8 6 7 3 3 = false := by decide
+example : barMet 6 6 0 3 3 = false := by decide
+
 end SpecTools.Score

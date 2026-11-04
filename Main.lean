@@ -126,13 +126,19 @@ def synthetic (args : List String) : IO UInt32 := do
     return 0
   | ["run", outDir, agentModel, toolModel]
   | ["run", outDir, agentModel, toolModel, "baseline"]
-  | ["run", outDir, agentModel, toolModel, "ledger"] =>
-    -- Each variant to both arms, or to the one arm named (the scaling measure and its comparison),
-    -- `width` runs at a time (a batch of 10 in two waves); the key is read only to score.
-    let arms := match args.getLast? with
-      | some "baseline" => [false]
-      | some "ledger" => [true]
-      | _ => [true, false]
+  | ["run", outDir, agentModel, toolModel, "ledger"]
+  | ["run", outDir, agentModel, toolModel, "workflow"] =>
+    -- Each variant to the ledger's and the baseline's arms, or to the one arm named (the scaling
+    -- measure, its comparison, the prompt-only control), `width` runs at a time (a batch of 10 in
+    -- two waves); the key is read only to score. One arm's results go to results-ARM.jsonl, so a
+    -- batch's two-arm results.jsonl stays.
+    let arms : List SpecTools.SyntheticRun.Arm := match args.getLast? with
+      | some "baseline" => [.baseline]
+      | some "ledger" => [.ledger]
+      | some "workflow" => [.workflow]
+      | _ => [.ledger, .baseline]
+    let resultsFile := if arms.length == 1 then s!"results-{(arms.headD .baseline).name}.jsonl"
+      else "results.jsonl"
     let keyText ← IO.FS.readFile (System.FilePath.mk outDir / "key.jsonl")
     let keys := (keyText.splitOn "\n").filter (· ≠ "") |>.filterMap fun l => do
       let j ← (Lean.Json.parse l).toOption
@@ -144,20 +150,22 @@ def synthetic (args : List String) : IO UInt32 := do
     let backend : SpecTools.Model.Backend :=
       { harness := .claudeCode, model := agentModel, dataGoesTo := "Anthropic" }
     let width := 10
-    let jobs : List (List Plant × Nat × Bool) :=
+    let jobs : List (List Plant × Nat × SpecTools.SyntheticRun.Arm) :=
       keys.zipIdx.flatMap fun (k, i) => arms.map fun a => (k, i, a)
     let batches := (List.range ((jobs.length + width - 1) / width)).map fun j =>
       (jobs.drop (j * width)).take width
     let mut results : Array String := #[]
-    let mut totals : List (Bool × Nat × Nat × Nat) := []
+    let mut totals : List (SpecTools.SyntheticRun.Arm × Nat × Nat × Nat) := []
+    let mut blind : List (SpecTools.SyntheticRun.Arm × Nat) := []
     for batch in batches do
-      let tasks ← batch.mapM fun ((k, i, ledger) : List Plant × Nat × Bool) => IO.asTask do
-        let r ← SpecTools.SyntheticRun.runArm backend (System.FilePath.mk outDir / s!"v{i}") ledger
-          root.toString toolModel 1200000
-        return (k, i, ledger, r)
+      let tasks ← batch.mapM fun ((k, i, a) : List Plant × Nat × SpecTools.SyntheticRun.Arm) =>
+        IO.asTask do
+          let r ← SpecTools.SyntheticRun.runArm backend (System.FilePath.mk outDir / s!"v{i}") a
+            root.toString toolModel 1200000
+          return (k, i, a, r)
       for t in tasks do
-        let (k, i, ledger, r) ← IO.ofExcept t.get
-        let arm := if ledger then "ledger" else "baseline"
+        let (k, i, a, r) ← IO.ofExcept t.get
+        let arm := a.name
         match r with
         | .error e =>
           IO.println s!"v{i} {arm}: failed: {e}"
@@ -168,12 +176,23 @@ def synthetic (args : List String) : IO UInt32 := do
           let tokens := match cost.tokens with | some t => toString t | none => "null"
           IO.println s!"v{i} {arm}: found {s.found} missed {s.missed} false alarms {s.falseAlarms} ({ms} ms, {tokens} tokens; check.sh ran {checks})"
           results := results.push s!"\{\"variant\": {i}, \"arm\": \"{arm}\", \"found\": {s.found.length}, \"missed\": {s.missed.length}, \"false_alarms\": {s.falseAlarms}, \"ms\": {ms}, \"tokens\": {tokens}, \"checks\": {(checks.map (·.quote)).toString}, \"found_kinds\": {(s.found.map (·.quote)).toString}, \"missed_kinds\": {(s.missed.map (·.quote)).toString}, \"findings\": {(fs.map fun f => s!"[{f.clause.quote}, {f.kind.quote}]").toString}}"
-          totals := (ledger, s.found.length, s.missed.length, s.falseAlarms) :: totals
-    IO.FS.writeFile (System.FilePath.mk outDir / "results.jsonl") ("\n".intercalate results.toList ++ "\n")
+          totals := (a, s.found.length, s.missed.length, s.falseAlarms) :: totals
+          blind := (a, (s.found.filter (· == "shared blind spot")).length) :: blind
+    IO.FS.writeFile (System.FilePath.mk outDir / resultsFile) ("\n".intercalate results.toList ++ "\n")
     for arm in arms do
       let ts := totals.filter (·.1 == arm)
-      IO.println s!"{if arm then "ledger" else "baseline"}: {ts.length} runs, found \
+      IO.println s!"{arm.name}: {ts.length} runs, found \
         {(ts.map (·.2.1)).sum}, missed {(ts.map (·.2.2.1)).sum}, false alarms {(ts.map (·.2.2.2)).sum}"
+    -- The bar (the theory's entry on how a tool is judged), when both arms ran on the variants.
+    let arm (a : SpecTools.SyntheticRun.Arm) := totals.filter (·.1 == a)
+    let led := arm .ledger
+    let base := arm .baseline
+    if !led.isEmpty && !base.isEmpty then
+      let blindOf (a : SpecTools.SyntheticRun.Arm) := ((blind.filter (·.1 == a)).map (·.2)).sum
+      let alarms (ts : List (SpecTools.SyntheticRun.Arm × Nat × Nat × Nat)) := (ts.map (·.2.2.2)).sum
+      let bar := SpecTools.Score.barText (blindOf .ledger) (blindOf .baseline) (alarms led)
+        (alarms base) led.length
+      IO.println s!"bar: {bar}"
     return 0
   | [seed, count, empty, fixtureDir, outDir] =>
     let some seed := seed.toNat? | IO.eprintln "SEED is a number"; return 2

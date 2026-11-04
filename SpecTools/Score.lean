@@ -31,4 +31,17 @@ def score (key : List Plant) (findings : List Finding) : Score where
   missed := (key.filter fun p => !findings.any (names · p)).map (·.kind)
   falseAlarms := (findings.filter fun f => !key.any (names f)).length
 
+/-- The bar over `n` variants both arms ran: the ledger's arm finds more shared blind spots than
+the baseline's (`ledgerBlind` against `baseBlind`, totals over the same variants, so their averages
+compare as their sums), at no more false alarms per variant on average than the baseline's plus
+one (`ledgerAlarms / n ≤ baseAlarms / n + 1`, which over `n` variants is
+`ledgerAlarms ≤ baseAlarms + n`). -/
+def barMet (ledgerBlind baseBlind ledgerAlarms baseAlarms n : Nat) : Bool :=
+  baseBlind < ledgerBlind && ledgerAlarms ≤ baseAlarms + n
+
+def barText (ledgerBlind baseBlind ledgerAlarms baseAlarms n : Nat) : String :=
+  let verdict := if barMet ledgerBlind baseBlind ledgerAlarms baseAlarms n then "met" else "not met"
+  s!"{verdict} (shared blind spots {ledgerBlind} against {baseBlind}; false alarms \
+    {ledgerAlarms} against at most {baseAlarms} + {n} over {n} variants)"
+
 end SpecTools.Score

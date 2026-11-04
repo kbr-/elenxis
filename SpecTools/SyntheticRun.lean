@@ -44,6 +44,26 @@ def ledgerTools : String :=
   clauses of loans.md, extracted twice). Check each finding against the files before you report \
   it. Each command takes up to a few minutes."
 
+/-- The ledger's workflow with its tools taken out: the prompt-only control, which tells a gain
+the prompt gives from one the tools give. -/
+def workflowOnly : String :=
+  "Work through the requirements clause by clause against the ledger's rows, the Lean statements, \
+  loans.py and the tests, in that order. Check each finding against the files before you report it."
+
+/-- The three arms: the bare agent, the agent with the ledger's tools and workflow, and the agent
+with the workflow alone. -/
+inductive Arm where
+  | baseline | ledger | workflow
+  deriving DecidableEq, Repr
+
+def Arm.name : Arm → String
+  | .baseline => "baseline" | .ledger => "ledger" | .workflow => "workflow"
+
+def Arm.prompt : Arm → String
+  | .baseline => task ++ "\n\n" ++ answerFormat
+  | .ledger => task ++ "\n\n" ++ ledgerTools ++ "\n\n" ++ answerFormat
+  | .workflow => task ++ "\n\n" ++ workflowOnly ++ "\n\n" ++ answerFormat
+
 def checkScript (root : String) (model : String) : String :=
   "\n".intercalate [
     "#!/bin/sh",
@@ -66,26 +86,24 @@ def findingsOf (j : Json) : Option (List Finding) := do
     let kind ← (f.getObjValAs? String "kind").toOption
     return { clause, kind }
 
-/-- The tools of an arm: reading and the tests for both, `./check.sh` for the ledger's. -/
-def armTools (ledger : Bool) : List String :=
+/-- The tools of an arm: reading and the tests for all, `./check.sh` for the ledger's alone. -/
+def armTools (arm : Arm) : List String :=
   ["Read", "Glob", "Grep", "Bash(python3 -m pytest *)"] ++
-    (if ledger then ["Bash(./check.sh *)"] else [])
+    (if arm == .ledger then ["Bash(./check.sh *)"] else [])
 
 /-- One arm's run on one variant: its findings, its cost and the `check.sh` commands it ran, or why
 there are none. -/
-def runArm (backend : Backend) (variantDir : System.FilePath) (ledger : Bool) (root : String)
+def runArm (backend : Backend) (variantDir : System.FilePath) (arm : Arm) (root : String)
     (toolModel : String) (timeoutMs : Nat) :
     IO (Except String (List Finding × Cost × List String)) := do
   let work := (← IO.FS.createTempDir) / "variant"
   IO.FS.createDirAll work
   for f in files do IO.FS.writeFile (work / f) (← IO.FS.readFile (variantDir / f))
-  if ledger then
+  if arm == .ledger then
     IO.FS.writeFile (work / "check.sh") (checkScript root toolModel)
     discard <| IO.Process.output { cmd := "chmod", args := #["+x", (work / "check.sh").toString] }
-  let question : Question :=
-    { prompt := task ++ "\n\n" ++ (if ledger then ledgerTools ++ "\n\n" else "") ++ answerFormat,
-      schema := findingsSchema, timeoutMs }
-  let inv := agentInvocation backend question (armTools ledger) work
+  let question : Question := { prompt := arm.prompt, schema := findingsSchema, timeoutMs }
+  let inv := agentInvocation backend question (armTools arm) work
   let ran ← liveRunner inv (readBackFiles backend.harness) timeoutMs
   let log := work / "check.log"
   let logText ← if ← log.pathExists then IO.FS.readFile log else pure ""

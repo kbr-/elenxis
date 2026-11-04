@@ -208,7 +208,17 @@ def pyTests (vs : List View) : String :=
         s!"\"{m}\": {if i == 0 then x else "0"}") ++ "}"
       let reach := if v.testBelow then s!"st.integers(0, {r.bound - 1})" else s!"st.integers({r.bound}, {r.bound + 40})"
       let assertion := if v.testBelow then "is not None" else "is None"
-      let base := s!"@given({reach})\ndef {name}(v):  # r{r.id}\n    assert handle(Req(\"{r.kind}\", {vals "v"})) {assertion}\n    assert handle(Req(\"{r.kind}\", {vals (toString (r.bound - 1))})) is not None\n"
+      -- A sum's bound split across its two measures, at it and one below it, so a test reaches
+      -- every term: with either term dropped the split at the bound falls below it.
+      let split (total : Nat) : String := match r.measures with
+        | [m1, m2] => s!"\{\"{m1}\": {total - total / 2}, \"{m2}\": {total / 2}}"
+        | _ => ""
+      let splitCases := match r.measures with
+        | [_, _] =>
+          let atBound := if v.testBelow then "is not None" else "is None"
+          s!"    assert handle(Req(\"{r.kind}\", {split (if v.testBelow then r.bound - 1 else r.bound)})) {atBound}\n    assert handle(Req(\"{r.kind}\", {split (r.bound - 1)})) is not None\n"
+        | _ => ""
+      let base := s!"@given({reach})\ndef {name}(v):  # r{r.id}\n    assert handle(Req(\"{r.kind}\", {vals "v"})) {assertion}\n    assert handle(Req(\"{r.kind}\", {vals (toString (r.bound - 1))})) is not None\n{splitCases}"
       let exempt := match r.flag with
         | some f => s!"\n\n@given(st.integers({r.bound}, {r.bound + 40}))\ndef test_r{r.id}_exempt(v):  # r{r.id}-exempt\n    vals = {vals "v"}\n    vals[\"{f}\"] = 1\n    assert handle(Req(\"{r.kind}\", vals)) is not None\n"
         | none => ""
