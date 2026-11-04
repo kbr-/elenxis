@@ -19,7 +19,7 @@ open Lean
 inductive Harness where
   | claudeCode
   | codex
-  deriving Repr, BEq, Inhabited
+  deriving Repr, DecidableEq, Inhabited
 
 def Harness.name : Harness → String
   | .claudeCode => "claude-code"
@@ -30,7 +30,7 @@ structure Backend where
   harness : Harness
   model : String
   dataGoesTo : String
-  deriving Repr, BEq, Inhabited
+  deriving Repr, DecidableEq, Inhabited
 
 def Backend.name (b : Backend) : String := s!"{b.harness.name}/{b.model}"
 
@@ -89,7 +89,8 @@ structure Ran where
 /-- Runs an invocation within a time limit, reading back the named files; `none` when it overran. -/
 abbrev Runner := Invocation → (readBack : List String) → (timeoutMs : Nat) → IO (Option Ran)
 
-private def firstLines (text : String) (n : Nat := 5) : String :=
+/-- The first `n` non-blank lines of a process's output, for an error message. -/
+def firstLines (text : String) (n : Nat := 5) : String :=
   " | ".intercalate ((text.splitOn "\n").filter (!·.trimAscii.isEmpty) |>.take n)
 
 /-- The command line asking `question` of `backend`, run in the empty directory `scratch`. -/
@@ -142,27 +143,36 @@ def readAnswer (backend : Backend) (ran : Ran) : Except Failure (Json × Option 
       let answer ← (Json.parse text).mapError fun e => .malformed name s!"answer is no JSON: {e}"
       return (answer, none)
 
-/-- Ask `question` of `backend` through `runner`, in the empty directory `scratch`, when the project
-allows the backend. The answer is returned only when it meets the question's schema. -/
+/-- What to run for `question`, or why nothing may run: a backend the project doesn't allow, a schema
+outside the subset, a prompt over `maxPromptBytes`. -/
+def plan (allowed : List Backend) (backend : Backend) (question : Question)
+    (scratch : System.FilePath) : Except Failure Invocation :=
+  if backend ∉ allowed then
+    .error (.refused backend.name "the project doesn't allow this backend")
+  else match Schema.unsupported question.schema with
+    | some problem => .error (.refused backend.name s!"the question's schema: {problem}")
+    | none =>
+      if question.prompt.utf8ByteSize > maxPromptBytes then
+        .error (.refused backend.name
+          s!"the prompt is {question.prompt.utf8ByteSize} bytes, over {maxPromptBytes}")
+      else .ok (invocation backend question scratch)
+
+/-- The outcome of a run (`none` when it overran): its answer when it meets the schema. -/
+def finish (backend : Backend) (question : Question) : Option Ran → Except Failure Outcome
+  | none => .error (.timedOut backend.name question.timeoutMs)
+  | some ran => do
+    let (answer, tokens) ← readAnswer backend ran
+    match Schema.violation question.schema answer with
+    | some why => throw (.malformed backend.name s!"answer breaks the schema at {why}")
+    | none => return { answer, cost := { millis := ran.millis, tokens } }
+
+/-- Ask `question` of `backend` through `runner`, in the empty directory `scratch`. -/
 def ask (runner : Runner) (allowed : List Backend) (backend : Backend) (question : Question)
-    (scratch : System.FilePath) : IO (Except Failure Outcome) := do
-  let name := backend.name
-  unless allowed.contains backend do
-    return .error (.refused name "the project doesn't allow this backend")
-  if let some problem := Schema.unsupported question.schema then
-    return .error (.refused name s!"the question's schema: {problem}")
-  if question.prompt.utf8ByteSize > maxPromptBytes then
-    return .error (.refused name
-      s!"the prompt is {question.prompt.utf8ByteSize} bytes, over {maxPromptBytes}")
-  match ← runner (invocation backend question scratch) (readBackFiles backend.harness)
-      question.timeoutMs with
-  | none => return .error (.timedOut name question.timeoutMs)
-  | some ran =>
-    return do
-      let (answer, tokens) ← readAnswer backend ran
-      if let some why := Schema.violation question.schema answer then
-        throw (.malformed name s!"answer breaks the schema at {why}")
-      return { answer, cost := { millis := ran.millis, tokens } }
+    (scratch : System.FilePath) : IO (Except Failure Outcome) :=
+  match plan allowed backend question scratch with
+  | .error failure => pure (.error failure)
+  | .ok inv => do
+    return finish backend question (← runner inv (readBackFiles backend.harness) question.timeoutMs)
 
 /-- An agent run: `prompt` given to `backend` working in `workdir` (a copy made for the run), able to
 use only `tools`. Claude Code gets exactly those tools, each allowed; Codex gets a sandbox that
