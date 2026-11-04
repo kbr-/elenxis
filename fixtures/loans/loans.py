@@ -9,8 +9,11 @@ from dataclasses import dataclass, field, replace
 
 PERIOD = {"standard": 14, "premium": 28}
 MAX_LOANS = 5
+PREMIUM_LOANS = 8
 FINE_LIMIT = 10
 MAX_RENEWALS = 2
+FINE_CAP = 30
+MAX_HOLDS = 3
 
 
 @dataclass(frozen=True)
@@ -40,6 +43,15 @@ class State:
     def count(self, member: int) -> int:
         return sum(1 for loan in self.loans if loan.member == member)
 
+    def limit(self, member: int) -> int:
+        return PREMIUM_LOANS if member in self.premium and self.fine(member) == 0 else MAX_LOANS
+
+    def overdue(self, member: int, today: int) -> bool:
+        return any(loan.member == member and loan.due < today for loan in self.loans)
+
+    def hold_count(self, member: int) -> int:
+        return sum(1 for _, m in self.holds if m == member)
+
     def held_by_other(self, copy: int, member: int) -> bool:
         return any(c == copy and m != member for c, m in self.holds)
 
@@ -51,8 +63,9 @@ class State:
 
 
 def borrow(state: State, member: int, copy: int, today: int) -> State | None:
-    if (state.on_loan(copy) or state.count(member) >= MAX_LOANS or state.fine(member) >= FINE_LIMIT
-            or state.held_by_other(copy, member)):
+    if (state.on_loan(copy) or state.count(member) >= state.limit(member)
+            or state.fine(member) >= FINE_LIMIT or state.held_by_other(copy, member)
+            or state.overdue(member, today)):
         return None
     loan = Loan(copy, member, today + PERIOD[state.membership(member)])
     return replace(state, loans=(loan,) + state.loans,
@@ -62,7 +75,8 @@ def borrow(state: State, member: int, copy: int, today: int) -> State | None:
 def renew(state: State, member: int, copy: int, today: int) -> State | None:
     loan = state.loan_of(copy)
     if (loan is None or loan.member != member or loan.renewals >= MAX_RENEWALS
-            or state.held_by_other(copy, member) or loan.due < today):
+            or state.held_by_other(copy, member) or loan.due < today
+            or state.fine(member) >= FINE_LIMIT):
         return None
     period = PERIOD[state.membership(member)]
     return replace(state, loans=tuple(
@@ -75,12 +89,13 @@ def give_back(state: State, copy: int, today: int) -> State:
     if loan is None:
         return state
     rest = replace(state, loans=tuple(x for x in state.loans if x.copy != copy))
-    return rest.with_fine(loan.member, state.fine(loan.member) + max(0, today - loan.due))
+    return rest.with_fine(loan.member, state.fine(loan.member) + min(FINE_CAP, max(0, today - loan.due)))
 
 
 def place_hold(state: State, member: int, copy: int) -> State | None:
     if (not state.on_loan(copy) or any(x.copy == copy and x.member == member for x in state.loans)
-            or any(c == copy for c, _ in state.holds)):
+            or any(c == copy for c, _ in state.holds) or state.hold_count(member) >= MAX_HOLDS
+            or state.count(member) + state.hold_count(member) >= state.limit(member)):
         return None
     return replace(state, holds=((copy, member),) + state.holds)
 

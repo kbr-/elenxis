@@ -6,9 +6,15 @@ A member may borrow a copy that is not on loan.
 
 A copy on loan is never lent to a second member.
 
-A member may have at most five copies on loan at once.
+A standard member may have at most five copies on loan at once.
+
+A premium member may have at most eight copies on loan at once.
+
+A premium member who owes any fine may have no more copies on loan than a standard member.
 
 A member who owes 10 or more in fines may not borrow.
+
+A member with a loan past its due date may not borrow.
 
 A copy that another member holds may not be borrowed.
 
@@ -34,11 +40,15 @@ A loan cannot be renewed after its due date.
 
 Only the member who has a loan may renew it.
 
+A member who owes 10 or more in fines may not renew.
+
 ## Returning
 
 Returning a copy ends its loan.
 
 A copy returned after its due date adds a fine of 1 for each day late.
+
+The fine for one late return is at most 30.
 
 A copy returned on or before its due date adds no fine.
 
@@ -53,6 +63,10 @@ A copy that is not on loan can't be held.
 A member may not hold a copy they have on loan.
 
 A copy has at most one hold.
+
+A member may hold at most three copies.
+
+A member may not place a hold while their loans and holds together reach their loan limit.
 
 ## Fines
 

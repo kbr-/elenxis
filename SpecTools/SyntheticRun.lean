@@ -37,10 +37,12 @@ def findingsSchema : Json :=
     ("required", Json.arr #["findings"]), ("additionalProperties", false)]
 
 def ledgerTools : String :=
-  "You can run the spec tools on this directory: `./check.sh audit` (the ledger's audit), \
-  `./check.sh tests` (which guards of loans.py no test notices), `./check.sh gaps` (a model's \
-  proposed gaps between the prose and the ledger) and `./check.sh clauses` (the clauses of \
-  loans.md, extracted twice). Each takes up to a few minutes."
+  "Work through the spec tools on this directory: run `./check.sh audit` (the ledger's audit) and \
+  `./check.sh tests` (the ledger's tests against loans.py: which named tests are missing, and \
+  which guards no test notices) first and read their findings, then `./check.sh gaps` (a model's \
+  proposed gaps between the prose and the ledger) and, if you need them, `./check.sh clauses` (the \
+  clauses of loans.md, extracted twice). Check each finding against the files before you report \
+  it. Each command takes up to a few minutes."
 
 def checkScript (root : String) (model : String) : String :=
   "\n".intercalate [
