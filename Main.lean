@@ -6,7 +6,9 @@ def commands : List (String × String) := [
   ("clauses", "extract a prose file's clauses twice and print the differences: \
     clauses HARNESS MODEL PROSE-FILE [TIMEOUT-MS]"),
   ("synthetic", "write a batch of variants of the loans fixture with planted gaps, the key apart: \
-    synthetic SEED COUNT EMPTY FIXTURE-DIR OUT-DIR")
+    synthetic SEED COUNT EMPTY FIXTURE-DIR OUT-DIR"),
+  ("check", "run one spec tool on the synthetic variant in the current directory, with the root and \
+    model its spec-tools.json names: check audit|tests|gaps|clauses")
 ]
 
 /-- The loans fixture's files a variant is made of. -/
@@ -227,7 +229,7 @@ def synthetic (args : List String) : IO UInt32 := do
           let s := SpecTools.Score.score k fs
           let ms := cost.millis
           let tokens := match cost.tokens with | some t => toString t | none => "null"
-          IO.println s!"v{i} {arm}: found {s.found} missed {s.missed} false alarms {s.falseAlarms} ({ms} ms, {tokens} tokens; check.sh ran {checks})"
+          IO.println s!"v{i} {arm}: found {s.found} missed {s.missed} false alarms {s.falseAlarms} ({ms} ms, {tokens} tokens; check ran {checks})"
           results := results.push s!"\{\"variant\": {i}, \"arm\": \"{arm}\", \"found\": {s.found.length}, \"missed\": {s.missed.length}, \"false_alarms\": {s.falseAlarms}, \"ms\": {ms}, \"tokens\": {tokens}, \"checks\": {(checks.map (·.quote)).toString}, \"found_kinds\": {(s.found.map (·.quote)).toString}, \"missed_kinds\": {(s.missed.map (·.quote)).toString}, \"findings\": {(fs.map fun f => s!"[{f.clause.quote}, {f.kind.quote}]").toString}}"
           totals := (a, s.found.length, s.missed.length, s.falseAlarms) :: totals
           blind := (a, (s.found.filter (· == "shared blind spot")).length) :: blind
@@ -361,5 +363,6 @@ def main (args : List String) : IO UInt32 := do
   | "ask" :: rest => ask rest
   | "clauses" :: rest => clauses rest
   | "synthetic" :: rest => synthetic rest
+  | ["check", sub] => SpecTools.SyntheticRun.runCheck sub
   | [] => IO.eprintln usage; return 2
   | command :: _ => IO.eprintln s!"unknown command `{command}`\n{usage}"; return 2

@@ -175,7 +175,7 @@ def ask (runner : Runner) (allowed : List Backend) (backend : Backend) (question
     return finish backend question (← runner inv (readBackFiles backend.harness) question.timeoutMs)
 
 /-- An agent run: `question` given to `backend` working in `workdir` (a copy made for the run), able
-to use only `tools`, each a tool name or a pattern such as `Bash(./check.sh *)`, its final answer
+to use only `tools`, each a tool name or a pattern such as `Bash(spec-tools check *)`, its final answer
 under the question's schema, read back as a question's is (`finish`). Claude Code gets the tools
 those name and allows exactly the patterns; Codex gets a sandbox that writes only in `workdir`, its
 tools its own. -/
