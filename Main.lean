@@ -247,6 +247,39 @@ def synthetic (args : List String) : IO UInt32 := do
         (alarms base) led.length
       IO.println s!"bar: {bar}"
     return 0
+  | ["rescore", outDir] =>
+    -- Each arm's saved findings in DIR's results*.jsonl scored again against DIR/key.jsonl by the
+    -- current scorer, per arm in total; a run that failed has no findings and is left out.
+    let dir := System.FilePath.mk outDir
+    let keyText ← IO.FS.readFile (dir / "key.jsonl")
+    let keys := (keyText.splitOn "\n").filter (· ≠ "") |>.filterMap fun l => do
+      let j ← (Lean.Json.parse l).toOption
+      let plants ← (j.getObjValAs? (Array Lean.Json) "plants").toOption
+      plants.toList.mapM fun p => do
+        return ({ kind := ← (p.getObjValAs? String "kind").toOption,
+                  clause := ← (p.getObjValAs? String "clause").toOption, edits := [] } : Plant)
+    let files := ((← dir.readDir).map (·.fileName)).toList.filter fun n =>
+      n.startsWith "results" && n.endsWith ".jsonl"
+    let mut totals : List (String × Nat × Nat × Nat × Nat) := []
+    for file in files.mergeSort (· ≤ ·) do
+      for l in ((← IO.FS.readFile (dir / file)).splitOn "\n").filter (· ≠ "") do
+        let some j := (Lean.Json.parse l).toOption | IO.eprintln s!"{file}: unparsed line"; return 1
+        let some arm := (j.getObjValAs? String "arm").toOption | continue
+        let some v := (j.getObjValAs? Nat "variant").toOption | continue
+        let some fsJ := (j.getObjValAs? (Array Lean.Json) "findings").toOption | continue
+        let fs : List SpecTools.Score.Finding := fsJ.toList.filterMap fun f => do
+          let a ← (f.getArrVal? 0).toOption
+          let b ← (f.getArrVal? 1).toOption
+          return { clause := ← (Lean.Json.getStr? a).toOption, kind := ← (Lean.Json.getStr? b).toOption }
+        let some k := keys[v]? | IO.eprintln s!"{file}: variant {v} not in the key"; return 1
+        let s := SpecTools.Score.score k fs
+        let blindFound := (s.found.filter (· == "shared blind spot")).length
+        IO.println s!"{file} v{v} {arm}: found {s.found.length} of {k.length}, blind spots {blindFound}, false alarms {s.falseAlarms}"
+        totals := (arm, 1, s.found.length, blindFound, s.falseAlarms) :: totals
+    for arm in (totals.map (·.1)).eraseDups do
+      let ts := totals.filter (·.1 == arm)
+      IO.println s!"{arm}: {ts.length} runs, found {(ts.map (·.2.2.1)).sum}, blind spots {(ts.map (·.2.2.2.1)).sum}, false alarms {(ts.map (·.2.2.2.2)).sum}"
+    return 0
   | [seed, count, empty, fixtureDir, outDir] =>
     let some seed := seed.toNat? | IO.eprintln "SEED is a number"; return 2
     let some count := count.toNat? | IO.eprintln "COUNT is a number"; return 2

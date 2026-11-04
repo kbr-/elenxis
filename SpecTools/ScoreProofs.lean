@@ -6,7 +6,7 @@ nothing are all false alarms; and a report quoting each planted clause finds all
 -/
 
 namespace SpecTools.Score
-open SpecTools.Synthetic
+open SpecTools.Synthetic SpecTools.Clauses
 
 theorem filter_split {α} (p : α → Bool) (l : List α) :
     (l.filter p).length + (l.filter (fun x => !p x)).length = l.length := by
@@ -42,6 +42,35 @@ theorem score_exact (key : List Plant) :
     have : key.any (names { clause := p.clause, kind := p.kind }) :=
       List.any_eq_true.mpr ⟨p, hp, by simp [names]⟩
     simp [this]
+
+/-- A finding names a plant exactly when its quote equals the clause, or holds at most two sentences
+one of which is the clause. -/
+theorem names_iff (f : Finding) (p : Plant) :
+    names f p = true ↔ normalize f.clause = normalize p.clause ∨
+      ((sentences f.clause).length ≤ 2 ∧ normalize p.clause ∈ sentences f.clause) := by
+  simp [names]
+
+private def rule : Plant :=
+  { kind := "shared blind spot", clause := "A restore request is refused when the holds reach 14.",
+    edits := [] }
+private def exception : Plant :=
+  { kind := "shared blind spot", edits := [],
+    clause := "The limit on the holds for a restore request doesn't apply to a senior member." }
+
+/-- A rule quoted with its exception names each of the two clauses, as quoted by the tools arm. -/
+example : names ⟨rule.clause ++ " " ++ exception.clause, "uncovered"⟩ exception = true := by
+  native_decide
+example : names ⟨rule.clause ++ " " ++ exception.clause, "uncovered"⟩ rule = true := by
+  native_decide
+/-- A quote of three sentences names neither, so quoting the prose finds nothing. -/
+example : names ⟨"A pay request is refused when the fines reach 3. " ++ rule.clause ++ " " ++
+    exception.clause, "uncovered"⟩ exception = false := by native_decide
+/-- Two sentences neither of which is the clause name nothing. -/
+example : names ⟨"A pay request is refused when the fines reach 3. A lend request is refused \
+    when the loans reach 4.", "uncovered"⟩ exception = false := by native_decide
+/-- A clause's words inside a longer sentence are not the clause. -/
+example : names ⟨"The limit on the holds for a restore request doesn't apply to a senior member \
+    or a staff member.", "uncovered"⟩ exception = false := by native_decide
 
 /-- The bar holds exactly when the ledger finds more blind spots and its false alarms stay within
 the baseline's plus one a variant. -/

@@ -15,8 +15,17 @@ structure Finding where
   kind : String
   deriving Repr, DecidableEq, Inhabited
 
-/-- A finding names a plant's clause. -/
-def names (f : Finding) (p : Plant) : Bool := normalize f.clause == normalize p.clause
+/-- A quote's sentences, normalized, the empty ones dropped. The generated prose holds no decimal
+point, so a period ends a sentence. -/
+def sentences (s : String) : List String :=
+  ((s.splitOn ".").map normalize).filter (· ≠ "")
+
+/-- A finding names a plant's clause: its quote is the clause, or holds at most two sentences (a
+clause with the one beside it, such as a rule with its exception) one of which is the clause. A
+quote of more sentences names a plant only by equality, so quoting the whole prose names nothing. -/
+def names (f : Finding) (p : Plant) : Bool :=
+  normalize f.clause == normalize p.clause ||
+    ((sentences f.clause).length ≤ 2 && (sentences f.clause).contains (normalize p.clause))
 
 structure Score where
   /-- Plants found, by kind. -/
