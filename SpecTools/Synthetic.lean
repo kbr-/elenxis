@@ -40,6 +40,10 @@ def applyEdits (files : List (String × String)) : List Edit → Except String (
 /-- A linear congruential generator's next state. -/
 def next (s : Nat) : Nat := (s * 6364136223846793005 + 1442695040888963407) % 2 ^ 64
 
+/-- A draw below `m` from state `s`, read from its high bits: a power-of-two generator's bit `k`
+repeats with period `2 ^ (k + 1)`, so its low bits are no fair draw. -/
+def draw (s m : Nat) : Nat := (s / 2 ^ 40) % m
+
 /-- `k` distinct indices below `n`, drawn from `seed`, in drawing order. -/
 def pick (seed n k : Nat) : List Nat :=
   go seed k (List.range n) []
@@ -49,7 +53,7 @@ where
     | _, [], acc => acc.reverse
     | k + 1, pool, acc =>
       let s' := next s
-      let i := (s' / 65536) % pool.length
+      let i := draw s' pool.length
       go s' k (pool.eraseIdx i) (pool[i]! :: acc)
 
 /-- A variant: its files and its key. -/
@@ -62,7 +66,7 @@ between one and three plants. -/
 def variant (catalogue : List Plant) (fixture : List (String × String)) (seed index empty : Nat) :
     Except String Variant :=
   let s := next (seed + index * 7919)
-  let count := if index < empty then 0 else 1 + (s / 65536) % 3
+  let count := if index < empty then 0 else 1 + draw s 3
   let chosen := (pick s catalogue.length count).map fun i => catalogue[i]!
   (applyEdits fixture (chosen.flatMap (·.edits))).map fun files => { files, key := chosen }
 
