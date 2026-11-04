@@ -1,0 +1,15 @@
+name = "lean-spec-tools"
+version = "0.1.0"
+defaultTargets = ["SpecTools", "spec-tools"]
+testDriver = "spec_tools_tests"
+
+[[lean_lib]]
+name = "SpecTools"
+
+[[lean_exe]]
+name = "spec-tools"
+root = "Main"
+
+[[lean_exe]]
+name = "spec_tools_tests"
+root = "Tests"
