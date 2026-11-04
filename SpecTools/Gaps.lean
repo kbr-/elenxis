@@ -50,13 +50,14 @@ def decided (facts : Facts) (rows : List Row) : List Gap :=
       some ⟨.tooWeak, r.id, "its theorems have hypotheses and no witness shows they can hold"⟩
     else none
 
-/-- A proposal as a gap, or why it is malformed: an unknown kind, or a row the ledger lacks. -/
+/-- A proposal as a gap, or why it is malformed: an unknown kind, or a row the ledger lacks. The
+refusal carries the proposal's kind and reason, so a person reads what was proposed. -/
 def accept (rows : List Row) (p : Proposal) : Except String Gap :=
   match Kind.parse p.kind with
-  | none => .error s!"unknown kind {p.kind}"
+  | none => .error s!"unknown kind \"{p.kind}\" on row \"{p.row}\": {p.why}"
   | some k =>
     if rows.any (·.id == p.row) then .ok ⟨k, p.row, p.why⟩
-    else .error s!"row {p.row} is not in the ledger"
+    else .error s!"row \"{p.row}\" is not in the ledger: {p.kind}: {p.why}"
 
 /-- What `gaps` prints: the gaps of each kind, and the proposals refused as malformed. -/
 structure Report where
