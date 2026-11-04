@@ -15,6 +15,102 @@ def fixtureFiles : List String := ["loans.md", "Loans.lean", "loans.py", "test_l
 open SpecTools.Synthetic in
 def synthetic (args : List String) : IO UInt32 := do
   match args with
+  | ["generate", seeds, ns, outDir] =>
+    -- The complete generated fixture of N rules from SEED, for each seed and N of the comma-separated
+    -- lists, in OUT-DIR/sSEED-nN: the controls generated variants are made from.
+    let some seeds := (seeds.splitOn ",").mapM String.toNat? | IO.eprintln "SEEDS are numbers"; return 2
+    let some ns := (ns.splitOn ",").mapM String.toNat? | IO.eprintln "NS are numbers"; return 2
+    for seed in seeds do
+      for n in ns do
+        let rs := SpecTools.Generated.rules seed n
+        let dir := System.FilePath.mk outDir / s!"s{seed}-n{n}"
+        IO.FS.createDirAll dir
+        for (f, text) in SpecTools.Generated.files (rs.map SpecTools.Generated.View.plain) do
+          IO.FS.writeFile (dir / f) text
+        let flagged := (rs.filter (·.flag.isSome)).length
+        let sums := (rs.filter (·.measures.length > 1)).length
+        IO.println s!"{dir}: {rs.length} rules ({flagged} with an exception, {sums} over two measures), {rs.length + flagged} clauses"
+    return 0
+  | ["gplants", seed, n, outDir] =>
+    -- One variant per plant shape over the fixture of N rules from SEED, each plant alone at a drawn
+    -- rule, and the negative control `omitted`, a rule's theorem left out with no row naming one.
+    let some seed := seed.toNat? | IO.eprintln "SEED is a number"; return 2
+    let some n := n.toNat? | IO.eprintln "N is a number"; return 2
+    let all := SpecTools.Generated.rules seed (n + 1)
+    let rs := all.take n
+    let extra := all.getLastD default
+    let plain := rs.map SpecTools.Generated.View.plain
+    let mut key : List String := []
+    for (shape, i) in SpecTools.Generated.shapes.zipIdx do
+      let cs := SpecTools.Generated.candidates rs extra shape
+      if cs.isEmpty then IO.eprintln s!"{shape}: no rule allows it"; return 1
+      let p := cs[SpecTools.Synthetic.draw (SpecTools.Synthetic.next (seed + i)) cs.length]!
+      let dir := System.FilePath.mk outDir / s!"p{i}"
+      IO.FS.createDirAll dir
+      for (f, text) in SpecTools.Generated.files (p.apply plain) do IO.FS.writeFile (dir / f) text
+      key := key ++ [s!"\{\"variant\": {i}, \"shape\": {shape.quote}, \"plants\": [\{\"kind\": {p.kind.quote}, \"clause\": {p.clause.quote}}]}"]
+    let dir := System.FilePath.mk outDir / "omitted"
+    IO.FS.createDirAll dir
+    let r := rs.headD default
+    for (f, text) in SpecTools.Generated.files (SpecTools.Generated.onRule r.id
+        (fun v => { v with omitTheorem := true }) plain) do
+      IO.FS.writeFile (dir / f) text
+    IO.FS.writeFile (System.FilePath.mk outDir / "key.jsonl") ("\n".intercalate key ++ "\n")
+    IO.println s!"{SpecTools.Generated.shapes.length} single-plant variants and the control `omitted` (rule r{r.id}) in {outDir}"
+    return 0
+  | ["gvariants", seed, n, count, empty, outDir]
+  | ["gvariants", seed, n, count, empty, outDir, "blind"] =>
+    -- A batch of COUNT variants of the fixture of N rules from SEED, the first EMPTY with no plant,
+    -- in the loans batches' layout, so `synthetic run` takes it; `blind` gives each three shared
+    -- blind spots and nothing else (the scaling measure).
+    let blindOnly := args.getLast? == some "blind"
+    let some seed := seed.toNat? | IO.eprintln "SEED is a number"; return 2
+    let some n := n.toNat? | IO.eprintln "N is a number"; return 2
+    let some count := count.toNat? | IO.eprintln "COUNT is a number"; return 2
+    let some empty := empty.toNat? | IO.eprintln "EMPTY is a number"; return 2
+    let all := SpecTools.Generated.rules seed (n + 1)
+    let rs := all.take n
+    IO.FS.createDirAll outDir
+    let mut key : List String := []
+    for i in List.range count do
+      let (vs, ps) := if blindOnly then
+          SpecTools.Generated.gvariant rs (all.getLastD default) seed i empty
+            SpecTools.Generated.blindShapes (some 3)
+        else SpecTools.Generated.gvariant rs (all.getLastD default) seed i empty
+      let dir := System.FilePath.mk outDir / s!"v{i}"
+      IO.FS.createDirAll dir
+      for (f, text) in SpecTools.Generated.files vs do IO.FS.writeFile (dir / f) text
+      let plants := ps.map fun p => s!"\{\"kind\": {p.kind.quote}, \"clause\": {p.clause.quote}}"
+      key := key ++ [s!"\{\"variant\": {i}, \"plants\": [{", ".intercalate plants}]}"]
+    IO.FS.writeFile (System.FilePath.mk outDir / "key.jsonl") ("\n".intercalate key ++ "\n")
+    IO.println s!"{count} variants of {n} rules in {outDir}, the key in {outDir}/key.jsonl"
+    return 0
+  | "control" :: dirs =>
+    -- Each fixture's audit and `tests`, three at a time (each `tests` runs three pytest copies), and
+    -- their summary lines; the full output of each goes to DIR/control.txt.
+    if dirs.isEmpty then IO.eprintln "usage: spec-tools synthetic control DIR..."; return 2
+    let root ← IO.currentDir
+    let width := 3
+    let batches := (List.range ((dirs.length + width - 1) / width)).map fun j =>
+      (dirs.drop (j * width)).take width
+    let mut failed := false
+    for batch in batches do
+      let tasks ← batch.mapM fun (dir : String) => IO.asTask do
+        let out ← IO.Process.output {
+          cmd := "lake", args := #["env", "lean", (System.FilePath.mk dir / "Loans.lean").toString],
+          cwd := some root.toString,
+          env := #[("SPEC_TOOLS_TESTS", some "1"), ("SPEC_TOOLS_DIR", some dir),
+                   ("SPEC_TOOLS_ADAPTER", some (root / "adapters" / "python_guards.py").toString),
+                   ("SPEC_TOOLS_GUARD_WORKERS", some "3")] }
+        IO.FS.writeFile (System.FilePath.mk dir / "control.txt") (out.stdout ++ out.stderr)
+        return (dir, out)
+      for t in tasks do
+        let (dir, out) ← IO.ofExcept t.get
+        let summary := (out.stdout.splitOn "\n").filter fun l =>
+          (l.splitOn " rows: ").length > 1 || (l.splitOn " guards, ").length > 1
+        IO.println s!"{dir}: exit {out.exitCode}; {"; ".intercalate summary}"
+        if out.exitCode != 0 || summary.length != 2 then failed := true
+    return if failed then 1 else 0
   | ["each", fixtureDir, outDir] =>
     -- One variant per plant, to check each plant on its own.
     let fixture ← fixtureFiles.mapM fun (f : String) => do
@@ -28,9 +124,15 @@ def synthetic (args : List String) : IO UInt32 := do
         for (f, text) in files do IO.FS.writeFile (dir / f) text
     IO.println s!"{SpecTools.LoansPlants.catalogue.length} single-plant variants in {outDir}"
     return 0
-  | ["run", outDir, agentModel, toolModel] =>
-    -- Each variant to both arms, `width` runs at a time (a batch of 10 in two waves); the key is read
-    -- only to score.
+  | ["run", outDir, agentModel, toolModel]
+  | ["run", outDir, agentModel, toolModel, "baseline"]
+  | ["run", outDir, agentModel, toolModel, "ledger"] =>
+    -- Each variant to both arms, or to the one arm named (the scaling measure and its comparison),
+    -- `width` runs at a time (a batch of 10 in two waves); the key is read only to score.
+    let arms := match args.getLast? with
+      | some "baseline" => [false]
+      | some "ledger" => [true]
+      | _ => [true, false]
     let keyText ← IO.FS.readFile (System.FilePath.mk outDir / "key.jsonl")
     let keys := (keyText.splitOn "\n").filter (· ≠ "") |>.filterMap fun l => do
       let j ← (Lean.Json.parse l).toOption
@@ -43,7 +145,7 @@ def synthetic (args : List String) : IO UInt32 := do
       { harness := .claudeCode, model := agentModel, dataGoesTo := "Anthropic" }
     let width := 10
     let jobs : List (List Plant × Nat × Bool) :=
-      keys.zipIdx.flatMap fun (k, i) => [(k, i, true), (k, i, false)]
+      keys.zipIdx.flatMap fun (k, i) => arms.map fun a => (k, i, a)
     let batches := (List.range ((jobs.length + width - 1) / width)).map fun j =>
       (jobs.drop (j * width)).take width
     let mut results : Array String := #[]
@@ -68,7 +170,7 @@ def synthetic (args : List String) : IO UInt32 := do
           results := results.push s!"\{\"variant\": {i}, \"arm\": \"{arm}\", \"found\": {s.found.length}, \"missed\": {s.missed.length}, \"false_alarms\": {s.falseAlarms}, \"ms\": {ms}, \"tokens\": {tokens}, \"checks\": {(checks.map (·.quote)).toString}, \"found_kinds\": {(s.found.map (·.quote)).toString}, \"missed_kinds\": {(s.missed.map (·.quote)).toString}, \"findings\": {(fs.map fun f => s!"[{f.clause.quote}, {f.kind.quote}]").toString}}"
           totals := (ledger, s.found.length, s.missed.length, s.falseAlarms) :: totals
     IO.FS.writeFile (System.FilePath.mk outDir / "results.jsonl") ("\n".intercalate results.toList ++ "\n")
-    for arm in [true, false] do
+    for arm in arms do
       let ts := totals.filter (·.1 == arm)
       IO.println s!"{if arm then "ledger" else "baseline"}: {ts.length} runs, found \
         {(ts.map (·.2.1)).sum}, missed {(ts.map (·.2.2.1)).sum}, false alarms {(ts.map (·.2.2.2)).sum}"

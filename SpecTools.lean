@@ -19,3 +19,5 @@ import SpecTools.LoansPlants
 import SpecTools.Score
 import SpecTools.ScoreProofs
 import SpecTools.SyntheticRun
+import SpecTools.Generated
+import SpecTools.GeneratedProofs
