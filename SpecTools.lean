@@ -8,3 +8,6 @@ import SpecTools.LedgerTable
 import SpecTools.LedgerTableProofs
 import SpecTools.Clauses
 import SpecTools.ClausesProofs
+import SpecTools.Gaps
+import SpecTools.GapsProofs
+import SpecTools.GapsRun

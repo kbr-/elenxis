@@ -39,6 +39,9 @@ theorem differences_one (a : List String) (c : String) (h : c ∉ a) :
   have h2 : missingFrom (a ++ [c]) a = [] := missingFrom_nil fun x hx => by simp [hx]
   simp [differences, h1, h2]
 
+/-- A table row as two extractions wrote it in the live run on the fixture compares equal. -/
+example : normalize "standard | 14 days" = normalize "standard: 14 days" := by decide +kernel
+
 /-- A witness for `differences_one`'s hypothesis. -/
 example : "a hold blocks renewal" ∉ ["a loan ends by its due date"] := by decide
 

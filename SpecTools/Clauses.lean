@@ -9,10 +9,18 @@ comparison is pure (`differences`); the extraction asks a model through `SpecToo
 namespace SpecTools.Clauses
 open Lean SpecTools.Model
 
-/-- A clause as compared: lower case, runs of white space as one space, trimmed. -/
+/-- A clause as compared: its words in lower case, one space apart. Punctuation separates words and
+is dropped, so a table row written `standard | 14 days` and `standard: 14 days` compare equal. -/
 def normalize (s : String) : String :=
-  " ".intercalate ((s.toLower.splitOn " ").filter (· ≠ "") |>.flatMap fun w =>
-    (w.splitOn "\n").filter (· ≠ ""))
+  let spaced := s.toList.map fun c => if c.isAlphanum then c.toLower else ' '
+  String.ofList ((collapse true spaced).reverse.dropWhile (· == ' ')).reverse
+where
+  /-- Runs of spaces as one, leading ones dropped; structural, so the kernel evaluates it. -/
+  collapse : Bool → List Char → List Char
+    | _, [] => []
+    | afterSpace, c :: cs =>
+      if c == ' ' then (if afterSpace then collapse true cs else ' ' :: collapse true cs)
+      else c :: collapse false cs
 
 /-- The members of `b` that `a` lacks, each once. -/
 def missingFrom (a b : List String) : List String := (b.filter (!a.contains ·)).eraseDups
