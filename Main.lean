@@ -85,6 +85,55 @@ def synthetic (args : List String) : IO UInt32 := do
     IO.FS.writeFile (System.FilePath.mk outDir / "key.jsonl") ("\n".intercalate key ++ "\n")
     IO.println s!"{count} variants of {n} rules in {outDir}, the key in {outDir}/key.jsonl"
     return 0
+  | ["gapsrun", seed, n, outDir, model] =>
+    -- `gaps` itself on each variant of a batch written by gvariants SEED N, three at a time, scored
+    -- by row against the key (Generated.rowScore); the full output of each goes to vI/gaps.txt.
+    let some seed := seed.toNat? | IO.eprintln "SEED is a number"; return 2
+    let some n := n.toNat? | IO.eprintln "N is a number"; return 2
+    let rs := SpecTools.Generated.rules seed n
+    let keyText ← IO.FS.readFile (System.FilePath.mk outDir / "key.jsonl")
+    let keys : List (List String) := (keyText.splitOn "\n").filter (· ≠ "") |>.filterMap fun l => do
+      let j ← (Lean.Json.parse l).toOption
+      let plants ← (j.getObjValAs? (Array Lean.Json) "plants").toOption
+      plants.toList.mapM fun p => (p.getObjValAs? String "clause").toOption
+    let root ← IO.currentDir
+    let width := 3
+    let jobs := keys.zipIdx
+    let batches := (List.range ((jobs.length + width - 1) / width)).map fun j =>
+      (jobs.drop (j * width)).take width
+    let mut found := 0
+    let mut planted := 0
+    let mut alarms := 0
+    let mut failed := 0
+    for batch in batches do
+      let tasks ← batch.mapM fun ((k, i) : List String × Nat) => IO.asTask do
+        let dir := System.FilePath.mk outDir / s!"v{i}"
+        let out ← IO.Process.output {
+          cmd := "lake", args := #["env", "lean", (dir / "Loans.lean").toString],
+          cwd := some root.toString,
+          env := #[("SPEC_TOOLS_GAPS", some model), ("SPEC_TOOLS_DIR", some dir.toString)] }
+        IO.FS.writeFile (dir / "gaps.txt") (out.stdout ++ out.stderr)
+        return (k, i, out)
+      for t in tasks do
+        let (k, i, out) ← IO.ofExcept t.get
+        let lines := out.stdout.splitOn "\n"
+        let rows := lines.filterMap fun l =>
+          match l.splitOn ": " with
+          | kind :: row :: _ =>
+            if ["uncovered", "too weak", "undecided", "extra"].contains kind then some row else none
+          | _ => none
+        let summary := lines.filter fun l => (l.splitOn " gaps, ").length > 1
+        if out.exitCode != 0 || summary.isEmpty then
+          failed := failed + 1
+          IO.println s!"v{i}: failed (exit {out.exitCode}); see v{i}/gaps.txt"
+        else
+          let (f, a) := SpecTools.Generated.rowScore rs k rows
+          found := found + f
+          planted := planted + k.length
+          alarms := alarms + a
+          IO.println s!"v{i}: found {f} of {k.length}, false alarms {a}; rows {rows}"
+    IO.println s!"gaps: {keys.length - failed} variants scored, found {found} of {planted}, false alarms {alarms}, {failed} failed"
+    return if failed == 0 then 0 else 1
   | "control" :: dirs =>
     -- Each fixture's audit and `tests`, three at a time (each `tests` runs three pytest copies), and
     -- their summary lines; the full output of each goes to DIR/control.txt.

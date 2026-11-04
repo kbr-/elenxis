@@ -132,6 +132,13 @@ theorem gvariant_plants_disjoint (rs : List Rule) (extra : Rule) (seed index emp
       (fun p q => ∀ x ∈ p.touches, x ∉ q.touches) :=
   (drawPlants_disjoint _ _ _ _ _ _).2
 
+/-- `gaps`' row scoring on a hand case: rule 3's exception row found, a gap on rule 5 a false alarm,
+a gap whose row names no rule a false alarm, and a row naming the rule twice counted once found. -/
+example : rowScore [{ id := 3, kind := "pay", measures := ["fines"], bound := 9, flag := none },
+    { id := 5, kind := "lend", measures := ["loans"], bound := 4, flag := none }]
+    ["The limit on the fines for a pay request doesn't apply to a staff member."]
+    ["r3-exempt", "r3", "r5", "loans"] = (1, 2) := by native_decide
+
 /-- No two rules of a generated requirement read the same (kind, measure) pair. -/
 theorem rules_pairs_nodup (seed n : Nat) : ((rules seed n).flatMap Rule.pairs).Nodup :=
   (go_pairs _ _ _ _ _).1

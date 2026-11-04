@@ -307,6 +307,29 @@ def candidates (rs : List Rule) (extra : Rule) (shape : String) : List GPlant :=
       | _ => none
   | _ => []
 
+/-! Scoring `gaps` by row: a gap names a ledger row (`rK` or `rK-exempt`), a plant a clause; both
+map to a rule's number. -/
+
+/-- The rule a ledger row's identifier names: the digits after `r`. -/
+def rowRule (row : String) : Option Nat :=
+  if row.startsWith "r" then ((row.drop 1).takeWhile Char.isDigit).toNat? else none
+
+/-- The rule a prose clause speaks of: the one whose kind and first measure it names, which no other
+rule shares (`rules_pairs_nodup`). -/
+def clauseRule (rs : List Rule) (clause : String) : Option Nat :=
+  let has (s : String) := (clause.splitOn s).length > 1
+  (rs.find? fun r => has s!" {r.kind} request" &&
+    match r.measures with | m :: _ => has s!"the {words m}" | [] => false).map (·.id)
+
+/-- `gaps`' rows against a variant's plants: the plants whose rule some gap names (found), and the
+gaps naming no plant's rule (false alarms). -/
+def rowScore (rs : List Rule) (plantClauses : List String) (gapRows : List String) : Nat × Nat :=
+  let plantRules := plantClauses.filterMap (clauseRule rs)
+  let named := gapRows.filterMap rowRule
+  ((plantRules.filter (named.contains ·)).length,
+   (gapRows.filter fun g => match rowRule g with
+     | some k => !plantRules.contains k | none => true).length)
+
 /-- `left` plants drawn from state `s`, in drawing order, none touching a rule in `touched` or one an
 earlier plant touched; a draw finding no free candidate plants nothing. -/
 def drawPlants (rs : List Rule) (extra : Rule) (shapes : List String) :
