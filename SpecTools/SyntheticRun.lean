@@ -50,19 +50,33 @@ def workflowOnly : String :=
   "Work through the requirements clause by clause against the ledger's rows, the Lean statements, \
   loans.py and the tests, in that order. Check each finding against the files before you report it."
 
-/-- The three arms: the bare agent, the agent with the ledger's tools and workflow, and the agent
-with the workflow alone. -/
+/-- The arms: the bare agent; the agent offered the ledger's tools with its workflow; the agent with
+the workflow alone; and the agent given the tools' reports, run before it starts. -/
 inductive Arm where
-  | baseline | ledger | workflow
+  | baseline | ledger | workflow | tools
   deriving DecidableEq, Repr
 
 def Arm.name : Arm → String
-  | .baseline => "baseline" | .ledger => "ledger" | .workflow => "workflow"
+  | .baseline => "baseline" | .ledger => "ledger" | .workflow => "workflow" | .tools => "tools"
 
-def Arm.prompt : Arm → String
+/-- What the tools arm is told of the reports it gets. -/
+def toolsIntro : String :=
+  "The spec tools ran on this directory before you started; their reports follow (the audit's \
+  verdicts other than proved rows, `tests`' findings, `gaps`' proposals). Check each against the \
+  files before you report it, and look past them: a tool can miss a gap and propose a false one. \
+  You may rerun them with `./check.sh audit|tests|gaps`."
+
+/-- An arm's prompt; `reports` is the tools arm's tool output, empty for the others. -/
+def Arm.prompt (arm : Arm) (reports : String := "") : String := match arm with
   | .baseline => task ++ "\n\n" ++ answerFormat
   | .ledger => task ++ "\n\n" ++ ledgerTools ++ "\n\n" ++ answerFormat
   | .workflow => task ++ "\n\n" ++ workflowOnly ++ "\n\n" ++ answerFormat
+  | .tools => task ++ "\n\n" ++ toolsIntro ++ "\n\n" ++ reports ++ "\n\n" ++ answerFormat
+
+/-- The audit's report without its proved rows and their statements, which the files hold. -/
+def auditDigest (out : String) : String :=
+  "\n".intercalate ((out.splitOn "\n").filter fun l =>
+    !(l.startsWith "proved: ") && !(l.startsWith "  ") && l ≠ "")
 
 def checkScript (root : String) (model : String) : String :=
   "\n".intercalate [
@@ -86,10 +100,11 @@ def findingsOf (j : Json) : Option (List Finding) := do
     let kind ← (f.getObjValAs? String "kind").toOption
     return { clause, kind }
 
-/-- The tools of an arm: reading and the tests for all, `./check.sh` for the ledger's alone. -/
+/-- The tools of an arm: reading and the tests for all, `./check.sh` for the ledger's and the tools
+arm. -/
 def armTools (arm : Arm) : List String :=
   ["Read", "Glob", "Grep", "Bash(python3 -m pytest *)"] ++
-    (if arm == .ledger then ["Bash(./check.sh *)"] else [])
+    (if arm == .ledger || arm == .tools then ["Bash(./check.sh *)"] else [])
 
 /-- One arm's run on one variant: its findings, its cost and the `check.sh` commands it ran, or why
 there are none. -/
@@ -99,10 +114,21 @@ def runArm (backend : Backend) (variantDir : System.FilePath) (arm : Arm) (root 
   let work := (← IO.FS.createTempDir) / "variant"
   IO.FS.createDirAll work
   for f in files do IO.FS.writeFile (work / f) (← IO.FS.readFile (variantDir / f))
-  if arm == .ledger then
+  if arm == .ledger || arm == .tools then
     IO.FS.writeFile (work / "check.sh") (checkScript root toolModel)
     discard <| IO.Process.output { cmd := "chmod", args := #["+x", (work / "check.sh").toString] }
-  let question : Question := { prompt := arm.prompt, schema := findingsSchema, timeoutMs }
+  -- The tools arm's reports, run before the agent starts; check.log then records only the
+  -- agent's own reruns.
+  let reports ← if arm == .tools then do
+      let run (c : String) := IO.Process.output
+        { cmd := (work / "check.sh").toString, args := #[c], cwd := some work.toString }
+      let audit ← run "audit"
+      let tests ← run "tests"
+      let gaps ← run "gaps"
+      if ← (work / "check.log").pathExists then IO.FS.removeFile (work / "check.log")
+      pure s!"## audit\n{auditDigest audit.stdout}\n\n## tests\n{tests.stdout}\n\n## gaps\n{gaps.stdout}"
+    else pure ""
+  let question : Question := { prompt := arm.prompt reports, schema := findingsSchema, timeoutMs }
   let inv := agentInvocation backend question (armTools arm) work
   let ran ← liveRunner inv (readBackFiles backend.harness) timeoutMs
   let log := work / "check.log"

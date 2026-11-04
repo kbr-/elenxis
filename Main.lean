@@ -176,15 +176,17 @@ def synthetic (args : List String) : IO UInt32 := do
   | ["run", outDir, agentModel, toolModel]
   | ["run", outDir, agentModel, toolModel, "baseline"]
   | ["run", outDir, agentModel, toolModel, "ledger"]
-  | ["run", outDir, agentModel, toolModel, "workflow"] =>
+  | ["run", outDir, agentModel, toolModel, "workflow"]
+  | ["run", outDir, agentModel, toolModel, "tools"] =>
     -- Each variant to the ledger's and the baseline's arms, or to the one arm named (the scaling
-    -- measure, its comparison, the prompt-only control), `width` runs at a time (a batch of 10 in
-    -- two waves); the key is read only to score. One arm's results go to results-ARM.jsonl, so a
-    -- batch's two-arm results.jsonl stays.
+    -- measure, its comparison, the prompt-only control, the tools run first), `width` runs at a
+    -- time (a batch of 10 in two waves); the key is read only to score. One arm's results go to
+    -- results-ARM.jsonl, so a batch's two-arm results.jsonl stays.
     let arms : List SpecTools.SyntheticRun.Arm := match args.getLast? with
       | some "baseline" => [.baseline]
       | some "ledger" => [.ledger]
       | some "workflow" => [.workflow]
+      | some "tools" => [.tools]
       | _ => [.ledger, .baseline]
     let resultsFile := if arms.length == 1 then s!"results-{(arms.headD .baseline).name}.jsonl"
       else "results.jsonl"
@@ -198,7 +200,9 @@ def synthetic (args : List String) : IO UInt32 := do
     let root ← IO.currentDir
     let backend : SpecTools.Model.Backend :=
       { harness := .claudeCode, model := agentModel, dataGoesTo := "Anthropic" }
-    let width := 10
+    -- The tools arm starts each run's audit, tests and gaps at once: three controls together peaked
+    -- at 2.037 GiB, so ten of its runs with their agents near the 10 GiB budget; five at a time.
+    let width := if arms == [.tools] then 5 else 10
     let jobs : List (List Plant × Nat × SpecTools.SyntheticRun.Arm) :=
       keys.zipIdx.flatMap fun (k, i) => arms.map fun a => (k, i, a)
     let batches := (List.range ((jobs.length + width - 1) / width)).map fun j =>
