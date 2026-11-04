@@ -16,3 +16,5 @@ import SpecTools.TestsProofs
 import SpecTools.Synthetic
 import SpecTools.SyntheticProofs
 import SpecTools.LoansPlants
+import SpecTools.Score
+import SpecTools.ScoreProofs

@@ -27,7 +27,7 @@ def catalogue : List Plant := [
       lean "theorem witness_owing : 10 ≤ heldLent.fine 3 := by decide\n" "",
       lean "    theorems := [``borrow_owing], witnesses := [``witness_owing] },"
         "    theorems := [``borrow_owing] },"] },
-  { kind := "extra", clause := "(none: a statement the prose doesn't ask for)", edits := [
+  { kind := "extra", clause := "Paying the whole fine clears it.", edits := [
       lean "theorem refused_changes_nothing (s : State) : apply s none = s := rfl\n"
         "theorem refused_changes_nothing (s : State) : apply s none = s := rfl\n\ntheorem pay_all (s : State) (m : Nat) : (pay s m (s.fine m)).fine m = 0 := by\n  simp [pay, State.setFine, State.fine]\n",
       lean "  { id := \"refusal\", clause := \"A request that is refused changes nothing.\","
