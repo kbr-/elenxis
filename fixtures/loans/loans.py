@@ -1,3 +1,4 @@
+# CONFESSION: the synthetic test specifies a Python implementation, so its fixture's implementation is Python.
 """The synthetic fixture's Python implementation of loans.md, the same operations as Loans.lean.
 
 Each operation returns the new state, or None for a refused request; states are immutable.

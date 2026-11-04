@@ -1,3 +1,4 @@
+# CONFESSION: the fixture's implementation is Python, so its property tests run under pytest and Hypothesis.
 """Property tests of loans.py, one or more per clause of loans.md, named by the ledger row they cover.
 
 The domain: states built by applying random requests to an empty library of copies 0 to 9 and
