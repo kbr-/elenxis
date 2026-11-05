@@ -43,7 +43,7 @@ def testOverrun : IO Unit := do
 /-- Run the audit over a Lean file written for the case, in this project's environment. -/
 def auditCase (dir : System.FilePath) (name body : String) : IO (UInt32 × String) := do
   let file := dir / s!"{name}.lean"
-  IO.FS.writeFile file ("import SpecTools.Audit\nopen SpecTools.Ledger\n" ++ body)
+  IO.FS.writeFile file ("import SpecTools.Audit\nimport SpecTools.GapsRun\nopen SpecTools.Ledger\n" ++ body)
   let out ← IO.Process.output { cmd := "lake", args := #["env", "lean", file.toString] }
   return (out.exitCode, out.stdout ++ out.stderr)
 
@@ -93,10 +93,55 @@ def testAudit : IO Unit := do
   ensure (code == 0 && has out "too weak or vacuous: r1")
     s!"hypotheses without a witness are reported:\n{out}"
 
+def testRequirementAudits : IO Unit := IO.FS.withTempDir fun dir => do
+  let cases : List (String × String × Bool × List String) := [
+    ("Requirement", "def obligation (n : Nat) : Prop := n + 0 = n\n\
+      #eval SpecTools.Audit.run [{ id := \"r\", clause := \"identity\", theorems := [``obligation] }] \
+      `Requirement (requirements := true)\n", true, ["specified (unproved): r", "n + 0 = n"]),
+    ("ProofOnly", "def obligation : Prop := True\n\
+      #eval SpecTools.Audit.run [{ id := \"r\", clause := \"identity\", theorems := [``obligation] }] \
+      `ProofOnly\n", false, ["which is no theorem"]),
+    ("WrongType", "def notAProperty : Nat := 4\n\
+      #eval SpecTools.Audit.run [{ id := \"r\", clause := \"identity\", theorems := [``notAProperty] }] \
+      `WrongType (requirements := true)\n", false, ["not a proposition"]),
+    ("MissingRequirement", "#eval SpecTools.Audit.run \
+      [{ id := \"r\", clause := \"identity\", theorems := [`absent] }] \
+      `MissingRequirement (requirements := true)\n", false, ["names absent"]),
+    ("EmptyRequirements", "#eval SpecTools.Model.liveCallsForbidden.set true\n\
+      #eval SpecTools.Gaps.run [] \"\" \
+      { harness := .codex, model := \"must-not-run\", dataGoesTo := \"forbidden\" } (requirements := true)\n",
+      false, ["specification ledger is empty"]),
+    ("UntrustedRequirement", "axiom untrusted : Prop\ndef obligation : Prop := untrusted\n\
+      #eval SpecTools.Audit.run [{ id := \"r\", clause := \"identity\", theorems := [``obligation] }] \
+      `UntrustedRequirement (requirements := true)\n", false, ["conditional"]),
+    ("OpaqueRequirement", "opaque obligation : Prop := True\n\
+      #eval SpecTools.Audit.run [{ id := \"r\", clause := \"identity\", theorems := [``obligation] }] \
+      `OpaqueRequirement (requirements := true)\n", false, ["safe requirement body"]),
+    ("UnsafeRequirement", "unsafe def obligation : Prop := True\n\
+      #eval SpecTools.Audit.run [{ id := \"r\", clause := \"identity\", theorems := [``obligation] }] \
+      `UnsafeRequirement (requirements := true)\n", false, ["safe requirement body"]),
+    ("MultipleInvalidRequirements", "def notAProperty : Nat := 4\n\
+      #eval SpecTools.Audit.run [{ id := \"r\", clause := \"identity\", \
+      theorems := [`absent, ``notAProperty] }] `MultipleInvalidRequirements (requirements := true)\n",
+      false, ["names absent", "notAProperty is not a proposition"]),
+    ("UnprovedWitness", "theorem guarded (h : False) : False := h\ndef witness : Prop := False\n\
+      #eval SpecTools.Audit.run [{ id := \"r\", clause := \"identity\", \
+      theorems := [``guarded], witnesses := [``witness] }] `UnprovedWitness (requirements := true)\n",
+      false, ["witness witness is not proved"])]
+  let running ← cases.mapM fun (name, body, passes, messages) => do
+    let task ← IO.asTask (auditCase dir name body)
+    return (name, passes, messages, task)
+  for (name, passes, messages, task) in running do
+    let (code, output) ← IO.ofExcept task.get
+    ensure ((code == 0) == passes && messages.all (has output)) s!"{name}: {output}"
+  IO.println "PASS: requirement audit (unproved, proof-only, wrong type, missing, empty, untrusted, opaque, unsafe, all findings, witness)"
+
 def main : IO Unit := do
+  let requirements ← IO.asTask testRequirementAudits
   testFinishedProcess
   testOverrun
   testAudit
+  IO.ofExcept requirements.get
   IO.println "PASS: audit (pass, unchanged, changed, missing, unclaimed, axiom, vacuous)"
   liveCallsForbidden.set true
   let blocked ← (liveRunner { cmd := "true", args := #[], cwd := "." } [] 1000).toBaseIO

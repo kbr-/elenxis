@@ -32,7 +32,7 @@ def missingModules (env : Environment) (dir : System.FilePath) : CommandElabM (L
   return (names.filter (!env.header.moduleNames.contains ·)).map toString
 
 /-- What the environment says of a name. -/
-def factOf (name : Name) : CommandElabM (Option Fact) := do
+def factOf (name : Name) (requirements : Bool := false) : CommandElabM (Option Fact) := do
   match (← getEnv).find? name with
   | some (.thmInfo info) =>
     let statement := toString (← liftTermElabM <| ppExpr info.type)
@@ -40,7 +40,15 @@ def factOf (name : Name) : CommandElabM (Option Fact) := do
     let hypotheses ← liftTermElabM <| forallTelescope info.type fun xs _ =>
       xs.anyM fun x => do isProp (← inferType x)
     return some { statement, axioms, hypotheses }
-  | _ => return none
+  | some info =>
+    if !requirements then return none
+    let isProposition ← liftTermElabM <| forallTelescope info.type fun parameters _ =>
+      isProp (mkAppN (mkConst name (info.levelParams.map Level.param)) parameters)
+    let kind := requirementKind isProposition info.value?.isSome info.isUnsafe
+    let statement ← liftTermElabM <| ppExpr (info.value?.getD info.type)
+    let axioms := (← liftCoreM <| collectAxioms name).toList
+    return some { statement := toString statement, axioms, hypotheses := false, kind }
+  | none => return none
 
 /-- Read stored digests: one `id digest` per line; a missing file is no digests. -/
 def readDigests (path : System.FilePath) : IO (List (String × UInt64)) := do
@@ -60,18 +68,19 @@ theorem no row claims, a source module the audit doesn't import. A row not state
 too weak fails nothing: the report exists to show it. With `digestFile`, rows whose clause and named
 statements are unchanged since the last run are listed as unchanged and not re-judged. -/
 def run (rows : List Row) (root : Name) (sourceDir : Option System.FilePath := none)
-    (digestFile : Option System.FilePath := none) : CommandElabM Unit := do
+    (digestFile : Option System.FilePath := none) (requirements : Bool := false) : CommandElabM Unit := do
   let env ← getEnv
   let names := (rows.flatMap fun r => r.theorems ++ r.witnesses).eraseDups
   let mut table : List (Name × Fact) := []
   for n in names do
-    if let some f ← factOf n then table := (n, f) :: table
+    if let some f ← factOf n requirements then table := (n, f) :: table
   let facts : Facts := fun n => table.lookup n
   let stored ← match digestFile with
     | some p => readDigests p
     | none => pure []
   let judged := toRejudge stored facts rows
   let mut errors : List String := (repeatedIds rows).map (s!"row {·} is listed twice")
+  errors := errors ++ auditIssues requirements facts rows
   let mut counts : List (String × Nat) := []
   for row in rows do
     if !judged.any (·.id == row.id) then
@@ -93,7 +102,8 @@ def run (rows : List Row) (root : Name) (sourceDir : Option System.FilePath := n
     for m in ← missingModules env dir do
       errors := errors ++ [s!"the audit does not import module {m}"]
   let count (label : String) := (counts.lookup label).getD 0
-  IO.println s!"{rows.length} rows: {count "proved"} proved, {count "conditional"} conditional, \
+  IO.println s!"{rows.length} rows: {count "proved"} proved{specificationSuffix requirements (count "specified (unproved)")}, \
+    {count "conditional"} conditional, \
     {count "too weak or vacuous"} too weak or vacuous, {count "not stated"} not stated \
     ({judged.length} judged)"
   if let some p := digestFile then

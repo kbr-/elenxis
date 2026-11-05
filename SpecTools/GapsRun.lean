@@ -11,9 +11,12 @@ open Lean Elab Command SpecTools.Ledger SpecTools.Model SpecTools.Audit
 
 def gapsPrompt (prose : String) (rows : List Row) (facts : Facts) : String :=
   let rowText := rows.map fun r =>
-    let stmts := r.theorems.filterMap fun n => (facts n).map fun f => s!"    {n} : {f.statement}"
+    let stmts := (r.theorems ++ r.witnesses).eraseDups.filterMap fun n => (facts n).map fun f =>
+      s!"    {n} [{reprStr f.kind}] : {f.statement}"
     s!"- {r.id}: {r.clause}\n" ++ "\n".intercalate stmts
-  "Below are requirements in prose and a ledger of rows, each row a clause with the Lean \
+  "A requirement declaration states an unproved obligation; it does not establish its truth. \
+  For those declarations, judge whether the proposition states the required behavior completely. \
+  Below are requirements in prose and a ledger of rows, each row a clause with the Lean \
   statements claimed to establish it. Report each gap: `uncovered` (a clause of the prose no row \
   states, or a row whose statements don't establish its clause), `too weak` (a statement weaker \
   than its clause), `undecided` (a case the prose leaves open that the statements decide), \
@@ -24,13 +27,15 @@ def gapsPrompt (prose : String) (rows : List Row) (facts : Facts) : String :=
   gap.\n\n# Prose\n\n" ++ prose ++ "\n\n# Ledger\n\n" ++ "\n".intercalate rowText
 
 /-- Print the gaps of the ledger `rows` against `prose`, asking `backend` for what Lean can't decide. -/
-def run (rows : List Row) (prose : String) (backend : Backend) (timeoutMs : Nat := 300000) :
+def run (rows : List Row) (prose : String) (backend : Backend) (timeoutMs : Nat := 300000)
+    (requirements : Bool := false) :
     CommandElabM Unit := do
   let names := (rows.flatMap fun r => r.theorems ++ r.witnesses).eraseDups
   let mut table : List (Name × Fact) := []
   for n in names do
-    if let some f ← factOf n then table := (n, f) :: table
+    if let some f ← factOf n requirements then table := (n, f) :: table
   let facts : Facts := fun n => table.lookup n
+  IO.ofExcept (validateRequirements requirements facts rows)
   let scratch ← IO.FS.createTempDir
   let answer ← ask liveRunner [backend] backend
     { prompt := gapsPrompt prose rows facts, schema := proposalSchema, timeoutMs } scratch

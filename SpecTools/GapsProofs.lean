@@ -36,7 +36,7 @@ theorem accepted_printed (facts : Facts) (rows : List Row) (ps : List Proposal) 
   exact List.mem_filterMap.mpr ⟨p, hp, by simp [hg, Except.toOption]⟩
 
 /-- Witness: a row whose verdict is too weak or vacuous. -/
-example : (verdict (fun n => if n == `t then some ⟨"", [], true⟩ else none)
+example : (verdict (fun n => if n == `t then some { statement := "", axioms := [], hypotheses := true } else none)
     { id := "r", clause := "c", theorems := [`t] } == .tooWeakOrVacuous) = true := by decide
 
 /-- Witness: a proposal naming a row the ledger lacks. -/

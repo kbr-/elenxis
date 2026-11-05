@@ -57,37 +57,188 @@ theorem verdict_proved (facts : Facts) (row : Row) (h : verdict facts row = .pro
   split at h
   · cases h
   · rename_i hm
-    refine ⟨firstMissing_none hm, ?_⟩
     split at h
     · cases h
-    · rename_i hne
-      split at h
+    · split at h
       · cases h
-      · rename_i hu
-        refine ⟨by simpa using hne, hu, ?_⟩
-        split at h
+      · split at h
         · cases h
-        · rename_i hw
-          intro hany hnil
-          apply hw
-          simp [hnil, hany]
+        · rename_i hne
+          split at h
+          · cases h
+          · rename_i hu
+            split at h
+            · split at h
+              · cases h
+              · rename_i hw
+                refine ⟨firstMissing_none hm, by simpa using hne, hu, ?_⟩
+                intro hany hnil
+                apply hw
+                simp [hnil, hany]
+            · cases h
+
+theorem proof_kinds_exclude (facts : Facts) (names : List Name)
+    (proofs : ∀ n ∈ names, (facts n).any (·.kind == .theoremStatement) = true)
+    (kind : StatementKind) (different : kind ≠ .theoremStatement) :
+    names.find? (fun n => (facts n).any (·.kind == kind)) = none ∧
+      names.any (fun n => (facts n).any (·.kind == kind)) = false := by
+  have absent (n : Name) (member : n ∈ names) : (facts n).any (·.kind == kind) = false := by
+    have known := proofs n member
+    cases value : facts n with
+    | none => simp [value] at known
+    | some fact =>
+      have proofKind : fact.kind = .theoremStatement := by simpa [value] using known
+      simp [proofKind, Ne.symm different]
+  have never (n : Name) (member : n ∈ names) : ¬ (facts n).any (·.kind == kind) = true := by
+    rw [absent n member]
+    decide
+  exact ⟨List.find?_eq_none.mpr never, List.any_eq_false.mpr never⟩
 
 /-- An axiom outside the accepted three makes the row conditional. -/
 theorem verdict_conditional (facts : Facts) (row : Row) (hall : firstMissing facts (row.theorems ++ row.witnesses) = none)
     (hne : row.theorems ≠ []) (a : Name) (as : List Name)
-    (hu : unaccepted facts (row.theorems ++ row.witnesses) = a :: as) :
+    (hu : unaccepted facts (row.theorems ++ row.witnesses) = a :: as)
+    (proofs : ∀ n ∈ row.theorems ++ row.witnesses, (facts n).any (·.kind == .theoremStatement) = true) :
     verdict facts row = .conditional (a :: as) := by
   have : row.theorems.isEmpty = false := by simpa using hne
-  simp [verdict, hall, this, hu]
+  have valid := proof_kinds_exclude facts _ proofs .notProposition (by decide)
+  have visible := proof_kinds_exclude facts _ proofs .unavailableBody (by decide)
+  simp only [verdict, hall, valid.1, visible.1, this, Bool.false_eq_true, ↓reduceIte, hu]
 
 /-- Hypotheses with no witness make the row too weak or vacuous. -/
 theorem verdict_vacuous (facts : Facts) (row : Row) (hall : firstMissing facts row.theorems = none)
     (hne : row.theorems ≠ []) (hw : row.witnesses = [])
     (hu : unaccepted facts row.theorems = [])
-    (hyp : row.theorems.any (fun n => (facts n).any (·.hypotheses)) = true) :
+    (hyp : row.theorems.any (fun n => (facts n).any (·.hypotheses)) = true)
+    (proofs : ∀ n ∈ row.theorems, (facts n).any (·.kind == .theoremStatement) = true) :
     verdict facts row = .tooWeakOrVacuous := by
   have : row.theorems.isEmpty = false := by simpa using hne
-  simp [verdict, hw, hall, this, hu, hyp]
+  have valid := proof_kinds_exclude facts _ proofs .notProposition (by decide)
+  have visible := proof_kinds_exclude facts _ proofs .unavailableBody (by decide)
+  have allProofs := List.all_eq_true.mpr proofs
+  simp only [verdict, hw, List.append_nil, hall, valid.1, visible.1, this,
+    Bool.false_eq_true, ↓reduceIte, hu, allProofs, List.isEmpty_nil, hyp, Bool.and_self]
+
+theorem proved_requires_theorems (facts : Facts) (row : Row) (h : verdict facts row = .proved) :
+    (row.theorems ++ row.witnesses).all (fun n => (facts n).any (·.kind == .theoremStatement)) = true := by
+  unfold verdict at h
+  split at h
+  · cases h
+  · split at h
+    · cases h
+    · split at h
+      · cases h
+      · split at h
+        · cases h
+        · split at h
+          · cases h
+          · split at h
+            · assumption
+            · cases h
+
+theorem unproved_requirement_never_proved (facts : Facts) (row : Row) (name : Name)
+    (member : name ∈ row.theorems ++ row.witnesses) (fact : Fact)
+    (found : facts name = some fact) (requirement : fact.kind = .requirement) :
+    verdict facts row ≠ .proved := by
+  intro claimed
+  have kinds := List.all_eq_true.mp (proved_requires_theorems facts row claimed) name member
+  simp [found, requirement] at kinds
+
+theorem requirement_kind_exact (proposition body unsafeBody : Bool) :
+    requirementKind proposition body unsafeBody = .requirement ↔
+      proposition = true ∧ body = true ∧ unsafeBody = false := by
+  cases proposition <;> cases body <;> cases unsafeBody <;> decide
+
+theorem empty_specification_refuses (facts : Facts) :
+    specificationIssues facts [] = ["the specification ledger is empty"] := rfl
+
+theorem proof_audit_unchanged (facts : Facts) (rows : List Row) :
+    auditIssues false facts rows = [] := rfl
+
+theorem proof_summary_unchanged (specified : Nat) : specificationSuffix false specified = "" := rfl
+
+theorem requirement_summary_explicit (specified : Nat) :
+    specificationSuffix true specified = s!", {specified} specified (unproved)" := rfl
+
+theorem declaration_finding_reported (facts : Facts) (rows : List Row) (row : Row)
+    (name : Name) (finding : SpecificationFinding) (member : row ∈ rows)
+    (named : name ∈ row.theorems ++ row.witnesses)
+    (reported : declarationFinding facts row.id name = some finding) :
+    finding ∈ specificationFindings facts rows := by
+  apply List.mem_append_right
+  apply List.mem_flatMap.mpr
+  refine ⟨row, member, ?_⟩
+  apply List.mem_append_left
+  apply List.mem_append_left
+  apply List.mem_append_right
+  apply List.mem_filterMap.mpr
+  exact ⟨name, by simpa using named, reported⟩
+
+theorem missing_declaration_reported (facts : Facts) (rows : List Row) (row : Row)
+    (name : Name) (member : row ∈ rows) (named : name ∈ row.theorems ++ row.witnesses)
+    (missing : facts name = none) :
+    SpecificationFinding.missing row.id name ∈ specificationFindings facts rows := by
+  apply declaration_finding_reported facts rows row name _ member named
+  simp [declarationFinding, missing]
+
+theorem accepted_requirement_has_no_finding (facts : Facts) (id : String) (name : Name)
+    (fact : Fact) (found : facts name = some fact) (requirement : fact.kind = .requirement)
+    (trusted : fact.axioms = []) : declarationFinding facts id name = none := by
+  simp [declarationFinding, found, requirement, Fact.unacceptedAxioms, trusted]
+
+theorem non_proposition_reported (facts : Facts) (rows : List Row) (row : Row)
+    (name : Name) (fact : Fact) (member : row ∈ rows)
+    (named : name ∈ row.theorems ++ row.witnesses) (found : facts name = some fact)
+    (wrong : fact.kind = .notProposition) :
+    SpecificationFinding.notProposition row.id name ∈ specificationFindings facts rows := by
+  apply declaration_finding_reported facts rows row name _ member named
+  simp [declarationFinding, found, wrong]
+
+theorem unavailable_body_reported (facts : Facts) (rows : List Row) (row : Row)
+    (name : Name) (fact : Fact) (member : row ∈ rows)
+    (named : name ∈ row.theorems ++ row.witnesses) (found : facts name = some fact)
+    (unavailable : fact.kind = .unavailableBody) :
+    SpecificationFinding.unavailableBody row.id name ∈ specificationFindings facts rows := by
+  apply declaration_finding_reported facts rows row name _ member named
+  simp [declarationFinding, found, unavailable]
+
+theorem not_proposition_kind (body unsafeBody : Bool) :
+    requirementKind false body unsafeBody = .notProposition := rfl
+
+theorem missing_body_kind (unsafeBody : Bool) :
+    requirementKind true false unsafeBody = .unavailableBody := rfl
+
+theorem unsafe_body_kind (body : Bool) :
+    requirementKind true body true = .unavailableBody := by cases body <;> rfl
+
+theorem unproved_witness_finding (facts : Facts) (id : String) (name : Name) (fact : Fact)
+    (found : facts name = some fact) (requirement : fact.kind = .requirement) :
+    witnessFinding facts id name = some (.unprovedWitness id name) := by
+  simp [witnessFinding, found, requirement]
+
+theorem unproved_witness_reported (facts : Facts) (rows : List Row) (row : Row) (name : Name)
+    (fact : Fact) (member : row ∈ rows) (named : name ∈ row.witnesses)
+    (found : facts name = some fact) (requirement : fact.kind = .requirement) :
+    SpecificationFinding.unprovedWitness row.id name ∈ specificationFindings facts rows := by
+  apply List.mem_append_right
+  apply List.mem_flatMap.mpr
+  refine ⟨row, member, ?_⟩
+  apply List.mem_append_left
+  apply List.mem_append_right
+  apply List.mem_filterMap.mpr
+  exact ⟨name, by simpa using named, unproved_witness_finding facts row.id name fact found requirement⟩
+
+theorem validation_exact (requirements : Bool) (facts : Facts) (rows : List Row) :
+    validateRequirements requirements facts rows = .ok () ↔ auditIssues requirements facts rows = [] := by
+  unfold validateRequirements
+  split <;> simp_all
+
+example : specificationFindings
+    (fun _ => some { statement := "True", axioms := [], hypotheses := false, kind := .requirement })
+    [{ id := "clause", clause := "required behavior", theorems := [`obligation] }] = [] := by decide
+
+example : SpecificationFinding.missing "clause" `second ∈ specificationFindings (fun _ => none)
+    [{ id := "clause", clause := "required behavior", theorems := [`first, `second] }] := by decide
 
 /-- A written theorem is reported exactly when no row claims it. -/
 theorem mem_unclaimed (rows : List Row) (written : List Name) (n : Name) :
