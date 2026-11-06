@@ -10,7 +10,7 @@ in the implementation's language. The audit judges the rows against the Lean env
 finds what the theorems leave out, and `tests` checks that the property tests notice each guard of
 the implementation.
 
-The toolchain is `leanprover/lean4:v4.34.0`, with no dependencies.
+The toolchain is `leanprover/lean4:v4.36.0-rc2`, with no dependencies.
 
 ## The ledger
 
