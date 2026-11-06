@@ -303,12 +303,6 @@ def synthetic (args : List String) : IO UInt32 := do
   | _ => IO.eprintln "usage: spec-tools synthetic SEED COUNT EMPTY FIXTURE-DIR OUT-DIR"; return 2
 
 open SpecTools.Model in
-def harnessOf : String → Option Harness
-  | "claude-code" => some .claudeCode
-  | "codex" => some .codex
-  | _ => none
-
-open SpecTools.Model in
 def clauses (args : List String) : IO UInt32 := do
   match args with
   | [harness, model, proseFile] | [harness, model, proseFile, _] =>
