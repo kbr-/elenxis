@@ -198,8 +198,8 @@ def synthetic (args : List String) : IO UInt32 := do
         return ({ kind := ← (p.getObjValAs? String "kind").toOption,
                   clause := ← (p.getObjValAs? String "clause").toOption, edits := [] } : Plant)
     let root ← IO.currentDir
-    let backend : SpecTools.Model.Backend :=
-      { harness := .claudeCode, model := agentModel, dataGoesTo := "Anthropic" }
+    let configured ← SpecTools.Model.configuredBackend
+    let backend := { configured with model := agentModel }
     -- The tools arm starts each run's audit, tests and gaps at once: three controls together peaked
     -- at 2.037 GiB, so ten of its runs with their agents near the 10 GiB budget; five at a time.
     let width := if arms == [.tools] then 5 else 10
@@ -313,9 +313,7 @@ def clauses (args : List String) : IO UInt32 := do
   match args with
   | [harness, model, proseFile] | [harness, model, proseFile, _] =>
     let timeoutMs := (args.drop 3).head? |>.bind String.toNat? |>.getD 300000
-    let some harness := harnessOf harness
-      | IO.eprintln s!"unknown harness `{harness}`: claude-code or codex"; return 2
-    let backend : Backend := { harness, model, dataGoesTo := s!"{harness.name}'s provider" }
+    let backend ← selectedBackend harness model
     let scratch ← IO.FS.createTempDir
     let result ← SpecTools.Clauses.compare liveRunner [backend] backend
       (← IO.FS.readFile proseFile) scratch timeoutMs
@@ -338,12 +336,8 @@ def ask (args : List String) : IO UInt32 := do
   match args with
   | [harness, model, schemaFile, promptFile] | [harness, model, schemaFile, promptFile, _] =>
     let timeoutMs := (args.drop 4).head? |>.bind String.toNat? |>.getD 120000
-    let harness ← match harness with
-      | "claude-code" => pure Harness.claudeCode
-      | "codex" => pure Harness.codex
-      | other => do IO.eprintln s!"unknown harness `{other}`: claude-code or codex"; return 2
+    let backend ← selectedBackend harness model
     let schema ← IO.ofExcept (Lean.Json.parse (← IO.FS.readFile schemaFile))
-    let backend : Backend := { harness, model, dataGoesTo := s!"{harness.name}'s provider" }
     let scratch ← IO.FS.createTempDir
     let result ← SpecTools.Model.ask liveRunner [backend] backend
       { prompt := ← IO.FS.readFile promptFile, schema, timeoutMs } scratch

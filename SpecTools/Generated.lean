@@ -178,7 +178,7 @@ def leanFile (vs : List View) : String :=
   "    SpecTools.Tests.run Loans.ledger (← adapterPath) \"loans.py\" \"test_loans.py\"\n      (cwd := some (← fixtureDir))\n\n" ++
   "#eval show Lean.Elab.Command.CommandElabM Unit from do\n  if let some model ← IO.getEnv \"SPEC_TOOLS_GAPS\" then\n" ++
   "    SpecTools.Gaps.run Loans.ledger (← IO.FS.readFile (System.FilePath.mk (← fixtureDir) / \"loans.md\"))\n" ++
-  "      { harness := .claudeCode, model, dataGoesTo := \"Anthropic\" }\n"
+  "      { (← SpecTools.Model.configuredBackend) with model }\n"
 
 /-! The Python: an `if` per rule, so each rule is a guard the adapter can remove. -/
 

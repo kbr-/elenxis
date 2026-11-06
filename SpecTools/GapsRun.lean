@@ -1,5 +1,6 @@
 import SpecTools.Audit
 import SpecTools.Gaps
+import SpecTools.BackendConfig
 
 /-!
 Running `gaps` from a project's ledger file: `#eval SpecTools.Gaps.run rows prose backend` gathers
@@ -36,6 +37,7 @@ def run (rows : List Row) (prose : String) (backend : Backend) (timeoutMs : Nat 
     if let some f ← factOf n requirements then table := (n, f) :: table
   let facts : Facts := fun n => table.lookup n
   IO.ofExcept (validateRequirements requirements facts rows)
+  IO.println s!"Requirements check: {backend.describe}"
   let scratch ← IO.FS.createTempDir
   let answer ← ask liveRunner [backend] backend
     { prompt := gapsPrompt prose rows facts, schema := proposalSchema, timeoutMs } scratch
@@ -53,5 +55,10 @@ def run (rows : List Row) (prose : String) (backend : Backend) (timeoutMs : Nat 
       IO.println s!"{k.name}: {g.row}: {g.why}"
   for e in report.refused do IO.println s!"refused as malformed: {e}"
   IO.println s!"{total} gaps, {report.refused.length} proposals refused"
+
+/-- The same checker with its backend selected by deployment configuration. -/
+def runConfigured (rows : List Row) (prose : String) (timeoutMs : Nat := 300000)
+    (requirements : Bool := false) : CommandElabM Unit := do
+  run rows prose (← configuredBackend) timeoutMs requirements
 
 end SpecTools.Gaps

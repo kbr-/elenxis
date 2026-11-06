@@ -73,11 +73,10 @@ establish its adequacy or truth. The default mode continues to require theorem d
   (or `0`) in a copy and runs the named tests with pytest.
 - **Clauses** (`spec-tools clauses`): a model extracts a prose file's clauses twice, blind to each
   other, and the differences are printed as rows to add.
-- **Model interface** (`SpecTools.Model`, `SpecTools.Schema`): a question goes to a backend, a
-  harness (`claudeCode` or `codex`) with a model and where its data goes, and the answer is checked
-  against a JSON schema subset (`type`, `properties`, `required`, `additionalProperties`, `items`,
-  `enum`; any other keyword is refused). The effects sit in a `Runner`, so tests script it and reach
-  no model.
+- **Model interface** (`SpecTools.Model`, `SpecTools.BackendConfig`, `SpecTools.Schema`): a question
+  goes to a configurable backend, and the answer is checked against a JSON schema subset (`type`,
+  `properties`, `required`, `additionalProperties`, `items`, `enum`; any other keyword is refused).
+  The effects sit in a `Runner`, so tests script it and reach no model.
 - **Synthetic test** (`SpecTools.Synthetic`, `SpecTools.Generated`, `SpecTools.Score`,
   `spec-tools synthetic`): generates a requirement of N rules from a seed with its four artifacts
   (prose, Lean model and ledger, Python and its tests) agreeing by construction, plants gaps in one
@@ -86,6 +85,47 @@ establish its adequacy or truth. The default mode continues to require theorem d
   fixture is in `fixtures/loans`.
 
 ## Running
+
+### Backend configuration
+
+Keep backend selection outside specifications. Set `SPEC_TOOLS_BACKEND` to the absolute path of a
+JSON file, then use `SpecTools.Gaps.runConfigured ledger prose` (with `requirements := true` for
+unproved requirements). Missing or malformed configuration fails before launching a process.
+
+For Codex using its existing login/subscription:
+
+```json
+{"adapter":"codex","model":"YOUR_MODEL","dataGoesTo":"Codex using the configured account"}
+```
+
+For Claude Code use `"adapter":"claude-code"` and its model/account description. Model names are
+opaque strings; the checker contains no provider-specific model allowlist. `dataGoesTo` documents
+the actual destination; it neither authorizes a call nor changes routing.
+
+For any other harness, provider or locally hosted model, configure an adapter executable:
+
+```json
+{"adapter":"command","command":"/absolute/path/to/adapter","args":[],"model":"YOUR_MODEL","dataGoesTo":"local inference server"}
+```
+
+The executable receives its configured arguments followed by `request.json`, relative to the fresh
+working directory. That UTF-8 JSON file contains `protocol: 1`, `model`, `prompt`, `schema`,
+`timeoutMs`, `mode` (`question` or `agent`) and `tools` (the requested agent tool policy). Arguments
+are passed literally without a shell. Return the answer itself as JSON on stdout, diagnostics on
+stderr, and a nonzero status on failure. The shared checker validates the answer against `schema`; a
+backend need not support constrained JSON generation. The executable adapts this contract to its
+chosen service or local inference engine, keeping credentials in its own deployment configuration.
+
+Adapter configuration is trusted executable configuration. Command adapters must enforce the
+requested mode and tool restrictions; the generic launcher does not sandbox arbitrary commands. The
+built-in Codex and Claude adapters retain their existing sandbox/tool restrictions. Switching to
+another adapter never grants data access or permission to contact its destination.
+
+The `ask` and `clauses` CLI commands accept `configured` in place of `HARNESS`; the legacy `MODEL`
+positional argument overrides the configured model in these CLI forms. Their explicit `codex MODEL`
+and `claude-code MODEL` forms remain available. Synthetic agent runs use the configured adapter with
+their explicit agent model; generated gap checks use it with their explicit tool model. Synthetic
+clause extraction uses the same explicit tool model.
 
 ```bash
 lake build

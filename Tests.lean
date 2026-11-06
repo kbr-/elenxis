@@ -136,7 +136,53 @@ def testRequirementAudits : IO Unit := IO.FS.withTempDir fun dir => do
     ensure ((code == 0) == passes && messages.all (has output)) s!"{name}: {output}"
   IO.println "PASS: requirement audit (unproved, proof-only, wrong type, missing, empty, untrusted, opaque, unsafe, all findings, witness)"
 
+/-- Real process boundary: literal prompts survive the request file, and malformed/schema-breaking
+responses and nonzero exits cannot become successful answers. No model or provider is contacted. -/
+def testCommandAdapter : IO Unit := do
+  let dir ← IO.FS.createTempDir
+  let backend : Backend := { harness := .command "cat" [], model := "local/model", dataGoesTo := "local" }
+  let schema := Lean.Json.mkObj [("type", "object")]
+  for prompt in ["", "Zażółć\n\"quotes\" $(literal) \\ path"] do
+    let question : Question := { prompt, schema, timeoutMs := 10000 }
+    match ← ask liveRunner [backend] backend question dir with
+    | .error failure => throw (IO.userError failure.describe)
+    | .ok outcome =>
+      ensure ((outcome.answer.getObjValAs? String "prompt").toOption == some prompt) "prompt changed in transport"
+      ensure ((outcome.answer.getObjValAs? String "model").toOption == some "local/model") "configured model lost"
+      ensure ((outcome.answer.getObjValAs? String "mode").toOption == some "question") "wrong adapter mode"
+    let invalid : Question := { question with schema := Lean.Json.mkObj [("type", "string")] }
+    let rejected ← ask liveRunner [backend] backend invalid dir
+    ensure rejected.toOption.isNone "schema-breaking process output accepted"
+  for (executable, arguments) in [("printf", ["not json"]), ("false", [])] do
+    let broken := { backend with harness := .command executable arguments }
+    ensure (← ask liveRunner [broken] broken { prompt := "", schema, timeoutMs := 10000 } dir).toOption.isNone
+      "failed adapter accepted"
+  for adapter in ["codex", "claude-code", "command"] do
+    let json := Lean.Json.mkObj [("adapter", Lean.toJson adapter), ("model", Lean.toJson "chosen"),
+      ("dataGoesTo", Lean.toJson "chosen destination"), ("command", Lean.toJson "cat"),
+      ("args", Lean.toJson ([] : List String))]
+    let parsed ← IO.ofExcept (backendOfJson json)
+    ensure (parsed.model == "chosen" && parsed.dataGoesTo == "chosen destination") "configuration changed"
+    ensure ((backendOfJson (Lean.Json.mkObj [("adapter", Lean.toJson adapter)])).toOption.isNone)
+      "incomplete configuration accepted"
+  let config := dir / "backend.json"
+  IO.FS.writeFile config "{\"adapter\":\"command\",\"command\":\"cat\",\"args\":[],\"model\":\"default\",\"dataGoesTo\":\"local\"}"
+  let source := dir / "Select.lean"
+  IO.FS.writeFile source "import SpecTools.BackendConfig\n#eval show IO Unit from do\n  let b ← SpecTools.Model.selectedBackend \"configured\" \"override\"\n  if b.model != \"override\" then throw (IO.userError \"model override lost\")\n  match b.harness with\n  | .command \"cat\" [] => pure ()\n  | _ => throw (IO.userError \"configured adapter lost\")\n"
+  let selected ← IO.Process.output {
+    cmd := "lake"
+    args := #["env", "lean", source.toString]
+    env := #[("SPEC_TOOLS_BACKEND", some config.toString)] }
+  ensure (selected.exitCode == 0) s!"configured selection: {selected.stdout}{selected.stderr}"
+  for model in ["", "  "] do
+    let refused ← (selectedBackend "configured" model).toBaseIO
+    ensure (match refused with | .error _ => true | .ok _ => false)
+      "empty configured model override accepted"
+  IO.FS.removeDirAll dir
+  IO.println "PASS: configurable command adapter (transport, schema, malformed output, exit, configuration)"
+
 def main : IO Unit := do
+  testCommandAdapter
   let requirements ← IO.asTask testRequirementAudits
   testFinishedProcess
   testOverrun

@@ -101,7 +101,7 @@ def checkInvocation (root dir model sub : String) : Option Invocation :=
     ("SPEC_TOOLS_ADAPTER", some (root ++ "/adapters/python_guards.py"))])
   else if sub = "gaps" then some (leanOn root dir #[("SPEC_TOOLS_GAPS", some model), ("SPEC_TOOLS_DIR", some dir)])
   else if sub = "clauses" then
-    some ⟨root ++ "/.lake/build/bin/spec-tools", #["clauses", "claude-code", model, dir ++ "/loans.md"], #[], root⟩
+    some ⟨root ++ "/.lake/build/bin/spec-tools", #["clauses", "configured", model, dir ++ "/loans.md"], #[], root⟩
   else none
 
 theorem check_unknown_refused (root dir model sub : String)
@@ -115,7 +115,7 @@ theorem check_model_is_configured (root dir model : String) :
     (checkInvocation root dir model "gaps").map (·.env) =
       some #[("SPEC_TOOLS_GAPS", some model), ("SPEC_TOOLS_DIR", some dir)] ∧
     (checkInvocation root dir model "clauses").map (·.args) =
-      some #["clauses", "claude-code", model, dir ++ "/loans.md"] := by
+      some #["clauses", "configured", model, dir ++ "/loans.md"] := by
   simp [checkInvocation, leanOn]
 
 /-- The variant directory's configuration, written by `runArm`: the tools' root and the model their

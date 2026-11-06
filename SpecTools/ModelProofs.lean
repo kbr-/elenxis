@@ -120,6 +120,28 @@ theorem codex_missing_answer_fails (model dest : String) {ran : Ran} (exit0 : ra
 
 /-! Witnesses: each theorem's hypotheses can hold, so none of them is vacuous. -/
 
+/-- A destination label cannot change process routing, arguments or request data. -/
+theorem destination_does_not_route (harness : Harness) (model before after : String)
+    (q : Question) (s : System.FilePath) :
+    invocation ⟨harness, model, before⟩ q s = invocation ⟨harness, model, after⟩ q s := by
+  cases harness <;> rfl
+
+/-- External adapters receive one JSON request file and literal arguments, without shell expansion. -/
+theorem command_invocation (executable model destination : String) (arguments : List String)
+    (q : Question) (s : System.FilePath) :
+    invocation ⟨.command executable arguments, model, destination⟩ q s =
+      { cmd := executable, args := (arguments ++ ["request.json"]).toArray, cwd := s,
+        files := [("request.json",
+          (commandRequest ⟨.command executable arguments, model, destination⟩ q).compress)] } := rfl
+
+/-- Agent adapters receive the same request protocol with the requested mode and tool policy. -/
+theorem command_agent_invocation (executable model destination : String) (arguments tools : List String)
+    (q : Question) (s : System.FilePath) :
+    agentInvocation ⟨.command executable arguments, model, destination⟩ q tools s =
+      { cmd := executable, args := (arguments ++ ["request.json"]).toArray, cwd := s,
+        files := [("request.json",
+          (commandRequest ⟨.command executable arguments, model, destination⟩ q "agent" tools).compress)] } := rfl
+
 example : (⟨.codex, "m", "d"⟩ : Backend) ∉ ([] : List Backend) := by simp
 
 example : Schema.unsupported (Json.mkObj [("type", "string"), ("pattern", "a+")]) ≠ none := by

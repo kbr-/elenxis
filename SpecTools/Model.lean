@@ -7,10 +7,12 @@ its cost, or an error naming the backend. Only the adapters (`invocation`, `read
 harness is called; the effects (running a process, timing it) sit in the `Runner` passed in, so tests
 script it and no test reaches a model.
 
-A question can't act: Claude Code runs with every tool disabled (`--tools ""`) and without the
+Built-in question adapters restrict tools: Claude Code runs with every tool disabled (`--tools ""`) and without the
 user's settings, hooks or instructions (`--safe-mode`); Codex runs with `--sandbox read-only`; each
-runs in an empty scratch directory. An agent run, the other kind of call, acts only in the copy it is
-given (`agentInvocation`).
+runs in an empty scratch directory. Built-in agent invocations request their harness's tool or
+sandbox policy for the working copy (`agentInvocation`).
+Command adapters use a versioned JSON file protocol; their executable configuration is trusted and
+owns confinement and provider access. The shared planner and schema checker apply to every adapter.
 -/
 
 namespace SpecTools.Model
@@ -19,11 +21,13 @@ open Lean
 inductive Harness where
   | claudeCode
   | codex
+  | command (executable : String) (arguments : List String)
   deriving Repr, DecidableEq, Inhabited
 
 def Harness.name : Harness → String
   | .claudeCode => "claude-code"
   | .codex => "codex"
+  | .command executable _ => executable
 
 /-- A harness, the model it runs, and where the prompt's data goes when it runs. -/
 structure Backend where
@@ -34,11 +38,22 @@ structure Backend where
 
 def Backend.name (b : Backend) : String := s!"{b.harness.name}/{b.model}"
 
+/-- Explain the actual transport; provider provenance never selects another client. -/
+def Backend.describe (b : Backend) : String :=
+  s!"process adapter {b.harness.name}; model {b.model}; destination note: {b.dataGoesTo}"
+
 /-- A prompt and the JSON Schema its answer must meet, bounded by a timeout. -/
 structure Question where
   prompt : String
   schema : Json
   timeoutMs : Nat
+
+/-- Versioned request for an external adapter; no provider protocol leaks into callers. -/
+def commandRequest (backend : Backend) (question : Question) (mode : String := "question")
+    (tools : List String := []) : Json :=
+  Json.mkObj [("protocol", toJson (1 : Nat)), ("model", toJson backend.model),
+    ("prompt", toJson question.prompt), ("schema", question.schema),
+    ("timeoutMs", toJson question.timeoutMs), ("mode", toJson mode), ("tools", toJson tools)]
 
 /-- What a call cost: its wall-clock time, and tokens where the harness reports them. -/
 structure Cost where
@@ -109,11 +124,17 @@ def invocation (backend : Backend) (question : Question) (scratch : System.FileP
         question.prompt]
       cwd := scratch
       files := [("schema.json", question.schema.compress)] }
+  | .command executable arguments =>
+    { cmd := executable
+      args := (arguments ++ ["request.json"]).toArray
+      cwd := scratch
+      files := [("request.json", (commandRequest backend question).compress)] }
 
 /-- The files the adapter reads back after the run. -/
 def readBackFiles : Harness → List String
   | .claudeCode => []
   | .codex => ["answer.json"]
+  | .command _ _ => []
 
 private def tokensOf (report : Json) : Option Nat :=
   match report.getObjVal? "usage" with
@@ -142,6 +163,9 @@ def readAnswer (backend : Backend) (ran : Ran) : Except Failure (Json × Option 
     | some text =>
       let answer ← (Json.parse text).mapError fun e => .malformed name s!"answer is no JSON: {e}"
       return (answer, none)
+  | .command _ _ =>
+    let answer ← (Json.parse ran.stdout).mapError fun e => .malformed name s!"answer is no JSON: {e}"
+    return (answer, none)
 
 /-- What to run for `question`, or why nothing may run: a backend the project doesn't allow, a schema
 outside the subset, a prompt over `maxPromptBytes`. -/
@@ -196,6 +220,11 @@ def agentInvocation (backend : Backend) (question : Question) (tools : List Stri
         "-o", "answer.json", "--", question.prompt]
       cwd := workdir
       files := [("schema.json", question.schema.compress)] }
+  | .command executable arguments =>
+    { cmd := executable
+      args := (arguments ++ ["request.json"]).toArray
+      cwd := workdir
+      files := [("request.json", (commandRequest backend question "agent" tools).compress)] }
 
 /-- Set by the test driver first thing: a live run while it is set is refused, so no test reaches a
 model. -/

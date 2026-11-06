@@ -1,5 +1,6 @@
 import SpecTools.Schema
 import SpecTools.Model
+import SpecTools.BackendConfig
 import SpecTools.ModelProofs
 import SpecTools.Ledger
 import SpecTools.LedgerProofs
