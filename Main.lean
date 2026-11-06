@@ -198,8 +198,7 @@ def synthetic (args : List String) : IO UInt32 := do
         return ({ kind := ← (p.getObjValAs? String "kind").toOption,
                   clause := ← (p.getObjValAs? String "clause").toOption, edits := [] } : Plant)
     let root ← IO.currentDir
-    let configured ← SpecTools.Model.configuredBackend
-    let backend := { configured with model := agentModel }
+    let backend ← SpecTools.Model.selectedBackend "configured" agentModel
     -- The tools arm starts each run's audit, tests and gaps at once: three controls together peaked
     -- at 2.037 GiB, so ten of its runs with their agents near the 10 GiB budget; five at a time.
     let width := if arms == [.tools] then 5 else 10
