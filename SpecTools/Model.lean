@@ -108,18 +108,38 @@ abbrev Runner := Invocation → (readBack : List String) → (timeoutMs : Nat) �
 def firstLines (text : String) (n : Nat := 5) : String :=
   " | ".intercalate ((text.splitOn "\n").filter (!·.trimAscii.isEmpty) |>.take n)
 
-/-- The command line asking `question` of `backend`, run in the empty directory `scratch`. -/
-def invocation (backend : Backend) (question : Question) (scratch : System.FilePath) : Invocation :=
+inductive CallMode where
+  | question
+  | agent (tools : List String)
+
+def CallMode.name : CallMode → String
+  | .question => "question"
+  | .agent _ => "agent"
+
+def CallMode.tools : CallMode → List String
+  | .question => []
+  | .agent tools => tools
+
+def callInvocation (backend : Backend) (question : Question) (scratch : System.FilePath)
+    (mode : CallMode) : Invocation :=
   match backend.harness with
   | .claudeCode =>
+    let toolArgs := match mode with
+      | .question => #["--tools", ""]
+      | .agent tools =>
+        let names := ",".intercalate (tools.map fun t => (t.splitOn "(").headD t).eraseDups
+        #["--tools", names, "--allowedTools", " ".intercalate tools]
     { cmd := "claude"
-      args := #["-p", "--safe-mode", "--tools", "", "--no-session-persistence",
+      args := #["-p", "--safe-mode"] ++ toolArgs ++ #["--no-session-persistence",
         "--model", backend.model, "--output-format", "json",
         "--json-schema", question.schema.compress, "--", question.prompt]
       cwd := scratch }
   | .codex =>
+    let scope := match mode with
+      | .question => #["read-only"]
+      | .agent _ => #["workspace-write", "-C", scratch.toString]
     { cmd := "codex"
-      args := #["exec", "--skip-git-repo-check", "--ephemeral", "--sandbox", "read-only",
+      args := #["exec", "--skip-git-repo-check", "--ephemeral", "--sandbox"] ++ scope ++ #[
         "-m", backend.model, "--output-schema", "schema.json", "-o", "answer.json", "--",
         question.prompt]
       cwd := scratch
@@ -128,7 +148,11 @@ def invocation (backend : Backend) (question : Question) (scratch : System.FileP
     { cmd := executable
       args := (arguments ++ ["request.json"]).toArray
       cwd := scratch
-      files := [("request.json", (commandRequest backend question).compress)] }
+      files := [("request.json", (commandRequest backend question mode.name mode.tools).compress)] }
+
+/-- The command line asking a read-only question in the scratch directory. -/
+def invocation (backend : Backend) (question : Question) (scratch : System.FilePath) : Invocation :=
+  callInvocation backend question scratch .question
 
 /-- The files the adapter reads back after the run. -/
 def readBackFiles : Harness → List String
@@ -209,26 +233,7 @@ those name and allows exactly the patterns; Codex gets a sandbox that writes onl
 tools its own. -/
 def agentInvocation (backend : Backend) (question : Question) (tools : List String)
     (workdir : System.FilePath) : Invocation :=
-  match backend.harness with
-  | .claudeCode =>
-    let names := ",".intercalate (tools.map fun t => (t.splitOn "(").headD t).eraseDups
-    { cmd := "claude"
-      args := #["-p", "--safe-mode", "--tools", names, "--allowedTools", " ".intercalate tools,
-        "--no-session-persistence", "--model", backend.model, "--output-format", "json",
-        "--json-schema", question.schema.compress, "--", question.prompt]
-      cwd := workdir }
-  | .codex =>
-    { cmd := "codex"
-      args := #["exec", "--skip-git-repo-check", "--ephemeral", "--sandbox", "workspace-write",
-        "-C", workdir.toString, "-m", backend.model, "--output-schema", "schema.json",
-        "-o", "answer.json", "--", question.prompt]
-      cwd := workdir
-      files := [("schema.json", question.schema.compress)] }
-  | .command executable arguments =>
-    { cmd := executable
-      args := (arguments ++ ["request.json"]).toArray
-      cwd := workdir
-      files := [("request.json", (commandRequest backend question "agent" tools).compress)] }
+  callInvocation backend question workdir (.agent tools)
 
 /-- Set by the test driver first thing: a live run while it is set is refused, so no test reaches a
 model. -/

@@ -60,20 +60,37 @@ theorem ask_refused_runs_nothing (runner : Runner) {allowed : List Backend} {bac
 theorem claude_question_cannot_act (model dest : String) (q : Question) (s : System.FilePath) :
     let args := (invocation ⟨.claudeCode, model, dest⟩ q s).args.toList
     "--safe-mode" ∈ args ∧ ["--tools", ""] <:+: args := by
-  refine ⟨by simp [invocation], ?_⟩
+  refine ⟨by simp [invocation, callInvocation], ?_⟩
   exact ⟨["-p", "--safe-mode"], ["--no-session-persistence", "--model", model, "--output-format",
-    "json", "--json-schema", q.schema.compress, "--", q.prompt], by simp [invocation]⟩
+    "json", "--json-schema", q.schema.compress, "--", q.prompt], by simp [invocation, callInvocation]⟩
 
 /-- A question to Codex runs in a read-only sandbox. -/
 theorem codex_question_read_only (model dest : String) (q : Question) (s : System.FilePath) :
     ["--sandbox", "read-only"] <:+: (invocation ⟨.codex, model, dest⟩ q s).args.toList :=
   ⟨["exec", "--skip-git-repo-check", "--ephemeral"], ["-m", model, "--output-schema", "schema.json",
-    "-o", "answer.json", "--", q.prompt], by simp [invocation]⟩
+    "-o", "answer.json", "--", q.prompt], by simp [invocation, callInvocation]⟩
 
 /-- Each question runs in the scratch directory it was given. -/
 theorem question_runs_in_scratch (b : Backend) (q : Question) (s : System.FilePath) :
     (invocation b q s).cwd = s := by
-  cases h : b.harness <;> simp [invocation, h]
+  cases h : b.harness <;> simp [invocation, callInvocation, h]
+
+theorem codex_agent_workspace (model dest : String) (q : Question) (s : System.FilePath)
+    (tools : List String) :
+    ["--sandbox", "workspace-write", "-C", s.toString] <:+:
+      (agentInvocation ⟨.codex, model, dest⟩ q tools s).args.toList :=
+  ⟨["exec", "--skip-git-repo-check", "--ephemeral"],
+    ["-m", model, "--output-schema", "schema.json", "-o", "answer.json", "--", q.prompt],
+    by simp [agentInvocation, callInvocation]⟩
+
+theorem claude_agent_tools (model dest : String) (q : Question) (s : System.FilePath)
+    (tools : List String) :
+    let names := ",".intercalate (tools.map fun t => (t.splitOn "(").headD t).eraseDups
+    ["--tools", names, "--allowedTools", " ".intercalate tools] <:+:
+      (agentInvocation ⟨.claudeCode, model, dest⟩ q tools s).args.toList :=
+  ⟨["-p", "--safe-mode"], ["--no-session-persistence", "--model", model, "--output-format",
+    "json", "--json-schema", q.schema.compress, "--", q.prompt],
+    by simp [agentInvocation, callInvocation]⟩
 
 /-- An overrun is an error naming the backend and its limit. -/
 theorem finish_overrun (b : Backend) (q : Question) :

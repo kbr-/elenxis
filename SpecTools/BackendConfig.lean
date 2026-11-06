@@ -3,11 +3,14 @@ import SpecTools.Model
 namespace SpecTools.Model
 open Lean
 
+def validateModel (model : String) : Except String Unit :=
+  if model.trimAscii.isEmpty then .error "backend model must be nonempty" else .ok ()
+
 /-- Parse deployment configuration without choosing a provider or a model for the caller. -/
 def backendOfJson (json : Json) : Except String Backend := do
   let model ← json.getObjValAs? String "model"
   let destination ← json.getObjValAs? String "dataGoesTo"
-  if model.trimAscii.isEmpty then throw "backend model must be nonempty"
+  validateModel model
   if destination.trimAscii.isEmpty then throw "backend dataGoesTo must describe its destination"
   let adapter ← json.getObjValAs? String "adapter"
   let harness ← match adapter with
@@ -30,7 +33,7 @@ def configuredBackend : IO Backend := do
 
 /-- The CLI's model argument remains authoritative when selecting a configured adapter. -/
 def selectedBackend (adapter model : String) : IO Backend := do
-  if model.trimAscii.isEmpty then throw (IO.userError "backend model must be nonempty")
+  IO.ofExcept (validateModel model)
   if adapter == "configured" then return { (← configuredBackend) with model }
   IO.ofExcept (backendOfJson (Json.mkObj [("adapter", toJson adapter),
     ("model", toJson model), ("dataGoesTo", toJson s!"{adapter}'s configured destination")]))
