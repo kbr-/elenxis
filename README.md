@@ -100,7 +100,9 @@ For Codex using its existing login/subscription:
 
 For Claude Code use `"adapter":"claude-code"` and its model/account description. Model names are
 opaque strings; the checker contains no provider-specific model allowlist. `dataGoesTo` documents
-the actual destination; it neither authorizes a call nor changes routing.
+the actual destination; it neither authorizes a call nor changes routing. The planner's allowlist
+compares adapter configuration and model; changing this note cannot change that decision or the
+invocation.
 
 For any other harness, provider or locally hosted model, configure an adapter executable:
 

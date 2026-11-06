@@ -10,7 +10,7 @@ open Lean
 
 /-- A backend the project doesn't allow is refused. -/
 theorem plan_refuses_disallowed {allowed : List Backend} {backend : Backend} (q : Question)
-    (s : System.FilePath) (h : backend ∉ allowed) :
+    (s : System.FilePath) (h : routeAllowed allowed backend = false) :
     ∃ reason, plan allowed backend q s = .error (.refused backend.name reason) :=
   ⟨"the project doesn't allow this backend", by simp [plan, h]⟩
 
@@ -125,6 +125,17 @@ theorem destination_does_not_route (harness : Harness) (model before after : Str
     (q : Question) (s : System.FilePath) :
     invocation ⟨harness, model, before⟩ q s = invocation ⟨harness, model, after⟩ q s := by
   cases harness <;> rfl
+
+/-- Descriptive destination notes cannot change the planner's permission decision or invocation. -/
+theorem plan_ignores_destination (allowed : List Backend) (backend : Backend) (destination : String)
+    (q : Question) (s : System.FilePath) :
+    plan allowed { backend with dataGoesTo := destination } q s = plan allowed backend q s := by
+  rcases backend with ⟨harness, model, previous⟩
+  simp only [plan, routeAllowed, Backend.name]
+  rw [destination_does_not_route harness model destination previous]
+  rfl
+
+example : routeAllowed [] ⟨.codex, "m", "d"⟩ = false := rfl
 
 /-- External adapters receive one JSON request file and literal arguments, without shell expansion. -/
 theorem command_invocation (executable model destination : String) (arguments : List String)

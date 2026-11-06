@@ -167,11 +167,15 @@ def readAnswer (backend : Backend) (ran : Ran) : Except Failure (Json × Option 
     let answer ← (Json.parse ran.stdout).mapError fun e => .malformed name s!"answer is no JSON: {e}"
     return (answer, none)
 
+def routeAllowed (allowed : List Backend) (backend : Backend) : Bool :=
+  allowed.any fun candidate =>
+    decide (candidate.harness = backend.harness ∧ candidate.model = backend.model)
+
 /-- What to run for `question`, or why nothing may run: a backend the project doesn't allow, a schema
 outside the subset, a prompt over `maxPromptBytes`. -/
 def plan (allowed : List Backend) (backend : Backend) (question : Question)
     (scratch : System.FilePath) : Except Failure Invocation :=
-  if backend ∉ allowed then
+  if routeAllowed allowed backend = false then
     .error (.refused backend.name "the project doesn't allow this backend")
   else match Schema.unsupported question.schema with
     | some problem => .error (.refused backend.name s!"the question's schema: {problem}")
