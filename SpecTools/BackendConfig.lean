@@ -6,6 +6,10 @@ open Lean
 def validateModel (model : String) : Except String Unit :=
   if model.trimAscii.isEmpty then .error "backend model must be nonempty" else .ok ()
 
+theorem validateModel_iff (model : String) :
+    validateModel model = .ok () ↔ model.trimAscii.isEmpty = false := by
+  simp [validateModel]
+
 /-- Parse deployment configuration without choosing a provider or a model for the caller. -/
 def backendOfJson (json : Json) : Except String Backend := do
   let model ← json.getObjValAs? String "model"
@@ -23,6 +27,13 @@ def backendOfJson (json : Json) : Except String Backend := do
       pure (Harness.command executable arguments)
     | _ => throw s!"unknown adapter {adapter}; use codex, claude-code or command"
   return { harness, model, dataGoesTo := destination }
+
+theorem backendOfJson_model {json : Json} {backend : Backend}
+    (result : backendOfJson json = .ok backend) :
+    json.getObjValAs? String "model" = .ok backend.model := by
+  simp only [backendOfJson, bind, Except.bind, pure, Except.pure] at result
+  repeat' first | split at result | cases result
+  all_goals simp_all
 
 /-- Read the explicitly selected configuration; absence never silently chooses a remote backend. -/
 def configuredBackend : IO Backend := do
