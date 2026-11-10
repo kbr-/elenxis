@@ -61,4 +61,97 @@ def runConfigured (rows : List Row) (prose : String) (timeoutMs : Nat := 300000)
     (requirements : Bool := false) : CommandElabM Unit := do
   run rows prose (← configuredBackend) timeoutMs requirements
 
+structure DraftSource where
+  id : String
+  clause : String
+  deriving BEq, FromJson
+
+inductive DraftEvidence where
+  | contract (name : Name) (statement : String)
+  | externalCheck (reason acceptance : String)
+  deriving FromJson
+
+structure DraftRow where
+  source : DraftSource
+  evidence : DraftEvidence
+  deriving FromJson
+
+def draftIssues (inventory : List DraftSource) (draft : List DraftRow) : List String :=
+  let expected : List Row := inventory.map fun item => { id := item.id, clause := item.clause }
+  let actual : List Row := draft.map fun row => { id := row.source.id, clause := row.source.clause }
+  (if inventory.isEmpty then ["Requirement inventory is empty."] else []) ++
+  ((repeatedIds expected).map fun id => s!"Duplicate requirement key: {id}") ++
+  ((repeatedIds actual).map fun id => s!"Duplicate draft key: {id}") ++
+  (inventory.filterMap fun item =>
+    if draft.any (fun row => row.source.id == item.id) then none
+    else some s!"Missing draft row: {item.id}") ++
+  (draft.flatMap fun row =>
+    (if inventory.any (· == row.source) then []
+     else [s!"Unknown or changed source clause: {row.source.id}"]) ++
+    match row.evidence with
+    | .contract name statement =>
+      if name.isAnonymous || statement.trimAscii.isEmpty then
+        [s!"Empty draft contract: {row.source.id}"] else []
+    | .externalCheck reason acceptance =>
+      if reason.trimAscii.isEmpty || acceptance.trimAscii.isEmpty then
+        [s!"External check needs a reason and acceptance case: {row.source.id}"] else [])
+
+def draftPrompt (prose : String) (draft : List DraftRow) : String :=
+  let contracts := (draft.filterMap fun row => match row.evidence with
+    | .contract name statement => some (name, statement)
+    | .externalCheck .. => none).eraseDups.zipIdx
+  let rows := draft.map fun row =>
+    let evidence := match row.evidence with
+      | .contract name statement =>
+        s!"Draft Lean contract {name}, statement {(contracts.lookup (name, statement)).getD 0}"
+      | .externalCheck reason acceptance => s!"External evidence ({reason}): {acceptance}"
+    s!"- {row.source.id}: {row.source.clause}\n  {evidence}"
+  "Review the complete Coverage draft against the requirements. " ++
+  "Compare draft contract statements and external acceptance cases with the requirements. " ++
+  "Report missing, weaker, undecided or extra behavior as uncovered, too weak, undecided or extra. " ++
+  "Cite one draft row ID per proposal. Put other related IDs in the reason. " ++
+  "An empty gaps array means you found no gaps.\n\n# Prose\n" ++
+    prose ++ "\n\n# Coverage draft\n" ++ "\n".intercalate rows ++ "\n\n# Contract statements\n" ++
+    "\n".intercalate (contracts.map fun ((name, statement), index) =>
+      s!"- Statement {index}, {name}: {statement}")
+
+def reviewDraft (runner : Runner) (allowed : List Backend) (backend : Backend)
+    (inventory : List DraftSource) (draft : List DraftRow) (prose : String)
+    (scratch : System.FilePath) (timeoutMs : Nat := 300000) : IO (Except String Report) := do
+  let issues := draftIssues inventory draft
+  unless issues.isEmpty do
+    return .error ("Submit the full Coverage draft together.\n" ++ "\n".intercalate issues)
+  match ← ask runner allowed backend
+      { prompt := draftPrompt prose draft,
+        schema := proposalSchemaFor (some (inventory.map (·.id))), timeoutMs } scratch with
+  | .error failure => return .error failure.describe
+  | .ok outcome =>
+    let some proposals := proposalsOf outcome.answer
+      | return .error "The review answer is no list of gaps."
+    let rows := draft.map fun row => ({ id := row.source.id, clause := row.source.clause } : Row)
+    return .ok (gather (fun _ => none) rows proposals)
+
+def draftContractNames (draft : List DraftRow) : List Name :=
+  (draft.filterMap fun row => match row.evidence with
+    | .contract name _ => some name
+    | .externalCheck .. => none).eraseDups
+
+def contractBindingIssues (draft : List DraftRow) (bindings : List ApprovedContract) : List String :=
+  let expected := draftContractNames draft
+  let actual := bindings.map (·.declaration)
+  let distinct := actual.eraseDups
+  (expected.filterMap fun name =>
+    if actual.contains name then none else some s!"Missing final contract binding: {name}") ++
+  (distinct.filterMap fun name =>
+    if expected.contains name then none else some s!"Unreviewed final contract binding: {name}") ++
+  (distinct.filterMap fun name =>
+    if actual.count name > 1 then some s!"Duplicate final contract binding: {name}" else none)
+
+def checkDraftContracts (draft : List DraftRow) (bindings : List ApprovedContract) :
+    CommandElabM Unit := do
+  let issues := contractBindingIssues draft bindings
+  unless issues.isEmpty do
+    throwError "Specification contract bindings differ from Coverage:\n{String.intercalate "\n" issues}"
+  checkApprovedContracts bindings
+
 end SpecTools.Gaps

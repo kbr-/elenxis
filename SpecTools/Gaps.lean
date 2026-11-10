@@ -75,15 +75,21 @@ def gather (facts : Facts) (rows : List Row) (proposals : List Proposal) : Repor
   let all := decided facts rows ++ accepted
   { byKind := fun k => all.filter (·.kind == k), refused }
 
-def proposalSchema : Json :=
+def proposalSchemaFor (rowIds : Option (List String)) : Json :=
+  let rowSchema := Json.mkObj ([("type", Json.str "string")] ++
+    match rowIds with
+    | none => []
+    | some ids => [("enum", Json.arr (ids.map Json.str).toArray)])
   Json.mkObj [("type", "object"),
     ("properties", Json.mkObj [("gaps", Json.mkObj [("type", "array"),
       ("items", Json.mkObj [("type", "object"),
         ("properties", Json.mkObj [("kind", Json.mkObj [("type", "string"),
             ("enum", Json.arr #["uncovered", "too weak", "undecided", "extra"])]),
-          ("row", Json.mkObj [("type", "string")]), ("why", Json.mkObj [("type", "string")])]),
+          ("row", rowSchema), ("why", Json.mkObj [("type", "string")])]),
         ("required", Json.arr #["kind", "row", "why"]), ("additionalProperties", false)])])]),
     ("required", Json.arr #["gaps"]), ("additionalProperties", false)]
+
+def proposalSchema : Json := proposalSchemaFor none
 
 def proposalsOf (answer : Json) : Option (List Proposal) := do
   let arr ← (answer.getObjValAs? (Array Json) "gaps").toOption

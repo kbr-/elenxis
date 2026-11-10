@@ -5,6 +5,8 @@ def commands : List (String × String) := [
   ("ask", "ask one question of a backend: ask HARNESS MODEL SCHEMA-FILE PROMPT-FILE [TIMEOUT-MS]"),
   ("clauses", "extract a prose file's clauses twice and print the differences: \
     clauses HARNESS MODEL PROSE-FILE [TIMEOUT-MS]"),
+  ("draft-check", "check complete coverage before model review: draft-check INVENTORY DRAFT"),
+  ("draft-review", "review a complete coverage draft: draft-review HARNESS MODEL PROSE INVENTORY DRAFT"),
   ("synthetic", "write a batch of variants of the loans fixture with planted gaps, the key apart: \
     synthetic SEED COUNT EMPTY FIXTURE-DIR OUT-DIR"),
   ("check", "run one spec tool on the synthetic variant in the current directory, with the root and \
@@ -343,10 +345,51 @@ def ask (args : List String) : IO UInt32 := do
     | .error failure => IO.eprintln failure.describe; return 1
   | _ => IO.eprintln usage; return 2
 
+private def readJsonFile [Lean.FromJson α] (path : String) : IO α := do
+  IO.ofExcept ((Lean.Json.parse (← IO.FS.readFile path)).bind Lean.fromJson?)
+
+open SpecTools.Gaps SpecTools.Model in
+def reviewCoverageDraft (args : List String) : IO UInt32 := do
+  match args with
+  | [harness, model, prosePath, inventoryPath, draftPath] =>
+    let inventory : List DraftSource ← readJsonFile inventoryPath
+    let draft : List DraftRow ← readJsonFile draftPath
+    let backend ← selectedBackend harness model
+    let prose ← IO.FS.readFile prosePath
+    let scratch ← IO.FS.createTempDir
+    let result ← try reviewDraft liveRunner [backend] backend inventory draft prose scratch
+      finally IO.FS.removeDirAll scratch
+    match result with
+    | .error message => IO.eprintln message; return 1
+    | .ok report =>
+      let gaps := kinds.flatMap report.byKind
+      for gap in gaps do
+        IO.println s!"{gap.kind.name}: {gap.row}: {gap.why}"
+      for error in report.refused do IO.eprintln s!"Refused proposal: {error}"
+      IO.println s!"{gaps.length} gaps, {report.refused.length} proposals refused"
+      return if gaps.isEmpty && report.refused.isEmpty then 0 else 1
+  | _ => IO.eprintln usage; return 2
+
+open SpecTools.Gaps in
+def checkCoverageDraft (args : List String) : IO UInt32 := do
+  match args with
+  | [inventoryPath, draftPath] =>
+    let inventory : List DraftSource ← readJsonFile inventoryPath
+    let draft : List DraftRow ← readJsonFile draftPath
+    let issues := draftIssues inventory draft
+    if issues.isEmpty then
+      IO.println s!"Complete Coverage draft: {draft.length} rows."
+      return 0
+    IO.eprintln ("Submit the full Coverage draft together.\n" ++ "\n".intercalate issues)
+    return 1
+  | _ => IO.eprintln usage; return 2
+
 def main (args : List String) : IO UInt32 := do
   match args with
   | "ask" :: rest => ask rest
   | "clauses" :: rest => clauses rest
+  | "draft-check" :: rest => checkCoverageDraft rest
+  | "draft-review" :: rest => reviewCoverageDraft rest
   | "synthetic" :: rest => synthetic rest
   | ["check", sub] => SpecTools.SyntheticRun.runCheck sub
   | [] => IO.eprintln usage; return 2

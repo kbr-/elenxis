@@ -86,6 +86,26 @@ establish its adequacy or truth. The default mode continues to require theorem d
 
 ## Running
 
+### Review before writing the specification
+
+Use `spec-tools draft-check INVENTORY DRAFT` to check the complete source inventory locally. Both
+files are JSON arrays. Each inventory object has an `id` and `clause`. Each draft object has a
+`source` with the same fields and an `evidence` object. Use
+`{"contract":{"name":"Geometry.keep","statement":"∀ eye, keep eye = eye"}}` for a planned Lean
+declaration, or
+`{"externalCheck":{"reason":"physical optics","acceptance":"verify fusion in the glasses"}}` for
+external evidence.
+
+Run `spec-tools draft-review HARNESS MODEL PROSE INVENTORY DRAFT` for semantic review. An incomplete
+draft fails before the model call. The complete draft and prose go to one call, and findings or
+malformed proposals cause a nonzero exit. This review checks the written draft statements without
+elaborating them as Lean definitions.
+
+After writing the specification, `SpecTools.Gaps.checkDraftContracts` checks that the supplied
+bindings cover the approved draft's contract names exactly. It then calls
+`SpecTools.Audit.checkApprovedContracts` to compare actual definitions with separately elaborated
+baselines by type and proposition body. The caller supplies the baselines from the approved draft.
+
 ### Backend configuration
 
 Keep backend selection outside specifications. Set `SPEC_TOOLS_BACKEND` to the absolute path of a

@@ -68,7 +68,11 @@ theorem claude_question_cannot_act (model dest : String) (q : Question) (s : Sys
 theorem codex_question_read_only (model dest : String) (q : Question) (s : System.FilePath) :
     ["--sandbox", "read-only"] <:+: (invocation ⟨.codex, model, dest⟩ q s).args.toList :=
   ⟨["exec", "--skip-git-repo-check", "--ephemeral"], ["-m", model, "--output-schema", "schema.json",
-    "-o", "answer.json", "--", q.prompt], by simp [invocation, callInvocation]⟩
+    "-o", "answer.json", "-"], by simp [invocation, callInvocation]⟩
+
+theorem codex_question_input (model dest : String) (q : Question) (s : System.FilePath) :
+    (invocation ⟨.codex, model, dest⟩ q s).input = some q.prompt := by
+  rfl
 
 /-- Each question runs in the scratch directory it was given. -/
 theorem question_runs_in_scratch (b : Backend) (q : Question) (s : System.FilePath) :

@@ -40,6 +40,66 @@ def testOverrun : IO Unit := do
   ensure result.isNone "an overrun gives no result"
   ensure (elapsed < 5000) s!"the overrun was waited out for {elapsed} ms"
 
+def testFullCodexPrompt : IO Unit := do
+  let dir ← scratch "codex-stdin"
+  let prompt := "".pushn 'x' 150912
+  let question : Question := { prompt, schema := Lean.Json.null, timeoutMs := 10000 }
+  let call := invocation ⟨.codex, "test-model", "test"⟩ question dir
+  ensure (call.args.back? == some "-" && !(call.args.contains prompt))
+    "Codex receives the stdin marker with no prompt in argv"
+  match ← liveRunner { call with cmd := "cat", args := #[] } [] 10000 with
+  | some result =>
+    ensure (result.exitCode == 0 && result.stdout == prompt)
+      "the full prompt arrives unchanged and stdin closes"
+  | none => throw <| IO.userError "child did not receive EOF on stdin"
+  IO.FS.removeDirAll dir
+
+open SpecTools.Gaps in
+def testDraftReview : IO Unit := do
+  let source : DraftSource := ⟨"strength", "Zero Strength uses the left image for both eyes."⟩
+  let external : DraftSource := ⟨"comfort", "Check optical fusion in the glasses."⟩
+  let strength : DraftRow :=
+    ⟨source, .contract `Geometry.mono "∀ left, render 0 left = (left, left)"⟩
+  let complete : List DraftRow := [strength,
+    ⟨external, .externalCheck "Device optics" "Wear the glasses and verify fusion."⟩]
+  let sameContract := { strength with source := ⟨"mono", "Mono uses identical eyes."⟩ }
+  let shared := draftPrompt "requirements" [strength, sameContract]
+  ensure ((shared.splitOn "render 0 left").length == 2 &&
+      (shared.splitOn "Geometry.mono, statement 0").length == 3)
+    "one statement is carried with both clause references"
+  let calls ← IO.mkRef (0 : Nat)
+  let runner : Runner := fun invocation _ _ => do
+    calls.modify (· + 1)
+    let prompt := invocation.input.getD ""
+    ensure ((prompt.splitOn "render 0 left").length > 1) "draft statement is in the prompt"
+    ensure ((prompt.splitOn "verify fusion").length > 1) "external acceptance is in the prompt"
+    return some {
+      exitCode := 0, stdout := "", stderr := "",
+      readBack := [("answer.json", "{\"gaps\":[]}")], millis := 0 }
+  let backend : Backend := ⟨.codex, "test-model", "test"⟩
+  let inventory := [source, external]
+  let schema := proposalSchemaFor (some (inventory.map (·.id)))
+  let proposal (row : String) := Lean.Json.mkObj [("gaps", Lean.Json.arr #[
+    Lean.Json.mkObj [("kind", "too weak"), ("row", row), ("why", "test")]])]
+  ensure (SpecTools.Schema.violation schema (proposal "strength")).isNone
+    "one current row key is allowed"
+  ensure (SpecTools.Schema.violation schema (proposal "strength, comfort")).isSome
+    "multiple row keys in one identifier are refused"
+  let invalid : List DraftRow := [⟨{ source with clause := "changed" }, .contract `Geometry.mono " "⟩,
+    strength]
+  match ← reviewDraft runner [backend] backend inventory invalid "requirements" "." with
+  | .ok _ => throw <| IO.userError "incomplete draft reached review"
+  | .error message =>
+    for diagnostic in ["Missing draft row: comfort", "Duplicate draft key: strength",
+        "Unknown or changed source clause: strength", "Empty draft contract: strength"] do
+      ensure ((message.splitOn diagnostic).length > 1) s!"missing diagnostic {diagnostic}"
+  ensure ((← calls.get) == 0) "incomplete draft invoked a backend"
+  match ← reviewDraft runner [backend] backend inventory complete "requirements" "." with
+  | .error message => throw <| IO.userError message
+  | .ok report => ensure (report.refused.isEmpty) "complete review returned malformed proposals"
+  ensure ((← calls.get) == 1) "complete draft used exactly one review"
+  IO.println "PASS: draft review (complete inventory, all defects, one backend call)"
+
 /-- Run the audit over a Lean file written for the case, in this project's environment. -/
 def auditCase (dir : System.FilePath) (name body : String) : IO (UInt32 × String) := do
   let file := dir / s!"{name}.lean"
@@ -48,6 +108,40 @@ def auditCase (dir : System.FilePath) (name body : String) : IO (UInt32 × Strin
   return (out.exitCode, out.stdout ++ out.stderr)
 
 def has (text needle : String) : Bool := (text.splitOn needle).length > 1
+
+def testApprovedContracts : IO Unit := do
+  let dir ← scratch "approved-contracts"
+  let baseline := "def Approved.mono (n : Nat) : Prop := n = 0\n"
+  let check := "#eval SpecTools.Audit.checkApprovedContracts [⟨`Spec.mono, `Approved.mono⟩]\n"
+  let (okCode, ok) ← auditCase dir "Match" (baseline ++
+    "def Spec.mono (value : Nat) : Prop := value = 0\n" ++ check)
+  ensure (okCode == 0 && has ok "1 specification declarations match") ok
+  let (changedCode, changed) ← auditCase dir "Changed" (baseline ++
+    "def Spec.mono (value : Nat) : Prop := value = 1\n" ++ check)
+  ensure (changedCode != 0 && has changed "differs from approved contract") changed
+  let (missingCode, missing) ← auditCase dir "Missing" (baseline ++ check)
+  ensure (missingCode != 0 && has missing "missing requirement definition") missing
+  let (selfCode, self) ← auditCase dir "Self" (baseline ++
+    "#eval SpecTools.Audit.checkApprovedContracts [⟨`Approved.mono, `Approved.mono⟩]\n")
+  ensure (selfCode != 0 && has self "baseline must be a separate declaration") self
+  let draft := "open SpecTools.Gaps\n" ++
+    "def reviewed : List DraftRow := [⟨⟨\"c1\", \"first\"⟩, .contract `Spec.mono \"first\"⟩, " ++
+    "⟨⟨\"c2\", \"second\"⟩, .contract `Spec.stereo \"second\"⟩]\n"
+  let (completeCode, complete) ← auditCase dir "CompleteBinding" (draft ++ baseline ++
+    "def Spec.mono (n : Nat) : Prop := n = 0\n" ++
+    "def Approved.stereo (n : Nat) : Prop := n = 1\n" ++
+    "def Spec.stereo (n : Nat) : Prop := n = 1\n" ++
+    "#eval checkDraftContracts reviewed [⟨`Spec.mono, `Approved.mono⟩, " ++
+    "⟨`Spec.stereo, `Approved.stereo⟩]\n")
+  ensure (completeCode == 0 && has complete "2 specification declarations match") complete
+  let (bindingCode, binding) ← auditCase dir "Binding" (draft ++
+    "#eval checkDraftContracts reviewed [⟨`Spec.mono, `Approved.mono⟩, " ++
+    "⟨`Spec.mono, `Approved.mono⟩, ⟨`Spec.extra, `Approved.extra⟩]\n")
+  ensure (bindingCode != 0 && has binding "Missing final contract binding: Spec.stereo" &&
+    has binding "Duplicate final contract binding: Spec.mono" &&
+    has binding "Unreviewed final contract binding: Spec.extra") binding
+  IO.FS.removeDirAll dir
+  IO.println "PASS: approved contracts (bodies, complete bindings, missing, duplicate, extra)"
 
 /-- The audit reads the environment: missing names, unclaimed theorems, axioms, hypotheses without
 witnesses, and the digests that skip unchanged rows. -/
@@ -186,6 +280,9 @@ def main : IO Unit := do
   let requirements ← IO.asTask testRequirementAudits
   testFinishedProcess
   testOverrun
+  testFullCodexPrompt
+  testDraftReview
+  testApprovedContracts
   testAudit
   IO.ofExcept requirements.get
   IO.println "PASS: audit (pass, unchanged, changed, missing, unclaimed, axiom, vacuous)"

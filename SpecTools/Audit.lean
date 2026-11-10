@@ -50,6 +50,42 @@ def factOf (name : Name) (requirements : Bool := false) : CommandElabM (Option F
     return some { statement := toString statement, axioms, hypotheses := false, kind }
   | none => return none
 
+structure ApprovedContract where
+  declaration : Name
+  baseline : Name
+
+def contractIssue (contract : ApprovedContract) : CommandElabM (Option String) := do
+  let actual := contract.declaration
+  let expected := contract.baseline
+  if actual == expected then return some s!"{actual}: baseline must be a separate declaration"
+  let env ← getEnv
+  let some (.defnInfo actualInfo) := env.find? actual
+    | return some s!"{actual}: missing requirement definition"
+  let some (.defnInfo expectedInfo) := env.find? expected
+    | return some s!"{expected}: missing approved baseline definition"
+  let some actualFact ← factOf actual true
+    | return some s!"{actual}: cannot inspect requirement"
+  let some expectedFact ← factOf expected true
+    | return some s!"{expected}: cannot inspect approved baseline"
+  if actualFact.kind != .requirement || expectedFact.kind != .requirement then
+    return some s!"{actual}: both definitions must state safe requirements"
+  if actualInfo.levelParams.length != expectedInfo.levelParams.length then
+    return some s!"{actual}: universe parameters differ from {expected}"
+  let levels := expectedInfo.levelParams.map Level.param
+  let actualType := actualInfo.type.instantiateLevelParams actualInfo.levelParams levels
+  let actualBody := actualInfo.value.instantiateLevelParams actualInfo.levelParams levels
+  let agrees ← liftTermElabM do
+    if ← isDefEq actualType expectedInfo.type then isDefEq actualBody expectedInfo.value
+    else pure false
+  return if agrees then none else some s!"{actual}: differs from approved contract {expected}"
+
+def checkApprovedContracts (contracts : List ApprovedContract) : CommandElabM Unit := do
+  if contracts.isEmpty then throwError "The approved contract list is empty."
+  let issues ← contracts.filterMapM contractIssue
+  unless issues.isEmpty do
+    throwError "Specification differs from the approved Coverage draft:\n{String.intercalate "\n" issues}"
+  IO.println s!"{contracts.length} specification declarations match their approved contracts."
+
 /-- Read stored digests: one `id digest` per line; a missing file is no digests. -/
 def readDigests (path : System.FilePath) : IO (List (String × UInt64)) := do
   unless ← path.pathExists do return []

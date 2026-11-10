@@ -79,13 +79,14 @@ def Failure.describe : Failure → String
   | .exited b c lines => s!"{b}: exited with status {c}: {lines}"
   | .malformed b r => s!"{b}: answer unusable: {r}"
 
-/-- One process to run: its command, arguments (the prompt last), working directory, and the files
+/-- One process to run: its command, arguments, working directory, and the files
 to write into the working directory first. -/
 structure Invocation where
   cmd : String
   args : Array String
   cwd : System.FilePath
   files : List (String × String) := []
+  input : Option String := none
   deriving Repr, BEq, Inhabited
 
 /-- The largest prompt passed as an argument: half the system's 2 MiB argument limit (`getconf
@@ -138,11 +139,14 @@ def callInvocation (backend : Backend) (question : Question) (scratch : System.F
     let scope := match mode with
       | .question => #["read-only"]
       | .agent _ => #["workspace-write", "-C", scratch.toString]
+    let (promptArgs, input) := match mode with
+      | .question => (#["-"], some question.prompt)
+      | .agent _ => (#["--", question.prompt], none)
     { cmd := "codex"
       args := #["exec", "--skip-git-repo-check", "--ephemeral", "--sandbox"] ++ scope ++ #[
-        "-m", backend.model, "--output-schema", "schema.json", "-o", "answer.json", "--",
-        question.prompt]
+        "-m", backend.model, "--output-schema", "schema.json", "-o", "answer.json"] ++ promptArgs
       cwd := scratch
+      input := input
       files := [("schema.json", question.schema.compress)] }
   | .command executable arguments =>
     { cmd := executable
@@ -255,7 +259,12 @@ def liveRunner : Runner := fun inv readBack timeoutMs => do
     stdin := .null
     stdout := .piped
     stderr := .piped }
-  let child ← IO.Process.spawn spawnArgs
+  let (child, writer) ← match inv.input with
+    | none => pure (← IO.Process.spawn spawnArgs, none)
+    | some input => do
+      let (stdin, child) ← (← IO.Process.spawn { spawnArgs with stdin := .piped }).takeStdin
+      let writer ← IO.asTask (stdin.putStr input *> stdin.flush) .dedicated
+      pure (child, some writer)
   let stdout ← IO.asTask child.stdout.readToEnd .dedicated
   let stderr ← IO.asTask child.stderr.readToEnd .dedicated
   -- Polls every 20 ms; `fuel` bounds the polls so the loop ends even if the clock stalls.
@@ -277,6 +286,9 @@ def liveRunner : Runner := fun inv readBack timeoutMs => do
   | some code =>
     let out ← IO.ofExcept stdout.get
     let err ← IO.ofExcept stderr.get
+    if code == 0 then
+      for task in writer do
+        IO.ofExcept task.get
     let mut files := []
     for name in readBack do
       if ← (inv.cwd / name).pathExists then
