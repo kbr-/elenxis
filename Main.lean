@@ -1,4 +1,5 @@
 import SpecTools
+import SpecTools.DraftHook
 
 /-- The commands, each with what it does. -/
 def commands : List (String × String) := [
@@ -6,6 +7,7 @@ def commands : List (String × String) := [
   ("clauses", "extract a prose file's clauses twice and print the differences: \
     clauses HARNESS MODEL PROSE-FILE [TIMEOUT-MS]"),
   ("draft-check", "check complete coverage before model review: draft-check INVENTORY DRAFT"),
+  ("draft-hook", "check a hook payload and task roots from stdin: draft-hook PYTHON INVENTORY-BRIDGE"),
   ("draft-review", "review a complete coverage draft: draft-review HARNESS MODEL PROSE INVENTORY DRAFT"),
   ("synthetic", "write a batch of variants of the loans fixture with planted gaps, the key apart: \
     synthetic SEED COUNT EMPTY FIXTURE-DIR OUT-DIR"),
@@ -389,6 +391,7 @@ def main (args : List String) : IO UInt32 := do
   | "ask" :: rest => ask rest
   | "clauses" :: rest => clauses rest
   | "draft-check" :: rest => checkCoverageDraft rest
+  | ["draft-hook", python, bridge] => SpecTools.DraftHook.run python bridge
   | "draft-review" :: rest => reviewCoverageDraft rest
   | "synthetic" :: rest => synthetic rest
   | ["check", sub] => SpecTools.SyntheticRun.runCheck sub

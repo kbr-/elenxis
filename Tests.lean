@@ -1,4 +1,22 @@
 import SpecTools
+import SpecTools.DraftHook
+
+open SpecTools.DraftHook in
+#guard additions "*** Begin Patch\n*** Add File: tasks/t/spec/Coverage.draft.json\n+[]\n*** End Patch" ==
+  [⟨"tasks/t/spec/Coverage.draft.json", "[]\n"⟩]
+
+open SpecTools.DraftHook in
+#guard selected "/work" "/work/tasks/t/spec/Coverage.draft.json"
+  [⟨"tasks/other/spec/Coverage.draft.json", "other"⟩,
+   ⟨"tasks/t/spec/Coverage.draft.json", "selected"⟩] ==
+  [⟨"tasks/t/spec/Coverage.draft.json", "selected"⟩]
+
+open SpecTools.DraftHook in
+#guard additions "*** Begin Patch\n*** Update File: tasks/t/spec/Coverage.draft.json\n+[]\n*** End Patch" == []
+
+open SpecTools.DraftHook in
+#guard (issues [("question", "Preserve both eyes.")] "[]").toOption ==
+  some ["Missing draft row: 1"]
 
 /-!
 Tests of what meets the world: the live runner starting real processes. The pure core's properties
