@@ -2,6 +2,13 @@ import SpecTools
 import SpecTools.DraftHook
 
 open SpecTools.DraftHook in
+#guard (identityIssue (Lean.Json.mkObj []) [("x", "/work")]).map Prod.fst ==
+  some "task_lock_gate:no session"
+
+open SpecTools.DraftHook in
+#guard identityIssue (Lean.Json.mkObj [("session_id", "test")]) [("x", "/work")] == none
+
+open SpecTools.DraftHook in
 #guard additions "*** Begin Patch\n*** Add File: tasks/t/spec/Coverage.draft.json\n+[]\n*** End Patch" ==
   [⟨"tasks/t/spec/Coverage.draft.json", "[]\n"⟩]
 

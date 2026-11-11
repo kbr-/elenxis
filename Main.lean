@@ -8,6 +8,7 @@ def commands : List (String × String) := [
     clauses HARNESS MODEL PROSE-FILE [TIMEOUT-MS]"),
   ("draft-check", "check complete coverage before model review: draft-check INVENTORY DRAFT"),
   ("draft-hook", "check a hook payload and task roots from stdin: draft-hook PYTHON INVENTORY-BRIDGE"),
+  ("draft-hook-json", "structured hook verdict: draft-hook-json PYTHON INVENTORY-BRIDGE"),
   ("draft-review", "review a complete coverage draft: draft-review HARNESS MODEL PROSE INVENTORY DRAFT"),
   ("synthetic", "write a batch of variants of the loans fixture with planted gaps, the key apart: \
     synthetic SEED COUNT EMPTY FIXTURE-DIR OUT-DIR"),
@@ -392,6 +393,7 @@ def main (args : List String) : IO UInt32 := do
   | "clauses" :: rest => clauses rest
   | "draft-check" :: rest => checkCoverageDraft rest
   | ["draft-hook", python, bridge] => SpecTools.DraftHook.run python bridge
+  | ["draft-hook-json", python, bridge] => SpecTools.DraftHook.runJson python bridge
   | "draft-review" :: rest => reviewCoverageDraft rest
   | "synthetic" :: rest => synthetic rest
   | ["check", sub] => SpecTools.SyntheticRun.runCheck sub

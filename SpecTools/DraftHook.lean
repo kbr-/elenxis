@@ -64,7 +64,19 @@ theorem issues_complete (clauses : List (String × String)) (text : String)
   simp [issues, h]
   rfl
 
-def run (python bridge : String) : IO UInt32 := do
+def identityIssue (payload : Json) (tasks : List (String × String)) : Option (String × String) :=
+  if tasks.isEmpty || field payload "session_id" != "" then none
+  else some ("task_lock_gate:no session",
+    s!"this call writes the records of task {(tasks.headD ("", "")).1}, and its hook input has no session_id, so no lock can tell this session from another; report the harness call to the user.")
+
+theorem no_task_identity (payload : Json) : identityIssue payload [] = none := by
+  simp [identityIssue]
+
+theorem supplied_identity (payload : Json) (tasks : List (String × String))
+    (h : (field payload "session_id" != "") = true) : identityIssue payload tasks = none := by
+  simp [identityIssue, h]
+
+def check (python bridge : String) : IO (Option (String × String)) := do
   let raw ← (← IO.getStdin).readToEnd
   let input : Json × List (String × String) ← IO.ofExcept ((Json.parse raw).bind fromJson?)
   let (payload, tasks) := input
@@ -76,15 +88,25 @@ def run (python bridge : String) : IO UInt32 := do
       let extracted ← IO.Process.output {
         cmd := python, args := #[bridge, (task / "PLAN.md").toString] }
       if extracted.exitCode != 0 then
-        IO.eprintln extracted.stderr
-        return 2
+        return some ("coverage_draft_gate:incomplete", extracted.stderr)
       let clauses : List (String × String) ←
         IO.ofExcept ((Json.parse extracted.stdout).bind fromJson?)
       let problems ← IO.ofExcept (issues clauses item.text)
       unless problems.isEmpty do
-        IO.eprintln s!"Refused (coverage_draft_gate:incomplete): {slug}: submit all Coverage clauses in one write."
-        IO.eprintln ("\n".intercalate problems)
-        return 2
+        return some ("coverage_draft_gate:incomplete",
+          s!"{slug}: submit all Coverage clauses in one write.\n{"\n".intercalate problems}")
+  return identityIssue payload tasks
+
+def run (python bridge : String) : IO UInt32 := do
+  match ← check python bridge with
+  | none => return 0
+  | some (kind, message) => IO.eprintln s!"Refused ({kind}): {message}"; return 2
+
+/-- The Python hook applies this structured verdict through its existing refusal path. -/
+def runJson (python bridge : String) : IO UInt32 := do
+  let problem ← try check python bridge
+    catch error => pure (some ("coverage_draft_gate:incomplete", toString error))
+  IO.println (toJson problem).compress
   return 0
 
 end SpecTools.DraftHook
