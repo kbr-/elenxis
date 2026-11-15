@@ -1,4 +1,5 @@
 import SpecTools
+import SpecTools.AdversarialTests
 import SpecTools.DraftHook
 
 open SpecTools.DraftHook in

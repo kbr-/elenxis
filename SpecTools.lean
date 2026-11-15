@@ -5,6 +5,7 @@ import SpecTools.ModelProofs
 import SpecTools.Ledger
 import SpecTools.LedgerProofs
 import SpecTools.Audit
+import SpecTools.Adversarial
 import SpecTools.LedgerTable
 import SpecTools.LedgerTableProofs
 import SpecTools.Clauses
