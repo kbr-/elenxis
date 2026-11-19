@@ -1,20 +1,153 @@
 # lean-spec-tools
 
-Tools for checking a requirement written in prose against its specification in Lean, and that
+**Lean's kernel checks a proof against its theorem. Nothing checks the theorem against what you
+meant. This does.**
+
+lean-spec-tools holds a requirement written in prose against its specification in Lean, and that
 specification against an implementation's property tests. Lean decides what it can; a model is asked
 only for what Lean can't decide, and its answers are proposals a person judges.
 
-The workflow it serves: the requirement's clauses go into a ledger, each row naming the theorems
-that state it, the witnesses showing those theorems' hypotheses can hold, and the tests covering it
-in the implementation's language. The audit judges the rows against the Lean environment, `gaps`
-finds what the theorems leave out, and `tests` checks that the property tests notice each guard of
-the implementation.
+## The problem
 
-The toolchain is `leanprover/lean4:v4.36.0-rc2`, with no dependencies.
+AI writes more and more of the code, and increasingly the proofs. A proof is the easy part to trust:
+Lean's kernel checks it, and a wrong proof doesn't compile. What nobody checks is the *statement*. A
+theorem can be proved and still say nothing useful:
+
+- its hypotheses can never hold together, so it proves anything (it is *vacuous*);
+- it is stated for one special case of the clause it was meant to capture (it is *too weak*);
+- a clause of the requirement has no theorem at all (*uncovered*);
+- the prose never decided a case the code has to handle (*undecided*);
+- a theorem constrains something the requirement never asked for (*extra*).
+
+Every one of these compiles, and a reviewer who sees a green build and a theorem named after the
+requirement has no reason to look twice. When a model writes both the specification and its proof,
+it can produce exactly these, and the kernel accepts every one.
+
+[Formal Vibefication](https://proofofkeags.com/research/2026-05-12-formal-vibefication.html) (Proof
+of Keags, 12 May 2026) argues that once AI absorbs the cost of writing, verified software stops
+being an academic luxury, and that the specification becomes the scarce artifact. Of the
+infrastructure it says still has to mature, this repository builds the third piece: "can a model
+help a human author a faithful formal specification — proposing properties, surfacing implicit
+assumptions, flagging where the spec under-determines the system?"
+
+## The idea
+
+Treat the requirement as data. Each clause of the prose becomes a row of a **ledger**, written in
+Lean beside the specification, naming:
+
+- the theorems that state the clause,
+- the witnesses showing those theorems' hypotheses can hold,
+- the tests that cover it in the implementation's language.
+
+Then split every question about the ledger by who can answer it:
+
+- **Lean decides** whatever the environment settles: whether a named theorem exists and is a
+  proposition, which axioms it rests on, whether it has hypotheses without a witness, whether every
+  theorem under the specification's root is claimed by some row. These verdicts are computed, never
+  guessed, and the code computing them is proved (`*Proofs` modules).
+- **A model proposes** only what needs reading the prose: a clause no statement covers, a statement
+  weaker than its clause, a case the prose leaves undecided, a statement nobody asked for. Its
+  answer must validate against a schema and name rows the ledger has; anything else is refused as
+  malformed. A proposal is a finding for a person to judge, not a verdict.
+
+The model never gets the last word on anything Lean can decide, and every finding points at a
+clause.
+
+## A two-minute example
+
+[`examples/refund`](examples/refund) has a two-line requirement:
+
+```markdown
+1. A refund never exceeds the amount the customer paid.
+2. A customer who used nothing gets back everything they paid.
+```
+
+and a specification whose two theorems the kernel accepts:
+
+```lean
+def refund (paid used : Nat) : Nat := paid - used
+
+-- Clause 1, stated only for the customer who used nothing.
+theorem refund_le_paid (paid : Nat) : refund paid 0 ≤ paid := by
+  simp [refund]
+
+-- Clause 2, under a hypothesis no order meets.
+theorem full_refund (paid used : Nat) (h : used = 0 ∧ used > 0) : refund paid used = paid := by
+  omega
+```
+
+Both compile, and both are wrong. `lake env lean examples/refund/Refund.lean` runs the audit, which
+needs no model:
+
+```text
+proved: bounded: A refund never exceeds the amount the customer paid.
+  Refund.refund_le_paid : ∀ (paid : Nat), Refund.refund paid 0 ≤ paid
+    axioms: [propext, Quot.sound]
+too weak or vacuous: full: A customer who used nothing gets back everything they paid.
+  Refund.full_refund : ∀ (paid used : Nat), used = 0 ∧ used > 0 → Refund.refund paid used = paid
+    axioms: [propext, Quot.sound]
+2 rows: 1 proved, 0 conditional, 1 too weak or vacuous, 0 not stated (2 judged)
+```
+
+Lean alone catches the second: the theorem has a hypothesis and the row gives no witness that it can
+hold. The first it calls proved, and as far as Lean can tell it is: the statement has no hypotheses
+and its proof checks. Only reading the clause shows it covers one order out of all of them. That is
+the gap `gaps` asks a model about,
+`SPEC_TOOLS_GAPS=sonnet lake env lean examples/refund/Refund.lean` (one run's output; a model's
+wording varies from run to run):
+
+```text
+Requirements check: process adapter claude-code; model sonnet; destination note: Anthropic
+too weak: full: its theorems have hypotheses and no witness shows they can hold
+too weak: bounded: Only states refund paid 0 ≤ paid, i.e. for used = 0. The prose says a refund never exceeds the amount paid for any usage; the statement should quantify over all used values (refund paid used ≤ paid).
+too weak: full: The hypothesis `used = 0 ∧ used > 0` is contradictory, so the theorem is vacuously true and says nothing. It should be `used = 0 → refund paid used = paid`.
+3 gaps, 0 proposals refused
+```
+
+The first finding is Lean's, decided with no model. The other two are the model's proposals, each
+tied to a row of the ledger and checked against the answer schema before it is printed: one finds
+the gap Lean called proved, the other explains the one Lean caught and proposes the statement the
+clause meant.
+
+## The tools
+
+- **Audit** (`SpecTools.Audit`) judges every row from its theorems' statements, axioms and
+  hypotheses. It fails on what makes the report wrong (a repeated identifier, a named theorem that
+  is no theorem, a theorem under the root no row claims, a source module it doesn't import); a row
+  not stated, conditional or too weak is reported, not failed. With a digest file, rows whose clause
+  and statements are unchanged are not judged again.
+- **Gaps** (`SpecTools.Gaps`, `SpecTools.GapsRun`): `#eval SpecTools.Gaps.run ledger prose backend`
+  finds the four gaps between the prose and the statements. Lean decides a row whose theorems have
+  hypotheses and no witness; a model proposes the rest.
+- **Adversarial admission** (`SpecTools.Adversarial`): `adversarial_claim ENTRY in theorem ...`
+  admits a theorem only with a witness inhabiting its hypotheses and, for each attack, a mutant
+  implementation (the cheapest wrong one: a constant, doing nothing) with a proof that the same law
+  fails for it. A law a do-nothing implementation also satisfies has no such proof, so its theorem
+  is never admitted, and the check runs before the theorem's own proof is elaborated.
+- **Tests** (`SpecTools.Tests`, `adapters/python_guards.py`):
+  `SpecTools.Tests.run rows adapter module testFile` reports a test a row names that the test file
+  doesn't define, and a guard of the implementation whose removal no test notices. The Python
+  adapter replaces each disjunct of a refusing `if` (and each term of a sum inside one) by `False`
+  (or `0`) in a copy and runs the named tests with pytest.
+- **Clauses** (`spec-tools clauses`): a model extracts a prose file's clauses twice, blind to each
+  other, and the differences are printed as rows to add.
+- **Draft review** (`spec-tools draft-check`, `spec-tools draft-review`): before any Lean is
+  written, every clause of the source inventory gets a planned contract or an external check, and
+  the complete draft goes to one model call for semantic review.
+- **Model interface** (`SpecTools.Model`, `SpecTools.BackendConfig`, `SpecTools.Schema`): a question
+  goes to a configurable backend, and the answer is checked against a JSON schema subset (`type`,
+  `properties`, `required`, `additionalProperties`, `items`, `enum`; any other keyword is refused).
+  The effects sit in a `Runner`, so tests script it and reach no model.
+- **Synthetic test** (`SpecTools.Synthetic`, `SpecTools.Generated`, `SpecTools.Score`,
+  `spec-tools synthetic`): generates a requirement of N rules from a seed with its four artifacts
+  (prose, Lean model and ledger, Python and its tests) agreeing by construction, plants gaps in one
+  artifact with the key kept apart, and scores a run's findings against the key: how many planted
+  gaps an agent with these tools finds, and its false alarms. The hand-written loans fixture is in
+  `fixtures/loans`.
 
 ## The ledger
 
-A ledger is a `List SpecTools.Ledger.Row`, written in Lean beside the specification:
+A ledger is a `List SpecTools.Ledger.Row`:
 
 ```lean
 import SpecTools.Audit
@@ -33,9 +166,9 @@ A row's `status` is `covered` (the default), `uncovered REASON`, `provisional DE
 `accepted DECISION`. A ledger kept as a Markdown table instead is read by `SpecTools.LedgerTable`;
 its header row is `| id | clause | source | theorems | witnesses | tests | status |`.
 
-## The tools
+### Specifying before implementing
 
-For a specification written before implementation, opt into requirement declarations:
+For a specification written before its implementation, opt into requirement declarations:
 
 ```lean
 def obligation (n : Nat) : Prop := n + 0 = n
@@ -57,34 +190,18 @@ the module's appropriate public interface or `import all` when the module system
 model reads the requirement bodies and judges their coverage; admitting a declaration does not
 establish its adequacy or truth. The default mode continues to require theorem declarations.
 
-- **Audit** (`SpecTools.Audit`) judges every row from its theorems' statements, axioms and
-  hypotheses. It fails on what makes the report wrong (a repeated identifier, a named theorem that
-  is no theorem, a theorem under `Root` no row claims, a source module it doesn't import); a row not
-  stated, conditional or too weak is reported, not failed. With a digest file, rows whose clause and
-  statements are unchanged are not judged again.
-- **Gaps** (`SpecTools.Gaps`, `SpecTools.GapsRun`): `#eval SpecTools.Gaps.run ledger prose backend`
-  finds the four gaps between the prose and the statements. Lean decides a row whose theorems have
-  hypotheses and no witness; a model proposes the rest: a clause no statement covers, a statement
-  weaker than its clause, a case the prose leaves undecided, a statement the prose doesn't ask for.
-- **Tests** (`SpecTools.Tests`, `adapters/python_guards.py`):
-  `SpecTools.Tests.run rows adapter module testFile` reports a test a row names that the test file
-  doesn't define, and a guard of the implementation whose removal no test notices. The Python
-  adapter replaces each disjunct of a refusing `if` (and each term of a sum inside one) by `False`
-  (or `0`) in a copy and runs the named tests with pytest.
-- **Clauses** (`spec-tools clauses`): a model extracts a prose file's clauses twice, blind to each
-  other, and the differences are printed as rows to add.
-- **Model interface** (`SpecTools.Model`, `SpecTools.BackendConfig`, `SpecTools.Schema`): a question
-  goes to a configurable backend, and the answer is checked against a JSON schema subset (`type`,
-  `properties`, `required`, `additionalProperties`, `items`, `enum`; any other keyword is refused).
-  The effects sit in a `Runner`, so tests script it and reach no model.
-- **Synthetic test** (`SpecTools.Synthetic`, `SpecTools.Generated`, `SpecTools.Score`,
-  `spec-tools synthetic`): generates a requirement of N rules from a seed with its four artifacts
-  (prose, Lean model and ledger, Python and its tests) agreeing by construction, plants gaps in one
-  artifact with the key kept apart, and scores a run's findings against the key. It measures how
-  many planted gaps an agent with these tools finds, and its false alarms. The hand-written loans
-  fixture is in `fixtures/loans`.
-
 ## Running
+
+```bash
+lake build
+lake env lean path/to/Spec.lean
+lake test
+```
+
+`lake build` builds the library and `spec-tools`; `lake env lean` checks a specification and runs
+its `#eval` lines (the audit, and `gaps` when the specification asks for it); `lake test` runs the
+tests, which call no model. `spec-tools` with no arguments lists its commands. The toolchain is
+`leanprover/lean4:v4.36.0-rc2`, with no dependencies.
 
 ### Review before writing the specification
 
@@ -148,16 +265,6 @@ positional argument overrides the configured model in these CLI forms. Their exp
 and `claude-code MODEL` forms remain available. Synthetic agent runs use the configured adapter with
 their explicit agent model; generated gap checks use it with their explicit tool model. Synthetic
 clause extraction uses the same explicit tool model.
-
-```bash
-lake build
-lake env lean path/to/Spec.lean
-lake test
-```
-
-`lake build` builds the library and `spec-tools`; `lake env lean` checks a specification and runs
-its `#eval` lines (the audit, and `gaps` when the specification asks for it); `lake test` runs the
-tests, which call no model. `spec-tools` with no arguments lists its commands.
 
 ## What is proved
 
