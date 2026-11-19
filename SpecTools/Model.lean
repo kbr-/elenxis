@@ -29,18 +29,23 @@ def Harness.name : Harness → String
   | .codex => "codex"
   | .command executable _ => executable
 
-/-- A harness, the model it runs, and where the prompt's data goes when it runs. -/
+/-- A harness, the model it runs, where the prompt's data goes when it runs, and the reasoning
+effort the model is run at (`none`: the harness's own default). -/
 structure Backend where
   harness : Harness
   model : String
   dataGoesTo : String
+  effort : Option String := none
   deriving Repr, DecidableEq, Inhabited
 
 def Backend.name (b : Backend) : String := s!"{b.harness.name}/{b.model}"
 
 /-- Explain the actual transport; provider provenance never selects another client. -/
 def Backend.describe (b : Backend) : String :=
-  s!"process adapter {b.harness.name}; model {b.model}; destination note: {b.dataGoesTo}"
+  let effort := match b.effort with
+    | some e => s!"; effort {e}"
+    | none => ""
+  s!"process adapter {b.harness.name}; model {b.model}{effort}; destination note: {b.dataGoesTo}"
 
 /-- A prompt and the JSON Schema its answer must meet, bounded by a timeout. -/
 structure Question where
@@ -51,9 +56,12 @@ structure Question where
 /-- Versioned request for an external adapter; no provider protocol leaks into callers. -/
 def commandRequest (backend : Backend) (question : Question) (mode : String := "question")
     (tools : List String := []) : Json :=
-  Json.mkObj [("protocol", toJson (1 : Nat)), ("model", toJson backend.model),
+  Json.mkObj ([("protocol", toJson (1 : Nat)), ("model", toJson backend.model),
     ("prompt", toJson question.prompt), ("schema", question.schema),
-    ("timeoutMs", toJson question.timeoutMs), ("mode", toJson mode), ("tools", toJson tools)]
+    ("timeoutMs", toJson question.timeoutMs), ("mode", toJson mode), ("tools", toJson tools)] ++
+    match backend.effort with
+    | some e => [("effort", toJson e)]
+    | none => [])
 
 /-- What a call cost: its wall-clock time, and tokens where the harness reports them. -/
 structure Cost where
@@ -130,9 +138,12 @@ def callInvocation (backend : Backend) (question : Question) (scratch : System.F
       | .agent tools =>
         let names := ",".intercalate (tools.map fun t => (t.splitOn "(").headD t).eraseDups
         #["--tools", names, "--allowedTools", " ".intercalate tools]
+    let effortArgs := match backend.effort with
+      | some e => #["--effort", e]
+      | none => #[]
     { cmd := "claude"
       args := #["-p", "--safe-mode"] ++ toolArgs ++ #["--no-session-persistence",
-        "--model", backend.model, "--output-format", "json",
+        "--model", backend.model] ++ effortArgs ++ #["--output-format", "json",
         "--json-schema", question.schema.compress, "--", question.prompt]
       cwd := scratch }
   | .codex =>
@@ -142,9 +153,13 @@ def callInvocation (backend : Backend) (question : Question) (scratch : System.F
     let (promptArgs, input) := match mode with
       | .question => (#["-"], some question.prompt)
       | .agent _ => (#["--", question.prompt], none)
+    let effortArgs := match backend.effort with
+      | some e => #["-c", s!"model_reasoning_effort=\"{e}\""]
+      | none => #[]
     { cmd := "codex"
       args := #["exec", "--skip-git-repo-check", "--ephemeral", "--sandbox"] ++ scope ++ #[
-        "-m", backend.model, "--output-schema", "schema.json", "-o", "answer.json"] ++ promptArgs
+        "-m", backend.model] ++ effortArgs ++ #["--output-schema", "schema.json", "-o",
+        "answer.json"] ++ promptArgs
       cwd := scratch
       input := input
       files := [("schema.json", question.schema.compress)] }

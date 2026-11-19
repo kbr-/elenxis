@@ -26,7 +26,15 @@ def backendOfJson (json : Json) : Except String Backend := do
       let arguments ← json.getObjValAs? (List String) "args"
       pure (Harness.command executable arguments)
     | _ => throw s!"unknown adapter {adapter}; use codex, claude-code or command"
-  return { harness, model, dataGoesTo := destination }
+  -- The reasoning effort, when given, is passed to the harness as it is written; an empty one is
+  -- refused, and its absence leaves the harness's own default.
+  let effort ← match json.getObjVal? "effort" with
+    | .error _ => pure none
+    | .ok _ => do
+      let e ← json.getObjValAs? String "effort"
+      if e.trimAscii.isEmpty then throw "backend effort must be nonempty when given"
+      pure (some e)
+  return { harness, model, dataGoesTo := destination, effort }
 
 theorem backendOfJson_model {json : Json} {backend : Backend}
     (result : backendOfJson json = .ok backend) :

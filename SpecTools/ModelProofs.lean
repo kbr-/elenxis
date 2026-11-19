@@ -56,45 +56,91 @@ theorem ask_refused_runs_nothing (runner : Runner) {allowed : List Backend} {bac
     ask runner allowed backend q s = pure (.error failure) := by
   simp [ask, h]
 
-/-- A question to Claude Code runs with no tools and without the user's settings. -/
-theorem claude_question_cannot_act (model dest : String) (q : Question) (s : System.FilePath) :
-    let args := (invocation ⟨.claudeCode, model, dest⟩ q s).args.toList
+/-- A question to Claude Code runs with no tools and without the user's settings, at any effort. -/
+theorem claude_question_cannot_act (model dest : String) (effort : Option String) (q : Question)
+    (s : System.FilePath) :
+    let args := (invocation ⟨.claudeCode, model, dest, effort⟩ q s).args.toList
     "--safe-mode" ∈ args ∧ ["--tools", ""] <:+: args := by
-  refine ⟨by simp [invocation, callInvocation], ?_⟩
-  exact ⟨["-p", "--safe-mode"], ["--no-session-persistence", "--model", model, "--output-format",
-    "json", "--json-schema", q.schema.compress, "--", q.prompt], by simp [invocation, callInvocation]⟩
+  cases effort with
+  | none =>
+    refine ⟨by simp [invocation, callInvocation], ?_⟩
+    exact ⟨["-p", "--safe-mode"], ["--no-session-persistence", "--model", model, "--output-format",
+      "json", "--json-schema", q.schema.compress, "--", q.prompt],
+      by simp [invocation, callInvocation]⟩
+  | some e =>
+    refine ⟨by simp [invocation, callInvocation], ?_⟩
+    exact ⟨["-p", "--safe-mode"], ["--no-session-persistence", "--model", model, "--effort", e,
+      "--output-format", "json", "--json-schema", q.schema.compress, "--", q.prompt],
+      by simp [invocation, callInvocation]⟩
 
-/-- A question to Codex runs in a read-only sandbox. -/
-theorem codex_question_read_only (model dest : String) (q : Question) (s : System.FilePath) :
-    ["--sandbox", "read-only"] <:+: (invocation ⟨.codex, model, dest⟩ q s).args.toList :=
-  ⟨["exec", "--skip-git-repo-check", "--ephemeral"], ["-m", model, "--output-schema", "schema.json",
-    "-o", "answer.json", "-"], by simp [invocation, callInvocation]⟩
+/-- A configured effort reaches Claude Code as its `--effort` flag. -/
+theorem claude_question_effort (model dest e : String) (q : Question) (s : System.FilePath) :
+    ["--model", model, "--effort", e] <:+:
+      (invocation ⟨.claudeCode, model, dest, some e⟩ q s).args.toList :=
+  ⟨["-p", "--safe-mode", "--tools", "", "--no-session-persistence"],
+    ["--output-format", "json", "--json-schema", q.schema.compress, "--", q.prompt],
+    by simp [invocation, callInvocation]⟩
 
-theorem codex_question_input (model dest : String) (q : Question) (s : System.FilePath) :
-    (invocation ⟨.codex, model, dest⟩ q s).input = some q.prompt := by
-  rfl
+/-- A question to Codex runs in a read-only sandbox, at any effort. -/
+theorem codex_question_read_only (model dest : String) (effort : Option String) (q : Question)
+    (s : System.FilePath) :
+    ["--sandbox", "read-only"] <:+: (invocation ⟨.codex, model, dest, effort⟩ q s).args.toList := by
+  cases effort with
+  | none =>
+    exact ⟨["exec", "--skip-git-repo-check", "--ephemeral"], ["-m", model, "--output-schema",
+      "schema.json", "-o", "answer.json", "-"], by simp [invocation, callInvocation]⟩
+  | some e =>
+    exact ⟨["exec", "--skip-git-repo-check", "--ephemeral"], ["-m", model, "-c",
+      s!"model_reasoning_effort=\"{e}\"", "--output-schema", "schema.json", "-o", "answer.json",
+      "-"], by simp [invocation, callInvocation]⟩
+
+/-- A configured effort reaches Codex as its reasoning-effort setting. -/
+theorem codex_question_effort (model dest e : String) (q : Question) (s : System.FilePath) :
+    ["-m", model, "-c", s!"model_reasoning_effort=\"{e}\""] <:+:
+      (invocation ⟨.codex, model, dest, some e⟩ q s).args.toList :=
+  ⟨["exec", "--skip-git-repo-check", "--ephemeral", "--sandbox", "read-only"],
+    ["--output-schema", "schema.json", "-o", "answer.json", "-"],
+    by simp [invocation, callInvocation]⟩
+
+theorem codex_question_input (model dest : String) (effort : Option String) (q : Question)
+    (s : System.FilePath) :
+    (invocation ⟨.codex, model, dest, effort⟩ q s).input = some q.prompt := by
+  cases effort <;> rfl
 
 /-- Each question runs in the scratch directory it was given. -/
 theorem question_runs_in_scratch (b : Backend) (q : Question) (s : System.FilePath) :
     (invocation b q s).cwd = s := by
   cases h : b.harness <;> simp [invocation, callInvocation, h]
 
-theorem codex_agent_workspace (model dest : String) (q : Question) (s : System.FilePath)
-    (tools : List String) :
+theorem codex_agent_workspace (model dest : String) (effort : Option String) (q : Question)
+    (s : System.FilePath) (tools : List String) :
     ["--sandbox", "workspace-write", "-C", s.toString] <:+:
-      (agentInvocation ⟨.codex, model, dest⟩ q tools s).args.toList :=
-  ⟨["exec", "--skip-git-repo-check", "--ephemeral"],
-    ["-m", model, "--output-schema", "schema.json", "-o", "answer.json", "--", q.prompt],
-    by simp [agentInvocation, callInvocation]⟩
+      (agentInvocation ⟨.codex, model, dest, effort⟩ q tools s).args.toList := by
+  cases effort with
+  | none =>
+    exact ⟨["exec", "--skip-git-repo-check", "--ephemeral"],
+      ["-m", model, "--output-schema", "schema.json", "-o", "answer.json", "--", q.prompt],
+      by simp [agentInvocation, callInvocation]⟩
+  | some e =>
+    exact ⟨["exec", "--skip-git-repo-check", "--ephemeral"],
+      ["-m", model, "-c", s!"model_reasoning_effort=\"{e}\"", "--output-schema", "schema.json",
+        "-o", "answer.json", "--", q.prompt],
+      by simp [agentInvocation, callInvocation]⟩
 
-theorem claude_agent_tools (model dest : String) (q : Question) (s : System.FilePath)
-    (tools : List String) :
+theorem claude_agent_tools (model dest : String) (effort : Option String) (q : Question)
+    (s : System.FilePath) (tools : List String) :
     let names := ",".intercalate (tools.map fun t => (t.splitOn "(").headD t).eraseDups
     ["--tools", names, "--allowedTools", " ".intercalate tools] <:+:
-      (agentInvocation ⟨.claudeCode, model, dest⟩ q tools s).args.toList :=
-  ⟨["-p", "--safe-mode"], ["--no-session-persistence", "--model", model, "--output-format",
-    "json", "--json-schema", q.schema.compress, "--", q.prompt],
-    by simp [agentInvocation, callInvocation]⟩
+      (agentInvocation ⟨.claudeCode, model, dest, effort⟩ q tools s).args.toList := by
+  cases effort with
+  | none =>
+    exact ⟨["-p", "--safe-mode"], ["--no-session-persistence", "--model", model, "--output-format",
+      "json", "--json-schema", q.schema.compress, "--", q.prompt],
+      by simp [agentInvocation, callInvocation]⟩
+  | some e =>
+    exact ⟨["-p", "--safe-mode"], ["--no-session-persistence", "--model", model, "--effort", e,
+      "--output-format", "json", "--json-schema", q.schema.compress, "--", q.prompt],
+      by simp [agentInvocation, callInvocation]⟩
 
 /-- An overrun is an error naming the backend and its limit. -/
 theorem finish_overrun (b : Backend) (q : Question) :
@@ -122,20 +168,21 @@ theorem finish_answer_conforms {b : Backend} {q : Question} {ran : Ran} {o : Out
       exact hv
 
 /-- Claude Code's own error report is never taken for an answer. -/
-theorem claude_reported_error_fails (model dest : String) {ran : Ran} {report : Json}
-    (exit0 : ran.exitCode = 0) (parsed : Json.parse ran.stdout = .ok report)
+theorem claude_reported_error_fails (model dest : String) (effort : Option String) {ran : Ran}
+    {report : Json} (exit0 : ran.exitCode = 0) (parsed : Json.parse ran.stdout = .ok report)
     (flagged : report.getObjValAs? Bool "is_error" = .ok true) :
-    ∃ failure, readAnswer ⟨.claudeCode, model, dest⟩ ran = .error failure := by
-  refine ⟨.malformed (Backend.name ⟨.claudeCode, model, dest⟩)
+    ∃ failure, readAnswer ⟨.claudeCode, model, dest, effort⟩ ran = .error failure := by
+  refine ⟨.malformed (Backend.name ⟨.claudeCode, model, dest, effort⟩)
     s!"the harness reported an error: {firstLines ran.stdout}", ?_⟩
   simp [readAnswer, exit0, parsed, flagged, bind, Except.bind, Except.mapError, Except.toOption]
   rfl
 
 /-- Codex without its answer file gives no answer. -/
-theorem codex_missing_answer_fails (model dest : String) {ran : Ran} (exit0 : ran.exitCode = 0)
-    (missing : ran.readBack.lookup "answer.json" = none) :
-    ∃ failure, readAnswer ⟨.codex, model, dest⟩ ran = .error failure := by
-  refine ⟨.malformed (Backend.name ⟨.codex, model, dest⟩) "the answer file was not written", ?_⟩
+theorem codex_missing_answer_fails (model dest : String) (effort : Option String) {ran : Ran}
+    (exit0 : ran.exitCode = 0) (missing : ran.readBack.lookup "answer.json" = none) :
+    ∃ failure, readAnswer ⟨.codex, model, dest, effort⟩ ran = .error failure := by
+  refine ⟨.malformed (Backend.name ⟨.codex, model, dest, effort⟩)
+    "the answer file was not written", ?_⟩
   simp [readAnswer, exit0, missing]
   rfl
 
@@ -143,38 +190,42 @@ theorem codex_missing_answer_fails (model dest : String) {ran : Ran} (exit0 : ra
 
 /-- A destination label cannot change process routing, arguments or request data. -/
 theorem destination_does_not_route (harness : Harness) (model before after : String)
-    (q : Question) (s : System.FilePath) :
-    invocation ⟨harness, model, before⟩ q s = invocation ⟨harness, model, after⟩ q s := by
+    (effort : Option String) (q : Question) (s : System.FilePath) :
+    invocation ⟨harness, model, before, effort⟩ q s =
+      invocation ⟨harness, model, after, effort⟩ q s := by
   cases harness <;> rfl
 
 /-- Descriptive destination notes cannot change the planner's permission decision or invocation. -/
 theorem plan_ignores_destination (allowed : List Backend) (backend : Backend) (destination : String)
     (q : Question) (s : System.FilePath) :
     plan allowed { backend with dataGoesTo := destination } q s = plan allowed backend q s := by
-  rcases backend with ⟨harness, model, previous⟩
+  rcases backend with ⟨harness, model, previous, effort⟩
   simp only [plan, routeAllowed, Backend.name]
-  rw [destination_does_not_route harness model destination previous]
+  rw [destination_does_not_route harness model destination previous effort]
   rfl
 
-example : routeAllowed [] ⟨.codex, "m", "d"⟩ = false := rfl
+example : routeAllowed [] ⟨.codex, "m", "d", none⟩ = false := rfl
 
 /-- External adapters receive one JSON request file and literal arguments, without shell expansion. -/
 theorem command_invocation (executable model destination : String) (arguments : List String)
-    (q : Question) (s : System.FilePath) :
-    invocation ⟨.command executable arguments, model, destination⟩ q s =
+    (effort : Option String) (q : Question) (s : System.FilePath) :
+    invocation ⟨.command executable arguments, model, destination, effort⟩ q s =
       { cmd := executable, args := (arguments ++ ["request.json"]).toArray, cwd := s,
         files := [("request.json",
-          (commandRequest ⟨.command executable arguments, model, destination⟩ q).compress)] } := rfl
+          (commandRequest ⟨.command executable arguments, model, destination, effort⟩ q).compress)] } :=
+  rfl
 
 /-- Agent adapters receive the same request protocol with the requested mode and tool policy. -/
-theorem command_agent_invocation (executable model destination : String) (arguments tools : List String)
-    (q : Question) (s : System.FilePath) :
-    agentInvocation ⟨.command executable arguments, model, destination⟩ q tools s =
+theorem command_agent_invocation (executable model destination : String)
+    (arguments tools : List String) (effort : Option String) (q : Question) (s : System.FilePath) :
+    agentInvocation ⟨.command executable arguments, model, destination, effort⟩ q tools s =
       { cmd := executable, args := (arguments ++ ["request.json"]).toArray, cwd := s,
         files := [("request.json",
-          (commandRequest ⟨.command executable arguments, model, destination⟩ q "agent" tools).compress)] } := rfl
+          (commandRequest ⟨.command executable arguments, model, destination, effort⟩ q "agent"
+            tools).compress)] } :=
+  rfl
 
-example : (⟨.codex, "m", "d"⟩ : Backend) ∉ ([] : List Backend) := by simp
+example : (⟨.codex, "m", "d", none⟩ : Backend) ∉ ([] : List Backend) := by simp
 
 example : Schema.unsupported (Json.mkObj [("type", "string"), ("pattern", "a+")]) ≠ none := by
   native_decide

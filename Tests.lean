@@ -70,7 +70,7 @@ def testFullCodexPrompt : IO Unit := do
   let dir ← scratch "codex-stdin"
   let prompt := "".pushn 'x' 150912
   let question : Question := { prompt, schema := Lean.Json.null, timeoutMs := 10000 }
-  let call := invocation ⟨.codex, "test-model", "test"⟩ question dir
+  let call := invocation ⟨.codex, "test-model", "test", none⟩ question dir
   ensure (call.args.back? == some "-" && !(call.args.contains prompt))
     "Codex receives the stdin marker with no prompt in argv"
   match ← liveRunner { call with cmd := "cat", args := #[] } [] 10000 with
@@ -102,7 +102,7 @@ def testDraftReview : IO Unit := do
     return some {
       exitCode := 0, stdout := "", stderr := "",
       readBack := [("answer.json", "{\"gaps\":[]}")], millis := 0 }
-  let backend : Backend := ⟨.codex, "test-model", "test"⟩
+  let backend : Backend := ⟨.codex, "test-model", "test", none⟩
   let inventory := [source, external]
   let schema := proposalSchemaFor (some (inventory.map (·.id)))
   let proposal (row : String) := Lean.Json.mkObj [("gaps", Lean.Json.arr #[
@@ -270,6 +270,13 @@ def testCommandAdapter : IO Unit := do
       ensure ((outcome.answer.getObjValAs? String "prompt").toOption == some prompt) "prompt changed in transport"
       ensure ((outcome.answer.getObjValAs? String "model").toOption == some "local/model") "configured model lost"
       ensure ((outcome.answer.getObjValAs? String "mode").toOption == some "question") "wrong adapter mode"
+      ensure (outcome.answer.getObjVal? "effort").toOption.isNone "an effort sent though none was configured"
+    let effortful := { backend with effort := some "medium" }
+    match ← ask liveRunner [effortful] effortful question dir with
+    | .error failure => throw (IO.userError failure.describe)
+    | .ok outcome =>
+      ensure ((outcome.answer.getObjValAs? String "effort").toOption == some "medium")
+        "configured effort lost in transport"
     let invalid : Question := { question with schema := Lean.Json.mkObj [("type", "string")] }
     let rejected ← ask liveRunner [backend] backend invalid dir
     ensure rejected.toOption.isNone "schema-breaking process output accepted"
@@ -283,12 +290,17 @@ def testCommandAdapter : IO Unit := do
       ("args", Lean.toJson ([] : List String))]
     let parsed ← IO.ofExcept (backendOfJson json)
     ensure (parsed.model == "chosen" && parsed.dataGoesTo == "chosen destination") "configuration changed"
+    ensure (parsed.effort == none) "an effort chosen though the configuration names none"
+    let withEffort := json.setObjVal! "effort" (Lean.toJson "medium")
+    ensure ((← IO.ofExcept (backendOfJson withEffort)).effort == some "medium") "configured effort lost"
+    ensure ((backendOfJson (json.setObjVal! "effort" (Lean.toJson " "))).toOption.isNone)
+      "empty effort accepted"
     ensure ((backendOfJson (Lean.Json.mkObj [("adapter", Lean.toJson adapter)])).toOption.isNone)
       "incomplete configuration accepted"
   let config := dir / "backend.json"
-  IO.FS.writeFile config "{\"adapter\":\"command\",\"command\":\"cat\",\"args\":[],\"model\":\"default\",\"dataGoesTo\":\"local\"}"
+  IO.FS.writeFile config "{\"adapter\":\"command\",\"command\":\"cat\",\"args\":[],\"model\":\"default\",\"dataGoesTo\":\"local\",\"effort\":\"medium\"}"
   let source := dir / "Select.lean"
-  IO.FS.writeFile source "import SpecTools.BackendConfig\n#eval show IO Unit from do\n  let b ← SpecTools.Model.selectedBackend \"configured\" \"override\"\n  if b.model != \"override\" then throw (IO.userError \"model override lost\")\n  match b.harness with\n  | .command \"cat\" [] => pure ()\n  | _ => throw (IO.userError \"configured adapter lost\")\n"
+  IO.FS.writeFile source "import SpecTools.BackendConfig\n#eval show IO Unit from do\n  let b ← SpecTools.Model.selectedBackend \"configured\" \"override\"\n  if b.model != \"override\" then throw (IO.userError \"model override lost\")\n  if b.effort != some \"medium\" then throw (IO.userError \"configured effort lost on a model override\")\n  match b.harness with\n  | .command \"cat\" [] => pure ()\n  | _ => throw (IO.userError \"configured adapter lost\")\n"
   let selected ← IO.Process.output {
     cmd := "lake"
     args := #["env", "lean", source.toString]

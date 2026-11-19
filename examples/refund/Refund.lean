@@ -9,7 +9,8 @@ the requirement: these two gaps are what the audit and `gaps` exist to find.
 Run from the repository's root:
 
     lake env lean examples/refund/Refund.lean
-    SPEC_TOOLS_GAPS=sonnet lake env lean examples/refund/Refund.lean   # gaps too, a live model call
+    SPEC_TOOLS_BACKEND=$PWD/examples/backend.json lake env lean examples/refund/Refund.lean
+                                            # gaps too, a live model call
 -/
 
 namespace Refund
@@ -39,8 +40,7 @@ end Refund
 
 #eval SpecTools.Audit.run Refund.ledger `Refund
 
--- With `SPEC_TOOLS_GAPS` set to a Claude model, the gaps against `refund.md` too (a live call).
+-- With `SPEC_TOOLS_BACKEND` naming a backend configuration, the gaps against `refund.md` too.
 #eval show Lean.Elab.Command.CommandElabM Unit from do
-  if let some model ← IO.getEnv "SPEC_TOOLS_GAPS" then
-    SpecTools.Gaps.run Refund.ledger (← IO.FS.readFile "examples/refund/refund.md")
-      { harness := .claudeCode, model, dataGoesTo := "Anthropic" }
+  if (← IO.getEnv "SPEC_TOOLS_BACKEND").isSome then
+    SpecTools.Gaps.runConfigured Refund.ledger (← IO.FS.readFile "examples/refund/refund.md")

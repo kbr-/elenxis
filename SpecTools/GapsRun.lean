@@ -11,14 +11,22 @@ namespace SpecTools.Gaps
 open Lean Elab Command SpecTools.Ledger SpecTools.Model SpecTools.Audit
 
 def gapsPrompt (prose : String) (rows : List Row) (facts : Facts) : String :=
+  -- A row's witnesses are listed apart from its statements: a witness shows a statement's
+  -- hypotheses can hold, and judged as a statement of the clause it reads as an extra one.
   let rowText := rows.map fun r =>
-    let stmts := (r.theorems ++ r.witnesses).eraseDups.filterMap fun n => (facts n).map fun f =>
+    let line (n : Name) : Option String := (facts n).map fun f =>
       s!"    {n} [{reprStr f.kind}] : {f.statement}"
-    s!"- {r.id}: {r.clause}\n" ++ "\n".intercalate stmts
+    let stmts := r.theorems.eraseDups.filterMap line
+    let witnesses := (r.witnesses.eraseDups.filter (!r.theorems.contains ·)).filterMap line
+    s!"- {r.id}: {r.clause}\n" ++ "\n".intercalate stmts ++
+      (if witnesses.isEmpty then "" else
+        "\n  witnesses (not statements of the clause):\n" ++ "\n".intercalate witnesses)
   "A requirement declaration states an unproved obligation; it does not establish its truth. \
   For those declarations, judge whether the proposition states the required behavior completely. \
   Below are requirements in prose and a ledger of rows, each row a clause with the Lean \
-  statements claimed to establish it. Report each gap: `uncovered` (a clause of the prose no row \
+  statements claimed to establish it, and under `witnesses` the facts showing those statements' \
+  hypotheses can hold; a witness is not a statement of the clause, so judge none as a gap. \
+  Report each gap: `uncovered` (a clause of the prose no row \
   states, or a row whose statements don't establish its clause), `too weak` (a statement weaker \
   than its clause), `undecided` (a case the prose leaves open that the statements decide), \
   `extra` (a statement of behaviour the prose neither asks for nor implies; a statement giving a \

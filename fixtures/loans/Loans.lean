@@ -382,8 +382,9 @@ def adapterPath : IO String :=
     SpecTools.Tests.run Loans.ledger (← adapterPath) "loans.py" "test_loans.py"
       (cwd := some (← fixtureDir))
 
--- With `SPEC_TOOLS_GAPS` set to a Claude model, the gaps against `loans.md` too (a live call).
+-- With `SPEC_TOOLS_GAPS` set to a model, the gaps against `loans.md` too (a live call), on the
+-- backend `SPEC_TOOLS_BACKEND` configures, with that model.
 #eval show Lean.Elab.Command.CommandElabM Unit from do
   if let some model ← IO.getEnv "SPEC_TOOLS_GAPS" then
     SpecTools.Gaps.run Loans.ledger (← IO.FS.readFile (System.FilePath.mk (← fixtureDir) / "loans.md"))
-      { harness := .claudeCode, model, dataGoesTo := "Anthropic" }
+      (← SpecTools.Model.selectedBackend "configured" model)
