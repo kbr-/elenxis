@@ -436,18 +436,25 @@ def testProse : IO Unit := do
     s!"a failed writer call didn't count as a failed writing: {afterFailure.discarded}"
   IO.println "PASS: person prose (kept, rewritten, left out, failed call)"
 
+/-- Run `act` as a task, printing its wall time when it ends, so a slow group is named. -/
+def timed (name : String) (act : IO Unit) : IO (Task (Except IO.Error Unit)) := IO.asTask do
+  let start ← IO.monoMsNow
+  act
+  IO.println s!"time: {name} {(← IO.monoMsNow) - start} ms"
+
 def main : IO Unit := do
-  testCommandAdapter
-  testUsage
-  testProse
-  let requirements ← IO.asTask testRequirementAudits
-  testFinishedProcess
-  testOverrun
-  testFullCodexPrompt
-  testDraftReview
-  testApprovedContracts
-  testAudit
-  IO.ofExcept requirements.get
+  -- The groups share no state (each makes its own directories, its scripted runners and its
+  -- processes' environments its own), so they run at once; the live runner's prohibition below is
+  -- the one global, set after all of them end.
+  let groups ← [("command adapter", testCommandAdapter), ("usage", testUsage), ("prose", testProse),
+      ("requirement audits", testRequirementAudits), ("finished process", testFinishedProcess),
+      ("overrun", testOverrun), ("full codex prompt", testFullCodexPrompt),
+      ("draft review", testDraftReview), ("approved contracts", testApprovedContracts),
+      ("audit", testAudit)].mapM fun (n, t) => do
+        let g ← timed n t
+        IO.ofExcept g.get
+        pure g
+  for g in groups do IO.ofExcept g.get
   IO.println "PASS: audit (pass, unchanged, changed, missing, unclaimed, axiom, vacuous)"
   liveCallsForbidden.set true
   let blocked ← (liveRunner { cmd := "true", args := #[], cwd := "." } [] 1000).toBaseIO
