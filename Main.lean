@@ -207,13 +207,38 @@ def synthetic (args : List String) : IO UInt32 := do
     -- The tools arm starts each run's audit, tests and gaps at once: three controls together peaked
     -- at 2.037 GiB, so ten of its runs with their agents near the 10 GiB budget; five at a time.
     let width := if arms == [.tools] then 5 else 10
+    -- Each result is appended to the results file as its run ends, so a run stopped part way keeps
+    -- what finished; a later run on the same directory skips each variant and arm the file holds a
+    -- result for (a failed run is tried again) and counts the saved results in its totals.
+    let resultsPath := System.FilePath.mk outDir / resultsFile
+    let saved : List Lean.Json ← do
+      if ← resultsPath.pathExists then
+        let text ← IO.FS.readFile resultsPath
+        pure ((text.splitOn "\n").filter (· ≠ "") |>.filterMap fun l => (Lean.Json.parse l).toOption)
+      else pure []
+    let savedResult (j : Lean.Json) : Option (Nat × SpecTools.SyntheticRun.Arm × Nat × Nat × Nat × Nat) := do
+      let i ← (j.getObjValAs? Nat "variant").toOption
+      let name ← (j.getObjValAs? String "arm").toOption
+      let a ← arms.find? (·.name == name)
+      let found ← (j.getObjValAs? Nat "found").toOption
+      let missed ← (j.getObjValAs? Nat "missed").toOption
+      let alarms ← (j.getObjValAs? Nat "false_alarms").toOption
+      let kinds := ((j.getObjValAs? (List String) "found_kinds").toOption).getD []
+      return (i, a, found, missed, alarms, (kinds.filter (· == "shared blind spot")).length)
+    let previous := saved.filterMap savedResult
     let jobs : List (List Plant × Nat × SpecTools.SyntheticRun.Arm) :=
-      keys.zipIdx.flatMap fun (k, i) => arms.map fun a => (k, i, a)
+      keys.zipIdx.flatMap fun (k, i) => arms.filterMap fun a =>
+        if previous.any (fun (j, b, _) => j == i && b == a) then none else some (k, i, a)
+    if !previous.isEmpty then
+      IO.println s!"{previous.length} results already in {resultsPath}; {jobs.length} runs left"
     let batches := (List.range ((jobs.length + width - 1) / width)).map fun j =>
       (jobs.drop (j * width)).take width
-    let mut results : Array String := #[]
-    let mut totals : List (SpecTools.SyntheticRun.Arm × Nat × Nat × Nat) := []
-    let mut blind : List (SpecTools.SyntheticRun.Arm × Nat) := []
+    let out ← IO.FS.Handle.mk resultsPath .append
+    let stdout ← IO.getStdout
+    let mut totals : List (SpecTools.SyntheticRun.Arm × Nat × Nat × Nat) :=
+      previous.map fun (_, a, f, m, fa, _) => (a, f, m, fa)
+    let mut blind : List (SpecTools.SyntheticRun.Arm × Nat) :=
+      previous.map fun (_, a, _, _, _, b) => (a, b)
     for batch in batches do
       let tasks ← batch.mapM fun ((k, i, a) : List Plant × Nat × SpecTools.SyntheticRun.Arm) =>
         IO.asTask do
@@ -226,16 +251,19 @@ def synthetic (args : List String) : IO UInt32 := do
         match r with
         | .error e =>
           IO.println s!"v{i} {arm}: failed: {e}"
-          results := results.push s!"\{\"variant\": {i}, \"arm\": \"{arm}\", \"error\": {e.quote}}"
+          out.putStrLn s!"\{\"variant\": {i}, \"arm\": \"{arm}\", \"error\": {e.quote}}"
+          out.flush
+          stdout.flush
         | .ok (fs, cost, checks) =>
           let s := SpecTools.Score.score k fs
           let ms := cost.millis
           let tokens := match cost.tokens with | some t => toString t | none => "null"
           IO.println s!"v{i} {arm}: found {s.found} missed {s.missed} false alarms {s.falseAlarms} ({ms} ms, {tokens} tokens; check ran {checks})"
-          results := results.push s!"\{\"variant\": {i}, \"arm\": \"{arm}\", \"found\": {s.found.length}, \"missed\": {s.missed.length}, \"false_alarms\": {s.falseAlarms}, \"ms\": {ms}, \"tokens\": {tokens}, \"checks\": {(checks.map (·.quote)).toString}, \"found_kinds\": {(s.found.map (·.quote)).toString}, \"missed_kinds\": {(s.missed.map (·.quote)).toString}, \"findings\": {(fs.map fun f => s!"[{f.clause.quote}, {f.kind.quote}]").toString}}"
+          out.putStrLn s!"\{\"variant\": {i}, \"arm\": \"{arm}\", \"found\": {s.found.length}, \"missed\": {s.missed.length}, \"false_alarms\": {s.falseAlarms}, \"ms\": {ms}, \"tokens\": {tokens}, \"checks\": {(checks.map (·.quote)).toString}, \"found_kinds\": {(s.found.map (·.quote)).toString}, \"missed_kinds\": {(s.missed.map (·.quote)).toString}, \"findings\": {(fs.map fun f => s!"[{f.clause.quote}, {f.kind.quote}]").toString}}"
+          out.flush
+          stdout.flush
           totals := (a, s.found.length, s.missed.length, s.falseAlarms) :: totals
           blind := (a, (s.found.filter (· == "shared blind spot")).length) :: blind
-    IO.FS.writeFile (System.FilePath.mk outDir / resultsFile) ("\n".intercalate results.toList ++ "\n")
     for arm in arms do
       let ts := totals.filter (·.1 == arm)
       IO.println s!"{arm.name}: {ts.length} runs, found \
