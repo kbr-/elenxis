@@ -471,6 +471,8 @@ def testOwners : IO Unit := do
           let n ← reviews.modifyGet fun n => (n, n + 1)
           pure (some (tells (if n % 6 == 2 then 0 else 2)))
         else if has "# Text\n" then r.modifyGet fun l => (l.head?, l.tail)
+        else if has "# The message" then pure (some (Lean.Json.mkObj [("verdict", "owner"),
+          ("confidence", Lean.toJson (80 : Nat)), ("reasons", Lean.Json.arr #[])]).compress)
         else pure (some doc)
       return reply.map fun a =>
         { exitCode := 0, stdout := "", stderr := "", readBack := [("answer.json", a)], millis := 1 }
@@ -479,16 +481,20 @@ def testOwners : IO Unit := do
     IO.FS.removeDirAll dir
     return (w, ← calls.get, ← reviewerPrompts.get)
   let (kept, calls, rprompts) ← run [exact, exact]
-  ensure (kept.text == some "We do hair." && calls == 14 && kept.steps.length == 6 &&
+  ensure (kept.text == some "We do hair." && calls == 15 && kept.steps.length == 6 &&
     (kept.steps.filter (·.notes.isEmpty)).length == 2 && kept.faults == [[]] &&
-    kept.lastTells.length == 2 && kept.lastVerdict == some true && kept.usage.calls == 14)
+    kept.lastTells.length == 2 && kept.lastVerdict == some true && kept.usage.calls == 15 &&
+    kept.heldOut == some ("owner", 80) && SpecTools.Owners.passesJudge .prose kept.heldOut &&
+    !SpecTools.Owners.passesJudge .conversation kept.heldOut &&
+    !SpecTools.Owners.passesJudge .prose (some ("ai", 70)) &&
+    !SpecTools.Owners.passesJudge .prose none)
     s!"five rounds and a faithful reading didn't keep the text: {calls} calls, {kept.steps.length} steps"
   ensure (rprompts.length == 6 && rprompts.all fun p =>
       (p.splitOn "no shows").length == 1 && (p.splitOn "# What you want").length == 1)
     "a reviewer's prompt holds the rules"
   let (sentBack, calls, _) ← run [ruleWrong, exact, exact, exact]
   ensure (sentBack.text.isSome && sentBack.faults.length == 2 && sentBack.steps.length == 7 &&
-    calls == 17) s!"a clear rule read wrong didn't send the text back: {sentBack.faults}"
+    calls == 18) s!"a clear rule read wrong didn't send the text back: {sentBack.faults}"
   let (flawBack, _, _) ← run [flawStated, exact, exact, exact]
   let firstFault := (flawBack.faults.headD []).headD ""
   ensure (flawBack.text.isSome && flawBack.faults.length == 2 &&

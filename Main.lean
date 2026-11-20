@@ -218,6 +218,10 @@ def synthetic (args : List String) : IO UInt32 := do
       ("vocab", Lean.Json.str vocab.name), ("seed", Lean.toJson seed), ("form", Lean.Json.str form.name),
       ("kept", Lean.toJson w.text.isSome), ("last_tells", Lean.toJson w.lastTells),
       ("could_be_real", Lean.toJson w.lastVerdict),
+      ("held_out", match w.heldOut with
+        | some (v, c) => Lean.Json.mkObj [("verdict", Lean.Json.str v), ("confidence", Lean.toJson c)]
+        | none => Lean.Json.null),
+      ("passes_judge", Lean.toJson (SpecTools.Owners.passesJudge form w.heldOut)),
       ("fidelity_faults", Lean.toJson w.faults),
       ("flaws", Lean.toJson (flaws.map fun i => s!"r{i.rule}: {i.flaw.name}")),
       ("usage", SpecTools.Usage.asJson w.usage)]).compress
@@ -225,6 +229,7 @@ def synthetic (args : List String) : IO UInt32 := do
     IO.println s!"last review of the kept text: could be real {w.lastVerdict}; tells ({w.lastTells.length}):"
     for t in w.lastTells do IO.println s!"  - {t}"
     for (fs, k) in w.faults.zipIdx do IO.println s!"fidelity check {k + 1}: {if fs.isEmpty then "faithful" else "; ".intercalate fs}"
+    IO.println s!"held-out judge: {w.heldOut}; passes the bar: {SpecTools.Owners.passesJudge form w.heldOut}"
     IO.println s!"owners-write {SpecTools.Usage.line w.usage (SpecTools.Usage.brief backend)}"
     match w.text with
     | some t => IO.FS.writeFile (dir / "text.md") t; IO.println s!"kept: {dir}/text.md"; return 0
