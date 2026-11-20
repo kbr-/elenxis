@@ -1,4 +1,6 @@
-import Lean.Data.Json
+module
+
+public import Lean.Data.Json
 
 /-!
 What a model call used, as its harness reports it. Each count is known for some calls and lacking for
@@ -8,6 +10,8 @@ subscription's user doesn't pay it, so it is printed as a list price. The record
 total is the unit, totals combine associatively, a lacking field stays counted) are in
 `SpecTools.UsageProofs`.
 -/
+
+public section
 
 namespace SpecTools.Usage
 open Lean
@@ -205,3 +209,5 @@ def fromJson? (j : Json) : Option Usage := do
   return { calls, input, cacheWrite, cacheRead, output, turns, millis, apiMillis, listPriceNano }
 
 end SpecTools.Usage
+
+end

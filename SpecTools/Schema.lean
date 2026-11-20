@@ -1,10 +1,14 @@
-import Lean.Data.Json
+module
+
+public import Lean.Data.Json
 
 /-!
 A subset of JSON Schema, enough to state the shape of a model's answer: `type`, `properties`,
 `required`, `additionalProperties` (a boolean), `items` and `enum`. A schema using any other keyword
 is refused when it is read, so a schema can't ask for a check this validator would skip.
 -/
+
+public section
 
 namespace SpecTools.Schema
 open Lean
@@ -92,3 +96,5 @@ partial def violation (schema value : Json) (path : String := "$") : Option Stri
   typeCheck <|> enumCheck <|> objectCheck <|> arrayCheck
 
 end SpecTools.Schema
+
+end

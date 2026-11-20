@@ -1,6 +1,8 @@
-import Lean.Data.Json
-import SpecTools.Schema
-import SpecTools.Usage
+module
+
+public import Lean.Data.Json
+public import SpecTools.Schema
+public import SpecTools.Usage
 
 /-!
 The model interface: the machinery asks a question of a backend and gets back a parsed answer with
@@ -15,6 +17,8 @@ sandbox policy for the working copy (`agentInvocation`).
 Command adapters use a versioned JSON file protocol; their executable configuration is trusted and
 owns confinement and provider access. The shared planner and schema checker apply to every adapter.
 -/
+
+public section
 
 namespace SpecTools.Model
 open Lean
@@ -449,3 +453,5 @@ def liveRunner : Runner := fun inv readBack timeoutMs => do
     return some ran
 
 end SpecTools.Model
+
+end
