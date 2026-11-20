@@ -222,6 +222,8 @@ def synthetic (args : List String) : IO UInt32 := do
         | some (v, c) => Lean.Json.mkObj [("verdict", Lean.Json.str v), ("confidence", Lean.toJson c)]
         | none => Lean.Json.null),
       ("passes_judge", Lean.toJson (SpecTools.Owners.passesJudge form w.heldOut)),
+      ("test_judge", Lean.toJson w.testJudge), ("test_judge_why", Lean.toJson w.testJudgeWhy),
+      ("passes_bar", Lean.toJson (SpecTools.Owners.passesBar w.testJudge)),
       ("held_out_reasons", Lean.toJson w.heldOutReasons),
       ("fidelity_faults", Lean.toJson w.faults),
       ("flaws", Lean.toJson (flaws.map fun i => s!"r{i.rule}: {i.flaw.name}")),
@@ -230,7 +232,9 @@ def synthetic (args : List String) : IO UInt32 := do
     IO.println s!"last review of the kept text: could be real {w.lastVerdict}; tells ({w.lastTells.length}):"
     for t in w.lastTells do IO.println s!"  - {t}"
     for (fs, k) in w.faults.zipIdx do IO.println s!"fidelity check {k + 1}: {if fs.isEmpty then "faithful" else "; ".intercalate fs}"
-    IO.println s!"held-out judge: {w.heldOut}; passes the bar: {SpecTools.Owners.passesJudge form w.heldOut}"
+    IO.println s!"second judge (the bar, {SpecTools.Owners.testBar}): {w.testJudge}; passes: {SpecTools.Owners.passesBar w.testJudge}"
+    for t in w.testJudgeWhy do IO.println s!"  - {t}"
+    IO.println s!"first judge: {w.heldOut}; says owner: {SpecTools.Owners.passesJudge form w.heldOut}"
     for t in w.heldOutReasons do IO.println s!"  - {t}"
     IO.println s!"owners-write {SpecTools.Usage.line w.usage (SpecTools.Usage.brief backend)}"
     match w.text with

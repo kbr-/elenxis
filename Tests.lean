@@ -456,8 +456,10 @@ def testOwners : IO Unit := do
   let tells (n : Nat) := (Lean.Json.mkObj [("tells", Lean.toJson ((List.range n).map fun k =>
     s!"tell {k}")), ("could_be_real", Lean.toJson (n == 2))]).compress
   let backend : Backend := ⟨.codex, "test-model", "test", none⟩
-  let run (readings : List String) : IO (SpecTools.Owners.Writing × Nat × List String) := do
+  let run (readings : List String) (judges : List String := [])
+      : IO (SpecTools.Owners.Writing × Nat × List String) := do
     let r ← IO.mkRef readings
+    let js ← IO.mkRef judges
     let reviews ← IO.mkRef (0 : Nat)
     let calls ← IO.mkRef (0 : Nat)
     let reviewerPrompts ← IO.mkRef ([] : List String)
@@ -471,8 +473,13 @@ def testOwners : IO Unit := do
           let n ← reviews.modifyGet fun n => (n, n + 1)
           pure (some (tells (if n % 6 == 2 then 0 else 2)))
         else if has "# Text\n" then r.modifyGet fun l => (l.head?, l.tail)
-        else if has "# The message" then pure (some (Lean.Json.mkObj [("verdict", "owner"),
-          ("confidence", Lean.toJson (80 : Nat)), ("reasons", Lean.Json.arr #["typos"])]).compress)
+        else if has "`human_probability`" then pure (some (Lean.Json.mkObj [
+          ("human_probability", Lean.toJson (92 : Nat)), ("why", Lean.Json.arr #["fragments"])]).compress)
+        else if has "# The message" then do
+          -- The scripted verdicts first, then "owner".
+          let verdict ← js.modifyGet fun l => (l.headD "owner", l.tail)
+          pure (some (Lean.Json.mkObj [("verdict", Lean.Json.str verdict),
+            ("confidence", Lean.toJson (80 : Nat)), ("reasons", Lean.Json.arr #["typos"])]).compress)
         else pure (some doc)
       return reply.map fun a =>
         { exitCode := 0, stdout := "", stderr := "", readBack := [("answer.json", a)], millis := 1 }
@@ -481,10 +488,13 @@ def testOwners : IO Unit := do
     IO.FS.removeDirAll dir
     return (w, ← calls.get, ← reviewerPrompts.get)
   let (kept, calls, rprompts) ← run [exact, exact]
-  ensure (kept.text == some "We do hair." && calls == 15 && kept.steps.length == 6 &&
+  ensure (kept.text == some "We do hair." && calls == 17 && kept.steps.length == 6 &&
     (kept.steps.filter (·.notes.isEmpty)).length == 2 && kept.faults == [[]] &&
-    kept.lastTells.length == 2 && kept.lastVerdict == some true && kept.usage.calls == 15 &&
+    kept.lastTells.length == 2 && kept.lastVerdict == some true && kept.usage.calls == 17 &&
     kept.heldOut == some ("owner", 80) && kept.heldOutReasons == ["typos"] &&
+    kept.testJudge == some 92 && kept.testJudgeWhy == ["fragments"] &&
+    SpecTools.Owners.passesBar kept.testJudge && !SpecTools.Owners.passesBar (some 89) &&
+    SpecTools.Owners.passesBar (some 90) && !SpecTools.Owners.passesBar none &&
     SpecTools.Owners.passesJudge .prose kept.heldOut &&
     !SpecTools.Owners.passesJudge .conversation kept.heldOut &&
     !SpecTools.Owners.passesJudge .prose (some ("ai", 70)) &&
@@ -493,16 +503,25 @@ def testOwners : IO Unit := do
   ensure (rprompts.length == 6 && rprompts.all fun p =>
       (p.splitOn "no shows").length == 1 && (p.splitOn "# What you want").length == 1)
     "a reviewer's prompt holds the rules"
+  let (judgedBack, calls, _) ← run [exact, exact] ["ai", "ai"]
+  let judgeRevisions := judgedBack.steps.filter fun s => (s.what.splitOn "revised after judge").length > 1
+  ensure (judgedBack.text.isSome && judgeRevisions.length == 2 &&
+    judgeRevisions.all (·.notes == ["typos"]) &&
+    calls == 21) s!"two 'ai' verdicts didn't bring two revisions against the judge's reasons: \
+      {judgeRevisions.length} revisions, {calls} calls"
+  let (judgeCapped, _, _) ← run [exact, exact] ["ai", "ai", "ai", "ai"]
+  ensure ((judgeCapped.steps.filter fun s => (s.what.splitOn "revised after judge").length > 1).length ==
+    SpecTools.Owners.judgeRounds) "the judge's revisions didn't stop at judgeRounds"
   let (sentBack, calls, _) ← run [ruleWrong, exact, exact, exact]
   ensure (sentBack.text.isSome && sentBack.faults.length == 2 && sentBack.steps.length == 7 &&
-    calls == 18) s!"a clear rule read wrong didn't send the text back: {sentBack.faults}"
+    calls == 20) s!"a clear rule read wrong didn't send the text back: {sentBack.faults}"
   let (flawBack, _, _) ← run [flawStated, exact, exact, exact]
   let firstFault := (flawBack.faults.headD []).headD ""
   ensure (flawBack.text.isSome && flawBack.faults.length == 2 &&
     (firstFault.splitOn "(stated)").length > 1)
     s!"a flaw read as stated didn't send the text back: {flawBack.faults}"
   let (failed, calls, _) ← run (List.replicate 16 ruleWrong)
-  ensure (failed.text.isNone && failed.faults.length == 8 && calls == 44 &&
+  ensure (failed.text.isNone && failed.faults.length == 8 && calls == 46 &&
     (failed.steps.filter fun s => s.what.startsWith "start 2").length > 0)
     s!"four failed checks didn't start again, or two failed starts kept a text: {calls} calls"
   IO.println "PASS: owners (five rounds, kept, sent back for a rule and for a flaw, started again, failed)"

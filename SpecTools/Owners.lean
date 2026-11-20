@@ -407,6 +407,46 @@ def judgeReasonsOf (r : Except Failure Outcome) : List String :=
   | .error _ => []
   | .ok o => ((o.answer.getObjValAs? (Array String) "reasons").toOption.getD #[]).toList
 
+/-- How many times the writer revises against the first judge's reasons. -/
+def judgeRounds : Nat := 3
+
+/-- The second judge's prompt, which the loop never sees: how likely a person running the business
+typed the text (for a call: that it transcribes a real call), 0 to 100. -/
+def testJudgePrompt (form : Form) (text : String) : String :=
+  match form with
+  | .prose => s!"A web developer received the message below from someone asking for a website. \
+      Estimate how likely it is that a person running the business typed it themselves, as \
+      opposed to an AI tool producing it. Give `human_probability` from 0 to 100 and `why`, the \
+      passages that moved your estimate most, quoted.\n\n---\n\n{text}"
+  | .conversation => s!"Below is said to be the transcript of a first call between a web developer \
+      and a person running a small business who wants a website. Estimate how likely it is that \
+      it transcribes a real call, as opposed to an AI tool producing it. Give `human_probability` \
+      from 0 to 100 and `why`, the passages that moved your estimate most, quoted.\n\n---\n\n{text}"
+
+def testJudgeSchema : Json :=
+  Json.mkObj [("type", "object"),
+    ("properties", Json.mkObj [("human_probability", Json.mkObj [("type", "integer")]),
+      ("why", Json.mkObj [("type", "array"), ("items", Json.mkObj [("type", "string")])])]),
+    ("required", Json.arr #["human_probability", "why"]), ("additionalProperties", false)]
+
+def humanProbabilityOf (r : Except Failure Outcome) : Option Nat :=
+  match r with
+  | .error _ => none
+  | .ok o => (o.answer.getObjValAs? Nat "human_probability").toOption
+
+def whyOf (r : Except Failure Outcome) : List String :=
+  match r with
+  | .error _ => []
+  | .ok o => ((o.answer.getObjValAs? (Array String) "why").toOption.getD #[]).toList
+
+/-- The bar: the second judge's probability at least the lowest it gave a human post (the
+theory's calibration on three owners' posts, 90). -/
+def testBar : Nat := 90
+
+def passesBar : Option Nat → Bool
+  | some p => p ≥ testBar
+  | none => false
+
 /-- Whether a held-out verdict passes the bar: "owner" for prose, "real" for a call. -/
 def passesJudge (form : Form) : Option (String × Nat) → Bool
   | some (v, _) => v == (match form with | .prose => "owner" | .conversation => "real")
@@ -424,6 +464,10 @@ structure Writing where
   heldOut : Option (String × Nat) := none
   /-- The passages the judge quoted for its verdict. -/
   heldOutReasons : List String := []
+  /-- The second judge's probability that the owner typed the text, the test's bar; the loop
+  never reads it. -/
+  testJudge : Option Nat := none
+  testJudgeWhy : List String := []
   faults : List (List String)
   brief : String
   usage : Usage.Usage
@@ -492,6 +536,19 @@ def writeOwner (runner : Runner) (allowed : List Backend) (backend : Backend) (v
           text := d
           steps := steps ++ [⟨s!"{label}: revised after review {round + 1}", d, tells⟩]
     if broken then continue
+    -- The first judge's reasons are the loop's to learn from: on "ai", the writer revises
+    -- against them, up to `judgeRounds` times, before the fidelity checks.
+    for round in List.range judgeRounds do
+      let judged ← ask "owner-judge" (judgePrompt form text) judgeSchema
+      if passesJudge form (judgeOf judged) then break
+      let reasons := judgeReasonsOf judged
+      if reasons.isEmpty then break
+      let fixes := reasons.map fun r => s!"a reader took your text for a model's imitation: {r}"
+      match documentOf (← ask "owner-writer" (revisionPrompt brief text fixes) Prose.documentSchema) with
+      | .error e => steps := steps ++ [⟨s!"{label}: judge revision {round + 1} failed", text, [e]⟩]; break
+      | .ok d =>
+        text := d
+        steps := steps ++ [⟨s!"{label}: revised after judge {round + 1}", d, reasons⟩]
     for check in List.range (fidelityRounds + 1) do
       let t1 ← IO.asTask (ask "owner-reader" (readPrompt text) (readSchema v))
       let t2 ← IO.asTask (ask "owner-reader" (readPrompt text) (readSchema v))
@@ -512,8 +569,10 @@ def writeOwner (runner : Runner) (allowed : List Backend) (backend : Backend) (v
         | .error e => steps := steps ++ [⟨s!"{label}: last review failed", text, [e]⟩]; break
         | .ok (tells, real) =>
           let judged ← ask "owner-judge" (judgePrompt form text) judgeSchema
+          let tested ← ask "owner-test-judge" (testJudgePrompt form text) testJudgeSchema
           return { text := some text, steps, lastTells := tells, lastVerdict := some real,
                    heldOut := judgeOf judged, heldOutReasons := judgeReasonsOf judged,
+                   testJudge := humanProbabilityOf tested, testJudgeWhy := whyOf tested,
                    faults := faultLog, brief, usage := ← used.get }
       if check == fidelityRounds then break
       let fixes := faults.map fun f => s!"a reader of your text got this wrong: {f}"
