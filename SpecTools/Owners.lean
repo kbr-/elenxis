@@ -197,9 +197,14 @@ def writerPrompt (v : Vocab) (form : Form) (rs : List Rule) (flaws : List Imperf
         would: vague, sidetracked, sometimes changing your mind, sometimes saying you'd have to \
         ask your staff. Where a rule below says you don't remember a number or leave something \
         unclear, the developer may propose a value but you leave it open (\"whatever you think\", \
-        \"I'd have to check\"). It must read like a real call between two people: short turns, \
-        interruptions, small talk, nobody summarizing the requirements in a list. Speakers are \
-        \"Owner:\" and \"Developer:\"."
+        \"I'd have to check\"). Some of the developer's suggestions you simply take (\"yeah, \
+        two's about right\"), some you change, some you don't answer; a suggestion is not always \
+        wrong, and not every number arrives as a correction. Say each number in a different way, \
+        never the same emphatic pattern twice. The rules don't come up one service after another: \
+        some come out while talking about something else, one only when the developer asks back \
+        later, and the call spends as long on what you care about as on the rules. It must read \
+        like a real call between two people: short turns, interruptions, small talk, nobody \
+        summarizing the requirements in a list. Speakers are \"Owner:\" and \"Developer:\"."
   s!"{persona v}\n\n{shape} Everything below must come across exactly as it says, the mistakes \
     included; add no other rule that turns customers away.\n\n# What you want\n\n" ++
     "\n".intercalate items ++
