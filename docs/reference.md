@@ -123,6 +123,30 @@ backend ([backends.md](backends.md)), and the answer is checked against a JSON s
 (`type`, `properties`, `required`, `additionalProperties`, `items`, `enum`; any other keyword is
 refused). The effects sit in a `Runner`, so tests script it and reach no model.
 
+## Usage and trace
+
+Every call returns what it used (`SpecTools.Usage`): input, cache-write, cache-read and output
+tokens, turns, wall time and the harness's API time, and the list price where the harness reports
+one. Each count is known or unknown, never a 0 standing for a count no report gave, and a total over
+calls keeps how many lacked each count. The counts come from Claude Code's JSON report, from Codex's
+`--json` events (the last turn's `usage`) and from a command adapter's `usage.json`. The list price
+is the harness's (Claude Code's `total_cost_usd`); a subscription's user doesn't pay it, so it is
+printed as a list price. Every command that asks a model (`gaps`, `clauses`, `draft-review`, `ask`)
+ends with a line such as
+
+```text
+usage: 1 calls; tokens input 2, cache write 2223, cache read 649, output 4; 5196 ms; claude-code claude-opus-5-5, effort medium; list price $0.0180018 (not billed under a subscription)
+```
+
+`synthetic run` saves each run's usage (its agent's and its tools') in its results file and prints
+totals per arm; `synthetic gapsrun` prints the batch's total. Two variables, set outside any
+specification, record more:
+
+- `SPEC_TOOLS_USAGE=FILE`: each call appends its usage to FILE, one JSON line;
+- `SPEC_TOOLS_TRACE=DIR`: each call appends one JSON line to `DIR/calls-PID.jsonl` with its tool,
+  backend, prompt, schema, raw answer or failure, and usage. Unset, nothing is written, since a
+  prompt carries the target's text; a directory that can't be written fails before the call.
+
 ## The synthetic evaluation
 
 `SpecTools.Synthetic`, `SpecTools.Generated`, `SpecTools.Score` and `spec-tools synthetic` generate

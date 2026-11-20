@@ -1,5 +1,8 @@
 import SpecTools.Schema
+import SpecTools.Usage
+import SpecTools.UsageProofs
 import SpecTools.Model
+import SpecTools.UsageReport
 import SpecTools.BackendConfig
 import SpecTools.ModelProofs
 import SpecTools.Ledger

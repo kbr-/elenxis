@@ -1,4 +1,4 @@
-import SpecTools.Model
+import SpecTools.UsageReport
 import SpecTools.Score
 
 /-!
@@ -95,16 +95,22 @@ structure Invocation where
 def leanOn (root dir : String) (env : Array (String × Option String)) : Invocation :=
   ⟨"lake", #["env", "lean", dir ++ "/Loans.lean"], env, root⟩
 
+/-- The file in a variant's directory the tools `check` runs record their calls' usage in. -/
+def usageFile (dir : String) : String := dir ++ "/usage.jsonl"
+
 /-- What `spec-tools check SUB` runs on the variant in `dir`, with the tools in `root` and `model` asked
-where a tool asks one; none for a command it doesn't know. -/
+where a tool asks one; none for a command it doesn't know. A tool that asks a model records its
+usage in `usageFile dir`. -/
 def checkInvocation (root dir model sub : String) : Option Invocation :=
   if sub = "audit" then some (leanOn root dir #[])
   else if sub = "tests" then some (leanOn root dir #[("SPEC_TOOLS_GUARD_WORKERS", some "3"),
     ("SPEC_TOOLS_TESTS", some "1"), ("SPEC_TOOLS_DIR", some dir),
     ("SPEC_TOOLS_ADAPTER", some (root ++ "/adapters/python_guards.py"))])
-  else if sub = "gaps" then some (leanOn root dir #[("SPEC_TOOLS_GAPS", some model), ("SPEC_TOOLS_DIR", some dir)])
+  else if sub = "gaps" then some (leanOn root dir #[("SPEC_TOOLS_GAPS", some model),
+    ("SPEC_TOOLS_DIR", some dir), ("SPEC_TOOLS_USAGE", some (usageFile dir))])
   else if sub = "clauses" then
-    some ⟨root ++ "/.lake/build/bin/spec-tools", #["clauses", "configured", model, dir ++ "/loans.md"], #[], root⟩
+    some ⟨root ++ "/.lake/build/bin/spec-tools", #["clauses", "configured", model, dir ++ "/loans.md"],
+      #[("SPEC_TOOLS_USAGE", some (usageFile dir))], root⟩
   else none
 
 theorem check_unknown_refused (root dir model sub : String)
@@ -113,12 +119,15 @@ theorem check_unknown_refused (root dir model sub : String)
   obtain ⟨a, t, g, c⟩ := h
   simp [checkInvocation, a, t, g, c]
 
-/-- Only `gaps` and `clauses` ask a model, and each asks the configured one. -/
+/-- Only `gaps` and `clauses` ask a model; each asks the configured one and records its usage in
+the variant's usage file. -/
 theorem check_model_is_configured (root dir model : String) :
     (checkInvocation root dir model "gaps").map (·.env) =
-      some #[("SPEC_TOOLS_GAPS", some model), ("SPEC_TOOLS_DIR", some dir)] ∧
-    (checkInvocation root dir model "clauses").map (·.args) =
-      some #["clauses", "configured", model, dir ++ "/loans.md"] := by
+      some #[("SPEC_TOOLS_GAPS", some model), ("SPEC_TOOLS_DIR", some dir),
+        ("SPEC_TOOLS_USAGE", some (usageFile dir))] ∧
+    (checkInvocation root dir model "clauses").map (fun i => (i.args, i.env)) =
+      some (#["clauses", "configured", model, dir ++ "/loans.md"],
+        #[("SPEC_TOOLS_USAGE", some (usageFile dir))]) := by
   simp [checkInvocation, leanOn]
 
 /-- The variant directory's configuration, written by `runArm`: the tools' root and the model their
@@ -161,11 +170,12 @@ def armTools (arm : Arm) (root : String) : List String :=
   ["Read", "Glob", "Grep", "Bash(python3 -m pytest *)"] ++
     (if arm == .ledger || arm == .tools then [s!"Bash({checkCommand root} *)"] else [])
 
-/-- One arm's run on one variant: its findings, its cost and the `check` commands it ran, or why
-there are none. -/
+/-- One arm's run on one variant: its findings and the `check` commands it ran, or why there are
+none; what its agent used; and what its tools used (the tools arm's reports and every `check` the
+agent ran). -/
 def runArm (backend : Backend) (variantDir : System.FilePath) (arm : Arm) (root : String)
     (toolModel : String) (timeoutMs : Nat) :
-    IO (Except String (List Finding × Cost × List String)) := do
+    IO (Except String (List Finding × List String) × Usage.Usage × Usage.Usage) := do
   let work := (← IO.FS.createTempDir) / "variant"
   IO.FS.createDirAll work
   for f in files do IO.FS.writeFile (work / f) (← IO.FS.readFile (variantDir / f))
@@ -190,10 +200,13 @@ def runArm (backend : Backend) (variantDir : System.FilePath) (arm : Arm) (root 
   let log := work / "check.log"
   let logText ← if ← log.pathExists then IO.FS.readFile log else pure ""
   let checks := (logText.splitOn "\n").filter (· ≠ "")
-  match finish backend question ran with
-  | .error f => return .error (repr f).pretty
-  | .ok o => match findingsOf o.answer with
-    | some fs => return .ok (fs, o.cost, checks)
-    | none => return .error "the answer has no findings list"
+  let agentUsage := usageOf backend timeoutMs ran
+  let toolsUsage ← Usage.readRecorded (usageFile work.toString)
+  let result := match finish backend question ran with
+    | .error f => .error (repr f).pretty
+    | .ok o => match findingsOf o.answer with
+      | some fs => .ok (fs, checks)
+      | none => .error "the answer has no findings list"
+  return (result, agentUsage, toolsUsage)
 
 end SpecTools.SyntheticRun

@@ -112,17 +112,23 @@ def synthetic (args : List String) : IO UInt32 := do
     let mut planted := 0
     let mut alarms := 0
     let mut failed := 0
+    let mut used : List SpecTools.Usage.Usage := []
     for batch in batches do
       let tasks ← batch.mapM fun ((k, i) : List String × Nat) => IO.asTask do
         let dir := System.FilePath.mk outDir / s!"v{i}"
+        -- The variant's `gaps` call records its usage here; a rerun starts it afresh.
+        let usagePath := dir / "gaps-usage.jsonl"
+        if ← usagePath.pathExists then IO.FS.removeFile usagePath
         let out ← IO.Process.output {
           cmd := "lake", args := #["env", "lean", (dir / "Loans.lean").toString],
           cwd := some root.toString,
-          env := #[("SPEC_TOOLS_GAPS", some model), ("SPEC_TOOLS_DIR", some dir.toString)] }
+          env := #[("SPEC_TOOLS_GAPS", some model), ("SPEC_TOOLS_DIR", some dir.toString),
+            ("SPEC_TOOLS_USAGE", some usagePath.toString)] }
         IO.FS.writeFile (dir / "gaps.txt") (out.stdout ++ out.stderr)
-        return (k, i, out)
+        return (k, i, out, ← SpecTools.Usage.readRecorded usagePath)
       for t in tasks do
-        let (k, i, out) ← IO.ofExcept t.get
+        let (k, i, out, u) ← IO.ofExcept t.get
+        used := used ++ [u]
         let lines := out.stdout.splitOn "\n"
         let rows := lines.filterMap fun l =>
           match l.splitOn ": " with
@@ -140,6 +146,7 @@ def synthetic (args : List String) : IO UInt32 := do
           alarms := alarms + a
           IO.println s!"v{i}: found {f} of {k.length}, false alarms {a}; rows {rows}"
     IO.println s!"gaps: {keys.length - failed} variants scored, found {found} of {planted}, false alarms {alarms}, {failed} failed"
+    IO.println s!"gaps {SpecTools.Usage.line (SpecTools.Usage.total used) s!"model {model}"}"
     return if failed == 0 then 0 else 1
   | "control" :: dirs =>
     -- Each fixture's audit and `tests`, three at a time (each `tests` runs three pytest copies), and
@@ -247,6 +254,8 @@ def synthetic (args : List String) : IO UInt32 := do
       return (k, i, a, r)
     let mut pending := jobs
     let mut running := #[]
+    -- Each run's agent and tools usage, this invocation's runs only.
+    let mut used : List (SpecTools.SyntheticRun.Arm × SpecTools.Usage.Usage × SpecTools.Usage.Usage) := []
     while !pending.isEmpty || !running.isEmpty do
       while running.size < width do
         match pending with
@@ -260,20 +269,21 @@ def synthetic (args : List String) : IO UInt32 := do
         if ← IO.hasFinished t then ended := ended.push t else still := still.push t
       running := still
       for t in ended do
-        let (k, i, a, r) ← IO.ofExcept t.get
+        let (k, i, a, (r, agentUsage, toolsUsage)) ← IO.ofExcept t.get
         let arm := a.name
+        let usages := s!"\"usage\": {(SpecTools.Usage.asJson agentUsage).compress}, \"tools_usage\": {(SpecTools.Usage.asJson toolsUsage).compress}"
+        used := (a, agentUsage, toolsUsage) :: used
         match r with
         | .error e =>
           IO.println s!"v{i} {arm}: failed: {e}"
-          out.putStrLn s!"\{\"variant\": {i}, \"arm\": \"{arm}\", \"error\": {e.quote}}"
+          out.putStrLn s!"\{\"variant\": {i}, \"arm\": \"{arm}\", \"error\": {e.quote}, {usages}}"
           out.flush
           stdout.flush
-        | .ok (fs, cost, checks) =>
+        | .ok (fs, checks) =>
           let s := SpecTools.Score.score k fs
-          let ms := cost.millis
-          let tokens := match cost.tokens with | some t => toString t | none => "null"
-          IO.println s!"v{i} {arm}: found {s.found} missed {s.missed} false alarms {s.falseAlarms} ({ms} ms, {tokens} tokens; check ran {checks})"
-          out.putStrLn s!"\{\"variant\": {i}, \"arm\": \"{arm}\", \"found\": {s.found.length}, \"missed\": {s.missed.length}, \"false_alarms\": {s.falseAlarms}, \"ms\": {ms}, \"tokens\": {tokens}, \"checks\": {(checks.map (·.quote)).toString}, \"found_kinds\": {(s.found.map (·.quote)).toString}, \"missed_kinds\": {(s.missed.map (·.quote)).toString}, \"findings\": {(fs.map fun f => s!"[{f.clause.quote}, {f.kind.quote}]").toString}}"
+          let ms := agentUsage.millis
+          IO.println s!"v{i} {arm}: found {s.found} missed {s.missed} false alarms {s.falseAlarms} ({ms} ms; check ran {checks})"
+          out.putStrLn s!"\{\"variant\": {i}, \"arm\": \"{arm}\", \"found\": {s.found.length}, \"missed\": {s.missed.length}, \"false_alarms\": {s.falseAlarms}, \"ms\": {ms}, {usages}, \"checks\": {(checks.map (·.quote)).toString}, \"found_kinds\": {(s.found.map (·.quote)).toString}, \"missed_kinds\": {(s.missed.map (·.quote)).toString}, \"findings\": {(fs.map fun f => s!"[{f.clause.quote}, {f.kind.quote}]").toString}}"
           out.flush
           stdout.flush
           totals := (a, s.found.length, s.missed.length, s.falseAlarms) :: totals
@@ -282,6 +292,10 @@ def synthetic (args : List String) : IO UInt32 := do
       let ts := totals.filter (·.1 == arm)
       IO.println s!"{arm.name}: {ts.length} runs, found \
         {(ts.map (·.2.1)).sum}, missed {(ts.map (·.2.2.1)).sum}, false alarms {(ts.map (·.2.2.2)).sum}"
+      let us := used.filter (·.1 == arm)
+      unless us.isEmpty do
+        IO.println s!"{arm.name} agents' {SpecTools.Usage.line (SpecTools.Usage.total (us.map (·.2.1))) (SpecTools.Usage.brief backend)}"
+        IO.println s!"{arm.name} tools' {SpecTools.Usage.line (SpecTools.Usage.total (us.map (·.2.2))) s!"tools model {toolModel}"}"
     -- The bar (the theory's entry on how a tool is judged), when both arms ran on the variants.
     let arm (a : SpecTools.SyntheticRun.Arm) := totals.filter (·.1 == a)
     let led := arm .ledger
@@ -355,17 +369,19 @@ def clauses (args : List String) : IO UInt32 := do
     let timeoutMs := (args.drop 3).head? |>.bind String.toNat? |>.getD 300000
     let backend ← selectedBackend harness model
     let scratch ← IO.FS.createTempDir
-    let result ← SpecTools.Clauses.compare liveRunner [backend] backend
+    let (result, used) ← SpecTools.Clauses.compare liveRunner [backend] backend
       (← IO.FS.readFile proseFile) scratch timeoutMs
     IO.FS.removeDirAll scratch
+    let usageLine := SpecTools.Usage.line used (SpecTools.Usage.brief backend)
     match result with
     | .ok (first, second, diffs) =>
       IO.println s!"first extraction: {first.length} clauses; second: {second.length}"
       for c in first do IO.println s!"clause: {c}"
       for d in diffs do IO.println s!"to add: {d}"
       IO.println s!"{diffs.length} differences"
+      IO.println usageLine
       return 0
-    | .error failure => IO.eprintln failure.describe; return 1
+    | .error failure => IO.eprintln failure.describe; IO.println usageLine; return 1
   | _ => IO.eprintln "usage: spec-tools clauses HARNESS MODEL PROSE-FILE [TIMEOUT-MS]"; return 2
 
 def usage : String :=
@@ -379,14 +395,12 @@ def ask (args : List String) : IO UInt32 := do
     let backend ← selectedBackend harness model
     let schema ← IO.ofExcept (Lean.Json.parse (← IO.FS.readFile schemaFile))
     let scratch ← IO.FS.createTempDir
-    let result ← SpecTools.Model.ask liveRunner [backend] backend
+    let (result, used) ← SpecTools.Usage.askRecorded "ask" liveRunner [backend] backend
       { prompt := ← IO.FS.readFile promptFile, schema, timeoutMs } scratch
     IO.FS.removeDirAll scratch
+    IO.eprintln (SpecTools.Usage.line used (SpecTools.Usage.brief backend))
     match result with
-    | .ok outcome =>
-      IO.println outcome.answer.compress
-      IO.eprintln s!"cost: {outcome.cost.millis} ms, tokens: {outcome.cost.tokens}"
-      return 0
+    | .ok outcome => IO.println outcome.answer.compress; return 0
     | .error failure => IO.eprintln failure.describe; return 1
   | _ => IO.eprintln usage; return 2
 
@@ -402,16 +416,18 @@ def reviewCoverageDraft (args : List String) : IO UInt32 := do
     let backend ← selectedBackend harness model
     let prose ← IO.FS.readFile prosePath
     let scratch ← IO.FS.createTempDir
-    let result ← try reviewDraft liveRunner [backend] backend inventory draft prose scratch
+    let (result, used) ← try reviewDraft liveRunner [backend] backend inventory draft prose scratch
       finally IO.FS.removeDirAll scratch
+    let usageLine := SpecTools.Usage.line used (SpecTools.Usage.brief backend)
     match result with
-    | .error message => IO.eprintln message; return 1
+    | .error message => IO.eprintln message; IO.println usageLine; return 1
     | .ok report =>
       let gaps := kinds.flatMap report.byKind
       for gap in gaps do
         IO.println s!"{gap.kind.name}: {gap.row}: {gap.why}"
       for error in report.refused do IO.eprintln s!"Refused proposal: {error}"
       IO.println s!"{gaps.length} gaps, {report.refused.length} proposals refused"
+      IO.println usageLine
       return if gaps.isEmpty && report.refused.isEmpty then 0 else 1
   | _ => IO.eprintln usage; return 2
 

@@ -56,6 +56,13 @@ theorem ask_refused_runs_nothing (runner : Runner) {allowed : List Backend} {bac
     ask runner allowed backend q s = pure (.error failure) := by
   simp [ask, h]
 
+/-- A refused question used nothing: its usage is the empty record. -/
+theorem refused_used_nothing (runner : Runner) {allowed : List Backend} {backend : Backend}
+    {q : Question} {s : System.FilePath} {failure : Failure}
+    (h : plan allowed backend q s = .error failure) :
+    askWithUsage runner allowed backend q s = pure (.error failure, {}) := by
+  simp [askWithUsage, h]
+
 /-- A question to Claude Code runs with no tools and without the user's settings, at any effort. -/
 theorem claude_question_cannot_act (model dest : String) (effort : Option String) (q : Question)
     (s : System.FilePath) :
@@ -87,18 +94,35 @@ theorem codex_question_read_only (model dest : String) (effort : Option String) 
     ["--sandbox", "read-only"] <:+: (invocation ⟨.codex, model, dest, effort⟩ q s).args.toList := by
   cases effort with
   | none =>
-    exact ⟨["exec", "--skip-git-repo-check", "--ephemeral"], ["-m", model, "--output-schema",
+    exact ⟨["exec", "--json", "--skip-git-repo-check", "--ephemeral"], ["-m", model, "--output-schema",
       "schema.json", "-o", "answer.json", "-"], by simp [invocation, callInvocation]⟩
   | some e =>
-    exact ⟨["exec", "--skip-git-repo-check", "--ephemeral"], ["-m", model, "-c",
+    exact ⟨["exec", "--json", "--skip-git-repo-check", "--ephemeral"], ["-m", model, "-c",
       s!"model_reasoning_effort=\"{e}\"", "--output-schema", "schema.json", "-o", "answer.json",
       "-"], by simp [invocation, callInvocation]⟩
+
+/-- A question to Codex prints its events as JSON lines, where its usage is read, and still writes
+its answer to the file the adapter reads back. -/
+theorem codex_question_events (model dest : String) (effort : Option String) (q : Question)
+    (s : System.FilePath) :
+    let args := (invocation ⟨.codex, model, dest, effort⟩ q s).args.toList
+    "--json" ∈ args ∧ ["-o", "answer.json"] <:+: args := by
+  cases effort with
+  | none =>
+    refine ⟨by simp [invocation, callInvocation], ?_⟩
+    exact ⟨["exec", "--json", "--skip-git-repo-check", "--ephemeral", "--sandbox", "read-only", "-m",
+      model, "--output-schema", "schema.json"], ["-"], by simp [invocation, callInvocation]⟩
+  | some e =>
+    refine ⟨by simp [invocation, callInvocation], ?_⟩
+    exact ⟨["exec", "--json", "--skip-git-repo-check", "--ephemeral", "--sandbox", "read-only", "-m",
+      model, "-c", s!"model_reasoning_effort=\"{e}\"", "--output-schema", "schema.json"], ["-"],
+      by simp [invocation, callInvocation]⟩
 
 /-- A configured effort reaches Codex as its reasoning-effort setting. -/
 theorem codex_question_effort (model dest e : String) (q : Question) (s : System.FilePath) :
     ["-m", model, "-c", s!"model_reasoning_effort=\"{e}\""] <:+:
       (invocation ⟨.codex, model, dest, some e⟩ q s).args.toList :=
-  ⟨["exec", "--skip-git-repo-check", "--ephemeral", "--sandbox", "read-only"],
+  ⟨["exec", "--json", "--skip-git-repo-check", "--ephemeral", "--sandbox", "read-only"],
     ["--output-schema", "schema.json", "-o", "answer.json", "-"],
     by simp [invocation, callInvocation]⟩
 
@@ -118,11 +142,11 @@ theorem codex_agent_workspace (model dest : String) (effort : Option String) (q 
       (agentInvocation ⟨.codex, model, dest, effort⟩ q tools s).args.toList := by
   cases effort with
   | none =>
-    exact ⟨["exec", "--skip-git-repo-check", "--ephemeral"],
+    exact ⟨["exec", "--json", "--skip-git-repo-check", "--ephemeral"],
       ["-m", model, "--output-schema", "schema.json", "-o", "answer.json", "--", q.prompt],
       by simp [agentInvocation, callInvocation]⟩
   | some e =>
-    exact ⟨["exec", "--skip-git-repo-check", "--ephemeral"],
+    exact ⟨["exec", "--json", "--skip-git-repo-check", "--ephemeral"],
       ["-m", model, "-c", s!"model_reasoning_effort=\"{e}\"", "--output-schema", "schema.json",
         "-o", "answer.json", "--", q.prompt],
       by simp [agentInvocation, callInvocation]⟩

@@ -1,4 +1,4 @@
-import SpecTools.Model
+import SpecTools.UsageReport
 
 /-!
 `clauses`: a model extracts a prose file's clauses; a second extraction, made blind to the first, is
@@ -46,21 +46,23 @@ def clausesOf (answer : Json) : Option (List String) := do
   let arr ← (answer.getObjValAs? (Array Json) "clauses").toOption
   arr.toList.mapM fun j => j.getStr?.toOption
 
-/-- Two independent extractions of `prose`'s clauses, and their differences, normalized. -/
+/-- Two independent extractions of `prose`'s clauses, and their differences, normalized; with what
+the two calls used, whether or not they answered. -/
 def compare (runner : Runner) (allowed : List Backend) (backend : Backend) (prose : String)
     (scratch : System.FilePath) (timeoutMs : Nat) :
-    IO (Except Failure (List String × List String × List String)) := do
+    IO (Except Failure (List String × List String × List String) × Usage.Usage) := do
   let question : Question := { prompt := extractionPrompt prose, schema := extractionSchema, timeoutMs }
   IO.FS.createDirAll (scratch / "first")
   IO.FS.createDirAll (scratch / "second")
-  let first ← ask runner allowed backend question (scratch / "first")
-  let second ← ask runner allowed backend question (scratch / "second")
-  return do
+  let (first, u1) ← Usage.askRecorded "clauses" runner allowed backend question (scratch / "first")
+  let (second, u2) ← Usage.askRecorded "clauses" runner allowed backend question (scratch / "second")
+  let result := do
     let a ← first
     let b ← second
     let malformed := Failure.malformed backend.name "an extraction is not a list of strings"
     let ca ← (clausesOf a.answer).elim (.error malformed) .ok
     let cb ← (clausesOf b.answer).elim (.error malformed) .ok
     return (ca, cb, differences (ca.map normalize) (cb.map normalize))
+  return (result, u1 + u2)
 
 end SpecTools.Clauses

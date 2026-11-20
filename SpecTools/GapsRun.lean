@@ -1,6 +1,7 @@
 import SpecTools.Audit
 import SpecTools.Gaps
 import SpecTools.BackendConfig
+import SpecTools.UsageReport
 
 /-!
 Running `gaps` from a project's ledger file: `#eval SpecTools.Gaps.run rows prose backend` gathers
@@ -47,14 +48,15 @@ def run (rows : List Row) (prose : String) (backend : Backend) (timeoutMs : Nat 
   IO.ofExcept (validateRequirements requirements facts rows)
   IO.println s!"Requirements check: {backend.describe}"
   let scratch ← IO.FS.createTempDir
-  let answer ← ask liveRunner [backend] backend
+  let (answer, used) ← Usage.askRecorded "gaps" liveRunner [backend] backend
     { prompt := gapsPrompt prose rows facts, schema := proposalSchema, timeoutMs } scratch
   IO.FS.removeDirAll scratch
+  let usageLine := Usage.line used (Usage.brief backend)
   let proposals ← match answer with
     | .ok o => match proposalsOf o.answer with
       | some ps => pure ps
-      | none => throwError "the model's answer is no list of gaps"
-    | .error f => throwError f.describe
+      | none => IO.println usageLine; throwError "the model's answer is no list of gaps"
+    | .error f => IO.println usageLine; throwError f.describe
   let report := gather facts rows proposals
   let mut total := 0
   for k in kinds do
@@ -63,6 +65,7 @@ def run (rows : List Row) (prose : String) (backend : Backend) (timeoutMs : Nat 
       IO.println s!"{k.name}: {g.row}: {g.why}"
   for e in report.refused do IO.println s!"refused as malformed: {e}"
   IO.println s!"{total} gaps, {report.refused.length} proposals refused"
+  IO.println usageLine
 
 /-- The same checker with its backend selected by deployment configuration. -/
 def runConfigured (rows : List Row) (prose : String) (timeoutMs : Nat := 300000)
@@ -125,19 +128,21 @@ def draftPrompt (prose : String) (draft : List DraftRow) : String :=
 
 def reviewDraft (runner : Runner) (allowed : List Backend) (backend : Backend)
     (inventory : List DraftSource) (draft : List DraftRow) (prose : String)
-    (scratch : System.FilePath) (timeoutMs : Nat := 300000) : IO (Except String Report) := do
+    (scratch : System.FilePath) (timeoutMs : Nat := 300000) :
+    IO (Except String Report × Usage.Usage) := do
   let issues := draftIssues inventory draft
   unless issues.isEmpty do
-    return .error ("Submit the full Coverage draft together.\n" ++ "\n".intercalate issues)
-  match ← ask runner allowed backend
+    return (.error ("Submit the full Coverage draft together.\n" ++ "\n".intercalate issues), {})
+  let (result, used) ← Usage.askRecorded "draft-review" runner allowed backend
       { prompt := draftPrompt prose draft,
-        schema := proposalSchemaFor (some (inventory.map (·.id))), timeoutMs } scratch with
-  | .error failure => return .error failure.describe
+        schema := proposalSchemaFor (some (inventory.map (·.id))), timeoutMs } scratch
+  match result with
+  | .error failure => return (.error failure.describe, used)
   | .ok outcome =>
     let some proposals := proposalsOf outcome.answer
-      | return .error "The review answer is no list of gaps."
+      | return (.error "The review answer is no list of gaps.", used)
     let rows := draft.map fun row => ({ id := row.source.id, clause := row.source.clause } : Row)
-    return .ok (gather (fun _ => none) rows proposals)
+    return (.ok (gather (fun _ => none) rows proposals), used)
 
 def draftContractNames (draft : List DraftRow) : List Name :=
   (draft.filterMap fun row => match row.evidence with

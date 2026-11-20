@@ -113,14 +113,14 @@ def testDraftReview : IO Unit := do
     "multiple row keys in one identifier are refused"
   let invalid : List DraftRow := [⟨{ source with clause := "changed" }, .contract `Geometry.mono " "⟩,
     strength]
-  match ← reviewDraft runner [backend] backend inventory invalid "requirements" "." with
+  match (← reviewDraft runner [backend] backend inventory invalid "requirements" ".").1 with
   | .ok _ => throw <| IO.userError "incomplete draft reached review"
   | .error message =>
     for diagnostic in ["Missing draft row: comfort", "Duplicate draft key: strength",
         "Unknown or changed source clause: strength", "Empty draft contract: strength"] do
       ensure ((message.splitOn diagnostic).length > 1) s!"missing diagnostic {diagnostic}"
   ensure ((← calls.get) == 0) "incomplete draft invoked a backend"
-  match ← reviewDraft runner [backend] backend inventory complete "requirements" "." with
+  match (← reviewDraft runner [backend] backend inventory complete "requirements" ".").1 with
   | .error message => throw <| IO.userError message
   | .ok report => ensure (report.refused.isEmpty) "complete review returned malformed proposals"
   ensure ((← calls.get) == 1) "complete draft used exactly one review"
@@ -313,8 +313,83 @@ def testCommandAdapter : IO Unit := do
   IO.FS.removeDirAll dir
   IO.println "PASS: configurable command adapter (transport, schema, malformed output, exit, configuration)"
 
+open SpecTools.Usage in
+/-- A call's usage, read from what each harness really printed (the probes saved in
+`research/results/lean-specification-tools/` of the workspace, copied here), from a command adapter's
+`usage.json`, and printed by `gaps`; and the trace `SPEC_TOOLS_TRACE` asks for. -/
+def testUsage : IO Unit := do
+  -- Claude Code's report for "Answer with the single word: ok" under the adapter's flags.
+  let claude := "{\"total_cost_usd\":0.018001800000000002,\"num_turns\":1,\"duration_api_ms\":4620,\"usage\":{\"input_tokens\":2,\"cache_creation_input_tokens\":2223,\"cache_read_input_tokens\":649,\"output_tokens\":4}}"
+  let u := ofClaudeReport (← IO.ofExcept (Lean.Json.parse claude)) 5196
+  ensure (u.input == .of (some 2) && u.cacheWrite == .of (some 2223) && u.cacheRead == .of (some 649) &&
+    u.output == .of (some 4) && u.turns == .of (some 1) && u.listPriceNano == .of (some 18001800))
+    s!"Claude Code's report read wrong: {repr u}"
+  -- Codex's events for the same question, `gpt-6.1-sol`.
+  let codex := "{\"type\":\"thread.started\",\"thread_id\":\"t\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_2\",\"type\":\"agent_message\",\"text\":\"ok\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":35450,\"cached_input_tokens\":0,\"cache_write_input_tokens\":0,\"output_tokens\":5,\"reasoning_output_tokens\":0}}\n"
+  let c := ofCodexEvents codex 11000
+  ensure (c.input == .of (some 35450) && c.cacheRead == .of (some 0) && c.cacheWrite == .of (some 0) &&
+    c.output == .of (some 5) && c.listPriceNano == .of none) s!"Codex's events read wrong: {repr c}"
+  ensure (ofCodexEvents "not json\n" 1 == unreported 1) "Codex events without a turn's end aren't unreported"
+  -- A command adapter with and without `usage.json`.
+  let dir ← IO.FS.createTempDir
+  let schema := Lean.Json.mkObj [("type", "object")]
+  let script := "printf '{\"input\":7,\"output\":3,\"listPriceUsd\":0.5}' > usage.json; cat \"$1\""
+  let reporting : Backend :=
+    { harness := Harness.command "sh" ["-c", script, "adapter"], model := "local/model", dataGoesTo := "local" }
+  let (r, used) ← askWithUsage liveRunner [reporting] reporting { prompt := "p", schema, timeoutMs := 10000 } dir
+  ensure r.toOption.isSome "the reporting adapter's answer was refused"
+  ensure (used.input == .of (some 7) && used.output == .of (some 3) && used.cacheWrite == .of none &&
+    used.listPriceNano == .of (some 500000000)) s!"usage.json read wrong: {repr used}"
+  let silent : Backend := { harness := .command "cat" [], model := "local/model", dataGoesTo := "local" }
+  let dir2 ← IO.FS.createTempDir
+  let (_, quiet) ← askWithUsage liveRunner [silent] silent { prompt := "p", schema, timeoutMs := 10000 } dir2
+  ensure (quiet.input == .of none && quiet.output == .of none && quiet.calls == 1)
+    s!"an adapter writing no usage.json reported counts: {repr quiet}"
+  ensure (has (line quiet "x") "input unknown (1 unreported)") s!"an unknown count printed as known: {line quiet "x"}"
+  -- `gaps` prints the usage line, records it where SPEC_TOOLS_USAGE says, and traces when asked.
+  let gapsFile (name script : String) : IO System.FilePath := do
+    let file := dir / s!"{name}.lean"
+    IO.FS.writeFile file ("import SpecTools.GapsRun\n#eval SpecTools.Gaps.run [] \"prose\" " ++
+      "{ harness := .command \"sh\" [\"-c\", \"" ++ script ++ "\", \"adapter\"], model := \"m\", " ++
+      "dataGoesTo := \"local\" }\n")
+    return file
+  let answering := "touch " ++ (dir / "ran").toString ++ "; printf '{\\\"input\\\":7,\\\"output\\\":3}' > usage.json; printf '{\\\"gaps\\\":[]}'"
+  let file ← gapsFile "GapsUsage" answering
+  let usageRecord := dir / "usage.jsonl"
+  let traceDir := dir / "trace"
+  let out ← IO.Process.output {
+    cmd := "lake"
+    args := #["env", "lean", file.toString]
+    env := #[("SPEC_TOOLS_USAGE", some usageRecord.toString), ("SPEC_TOOLS_TRACE", some traceDir.toString)] }
+  let text := out.stdout ++ out.stderr
+  ensure (out.exitCode == 0 && has text "usage: 1 calls; tokens input 7" && has text "output 3")
+    s!"gaps printed no usage line: {text}"
+  ensure ((← readRecorded usageRecord).input == .of (some 7)) "gaps recorded no usage in SPEC_TOOLS_USAGE"
+  let traces := (← traceDir.readDir).map (·.path)
+  ensure (traces.size == 1) s!"one trace file expected, found {traces.size}"
+  let traced ← IO.FS.readFile traces[0]!
+  ensure (((traced.splitOn "\n").filter (· ≠ "")).length == 1 && has traced "\"prompt\"" &&
+    has traced "\"usage\"" && has traced "\"answer\"") s!"the trace line lacks its parts: {traced}"
+  -- A trace directory that can't be written fails before the adapter runs.
+  IO.FS.removeFile (dir / "ran")
+  let blocked ← IO.Process.output {
+    cmd := "lake"
+    args := #["env", "lean", file.toString]
+    env := #[("SPEC_TOOLS_TRACE", some "/proc/spec-tools-trace")] }
+  ensure (!(← (dir / "ran").pathExists)) "the adapter ran though the trace couldn't be written"
+  ensure (has (blocked.stdout ++ blocked.stderr) "error") "an unwritable trace gave no error"
+  -- Without SPEC_TOOLS_TRACE nothing is traced: the trace directory keeps its one file, one line.
+  let plain ← IO.Process.output { cmd := "lake", args := #["env", "lean", file.toString] }
+  ensure (plain.exitCode == 0 && (← (dir / "ran").pathExists)) "the untraced run didn't run"
+  ensure ((← traceDir.readDir).size == 1 && (← IO.FS.readFile traces[0]!) == traced)
+    "a trace written though none was asked for"
+  IO.FS.removeDirAll dir
+  IO.FS.removeDirAll dir2
+  IO.println "PASS: usage (Claude Code, Codex, adapter file, unreported, gaps line, record, trace)"
+
 def main : IO Unit := do
   testCommandAdapter
+  testUsage
   let requirements ← IO.asTask testRequirementAudits
   testFinishedProcess
   testOverrun

@@ -47,10 +47,13 @@ The executable receives its configured arguments followed by `request.json`, rel
 working directory. That UTF-8 JSON file contains `protocol: 1`, `model`, `prompt`, `schema`,
 `timeoutMs`, `mode` (`question` or `agent`), `tools` (the requested agent tool policy) and, when
 configured, `effort`. Arguments are passed literally without a shell. Return the answer itself as
-JSON on stdout, diagnostics on stderr, and a nonzero status on failure. The shared checker validates
-the answer against `schema`; a backend need not support constrained JSON generation. The executable
-adapts this contract to its chosen service or local inference engine, keeping credentials in its own
-deployment configuration.
+JSON on stdout, diagnostics on stderr, and a nonzero status on failure. To report what the call
+used, the adapter may also write `usage.json` in its working directory, with any of `input`,
+`cacheWrite`, `cacheRead`, `output`, `turns`, `apiMillis` (counts) and `listPriceUsd` (a number); a
+field it leaves out is reported unknown, never 0. The shared checker validates the answer against
+`schema`; a backend need not support constrained JSON generation. The executable adapts this
+contract to its chosen service or local inference engine, keeping credentials in its own deployment
+configuration.
 
 **Adapter configuration is trusted executable configuration.** Command adapters must enforce the
 requested mode and tool restrictions; the generic launcher does not sandbox arbitrary commands. The

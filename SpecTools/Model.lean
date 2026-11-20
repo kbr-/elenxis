@@ -1,5 +1,6 @@
 import Lean.Data.Json
 import SpecTools.Schema
+import SpecTools.Usage
 
 /-!
 The model interface: the machinery asks a question of a backend and gets back a parsed answer with
@@ -63,15 +64,10 @@ def commandRequest (backend : Backend) (question : Question) (mode : String := "
     | some e => [("effort", toJson e)]
     | none => [])
 
-/-- What a call cost: its wall-clock time, and tokens where the harness reports them. -/
-structure Cost where
-  millis : Nat
-  tokens : Option Nat := none
-  deriving Repr, BEq
-
+/-- An answer and what its call used (`SpecTools.Usage`). -/
 structure Outcome where
   answer : Json
-  cost : Cost
+  usage : Usage.Usage
 
 /-- Why a call gave no answer, naming the backend. -/
 inductive Failure where
@@ -157,7 +153,7 @@ def callInvocation (backend : Backend) (question : Question) (scratch : System.F
       | some e => #["-c", s!"model_reasoning_effort=\"{e}\""]
       | none => #[]
     { cmd := "codex"
-      args := #["exec", "--skip-git-repo-check", "--ephemeral", "--sandbox"] ++ scope ++ #[
+      args := #["exec", "--json", "--skip-git-repo-check", "--ephemeral", "--sandbox"] ++ scope ++ #[
         "-m", backend.model] ++ effortArgs ++ #["--output-schema", "schema.json", "-o",
         "answer.json"] ++ promptArgs
       cwd := scratch
@@ -173,22 +169,28 @@ def callInvocation (backend : Backend) (question : Question) (scratch : System.F
 def invocation (backend : Backend) (question : Question) (scratch : System.FilePath) : Invocation :=
   callInvocation backend question scratch .question
 
-/-- The files the adapter reads back after the run. -/
+/-- The files the adapter reads back after the run: Codex's answer, a command adapter's optional
+usage report. -/
 def readBackFiles : Harness → List String
   | .claudeCode => []
   | .codex => ["answer.json"]
-  | .command _ _ => []
+  | .command _ _ => ["usage.json"]
 
-private def tokensOf (report : Json) : Option Nat :=
-  match report.getObjVal? "usage" with
-  | .ok usage =>
-    let field (k : String) : Nat := (usage.getObjValAs? Nat k).toOption.getD 0
-    some (field "input_tokens" + field "cache_creation_input_tokens" + field "cache_read_input_tokens"
-      + field "output_tokens")
-  | .error _ => none
+/-- What a call used, from whatever its harness reported, whether or not it answered: Claude Code's
+JSON report, Codex's `--json` events, a command adapter's `usage.json`; a run that overran reports
+nothing, its wall time the limit it was stopped at. -/
+def usageOf (backend : Backend) (timeoutMs : Nat) : Option Ran → Usage.Usage
+  | none => Usage.unreported timeoutMs
+  | some ran => match backend.harness with
+    | .claudeCode => match Json.parse ran.stdout with
+      | .ok report => Usage.ofClaudeReport report ran.millis
+      | .error _ => Usage.unreported ran.millis
+    | .codex => Usage.ofCodexEvents ran.stdout ran.millis
+    | .command _ _ =>
+      Usage.ofAdapterFile ((ran.readBack.lookup "usage.json").bind fun t => (Json.parse t).toOption) ran.millis
 
 /-- The answer a finished run carries, before the schema check. -/
-def readAnswer (backend : Backend) (ran : Ran) : Except Failure (Json × Option Nat) := do
+def readAnswer (backend : Backend) (ran : Ran) : Except Failure Json := do
   let name := backend.name
   if ran.exitCode != 0 then
     throw (.exited name ran.exitCode (firstLines (ran.stderr ++ "\n" ++ ran.stdout)))
@@ -198,17 +200,14 @@ def readAnswer (backend : Backend) (ran : Ran) : Except Failure (Json × Option 
     if (report.getObjValAs? Bool "is_error").toOption == some true then
       throw (.malformed name s!"the harness reported an error: {firstLines ran.stdout}")
     match report.getObjVal? "structured_output" with
-    | .ok answer => return (answer, tokensOf report)
+    | .ok answer => return answer
     | .error _ => throw (.malformed name "no structured_output in the harness's report")
   | .codex =>
     match ran.readBack.lookup "answer.json" with
     | none => throw (.malformed name "the answer file was not written")
-    | some text =>
-      let answer ← (Json.parse text).mapError fun e => .malformed name s!"answer is no JSON: {e}"
-      return (answer, none)
+    | some text => (Json.parse text).mapError fun e => .malformed name s!"answer is no JSON: {e}"
   | .command _ _ =>
-    let answer ← (Json.parse ran.stdout).mapError fun e => .malformed name s!"answer is no JSON: {e}"
-    return (answer, none)
+    (Json.parse ran.stdout).mapError fun e => .malformed name s!"answer is no JSON: {e}"
 
 def routeAllowed (allowed : List Backend) (backend : Backend) : Bool :=
   allowed.any fun candidate =>
@@ -232,12 +231,23 @@ def plan (allowed : List Backend) (backend : Backend) (question : Question)
 def finish (backend : Backend) (question : Question) : Option Ran → Except Failure Outcome
   | none => .error (.timedOut backend.name question.timeoutMs)
   | some ran => do
-    let (answer, tokens) ← readAnswer backend ran
+    let answer ← readAnswer backend ran
     match Schema.violation question.schema answer with
     | some why => throw (.malformed backend.name s!"answer breaks the schema at {why}")
-    | none => return { answer, cost := { millis := ran.millis, tokens } }
+    | none => return { answer, usage := usageOf backend question.timeoutMs (some ran) }
 
-/-- Ask `question` of `backend` through `runner`, in the empty directory `scratch`. -/
+/-- Ask `question` of `backend` through `runner`, in the empty directory `scratch`: the outcome, and
+what the call used whether or not it answered (nothing, for a call refused before running). -/
+def askWithUsage (runner : Runner) (allowed : List Backend) (backend : Backend) (question : Question)
+    (scratch : System.FilePath) : IO (Except Failure Outcome × Usage.Usage) :=
+  match plan allowed backend question scratch with
+  | .error failure => pure (.error failure, {})
+  | .ok inv => do
+    let ran ← runner inv (readBackFiles backend.harness) question.timeoutMs
+    return (finish backend question ran, usageOf backend question.timeoutMs ran)
+
+/-- Ask `question` of `backend` through `runner`, in the empty directory `scratch`; an answer carries
+its usage, which `askWithUsage` also gives for a call that failed. -/
 def ask (runner : Runner) (allowed : List Backend) (backend : Backend) (question : Question)
     (scratch : System.FilePath) : IO (Except Failure Outcome) :=
   match plan allowed backend question scratch with
