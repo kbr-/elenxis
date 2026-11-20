@@ -40,8 +40,8 @@ theorem drawFlaws_rules (rs : List Rule) (s : Nat) (fs : List Flaw) (taken : Lis
         · exact fun ht => ihu i h (List.mem_append_left _ ht)
 
 /-- No two flaws of a test fall on one rule. -/
-theorem imperfections_distinct (seed : Nat) (rs : List Rule) :
-    ((imperfections seed rs).map (·.rule)).Nodup :=
+theorem imperfections_distinct (seed : Nat) (rs : List Rule) (kinds : List Flaw) :
+    ((imperfections seed rs kinds).map (·.rule)).Nodup :=
   (drawFlaws_rules _ _ _ _).1
 
 /-- A plant the owners' draw takes at a step touches no rule already touched. -/
@@ -114,12 +114,15 @@ theorem faithful_iff (exp got : List Read) :
 def ownerSeeds : List (Vocab × Nat) :=
   [(Vocab.salon, 20261120), (Vocab.tailor, 20261121), (Vocab.bakery, 20261122)]
 
-/-- At each owner's seed every flaw kind falls on one rule, and a forgotten exception on a rule
-with an exception. -/
-example : ownerSeeds.all fun (v, seed) =>
+/-- At each owner's seed each of its domain's flaw kinds falls on one rule, no other kind on any,
+and a forgotten exception on a rule with an exception; across the three domains every kind is
+some domain's. -/
+example : Flaw.all.all (fun f => ownerSeeds.any fun (v, _) => v.flawKinds.contains f) &&
+    ownerSeeds.all fun (v, seed) =>
       let rs := ownerRules seed ruleCount v
-      let fl := imperfections seed rs
-      Flaw.all.all (fun f => (fl.filter (·.flaw == f)).length == 1) &&
+      let fl := imperfections seed rs v.flawKinds
+      Flaw.all.all (fun f => (fl.filter (·.flaw == f)).length ==
+        (if v.flawKinds.contains f then 1 else 0)) &&
         fl.all fun i => i.flaw != .forgotten ||
           (rs.find? (·.id == i.rule)).any (·.flag.isSome) := by native_decide
 
@@ -144,7 +147,7 @@ would plant nothing. At each owner's seed every variant's views keep each rule's
 example : ownerSeeds.all fun (v, seed) =>
       let all := ownerRules seed (ruleCount + 1) v
       let rs := all.take ruleCount
-      let flawed := (imperfections seed rs).map (·.rule)
+      let flawed := (imperfections seed rs v.flawKinds).map (·.rule)
       (List.range 12).all fun i =>
         let vs := (ownerVariant rs (all.getLastD default) flawed seed i 2).1
         vs.length == rs.length &&
@@ -158,7 +161,7 @@ replaces). Checked for each plant of each variant at each owner's seed. -/
 example : ownerSeeds.all fun (v, seed) =>
       let all := ownerRules seed (ruleCount + 1) v
       let rs := all.take ruleCount
-      let flawed := (imperfections seed rs).map (·.rule)
+      let flawed := (imperfections seed rs v.flawKinds).map (·.rule)
       let plain := rs.map View.plain
       let artifacts (vs : List View) := (files vs).filter (·.1 != "loans.md")
       (List.range 12).all fun i =>
@@ -171,7 +174,7 @@ blind spots, none on a flawed rule, the batch's extra rule drawn as `owners-vari
 example : ownerSeeds.all fun (v, seed) =>
       let all := ownerRules seed (ruleCount + 1) v
       let rs := all.take ruleCount
-      let flawed := (imperfections seed rs).map (·.rule)
+      let flawed := (imperfections seed rs v.flawKinds).map (·.rule)
       (List.range 12).all fun i =>
         let ps := (ownerVariant rs (all.getLastD default) flawed seed i 2).2
         ps.length == (if i < 2 then 0 else 3) &&
@@ -220,7 +223,7 @@ theorem other_row_alarm (key : List Synthetic.Plant) (f : Score.Finding)
 /-- Every flaw drawn at the owners' seeds has a row that reads back as its rule, both kinds of row
 (`rK`, `rK-exempt`) among them. -/
 example : ownerSeeds.all
-    fun (v, seed) => (imperfections seed (ownerRules seed ruleCount v)).all
+    fun (v, seed) => (imperfections seed (ownerRules seed ruleCount v) v.flawKinds).all
       fun i => rowRule (flawRow i) == some i.rule := by native_decide
 
 /-- On a hand key, a finding on the flaw's row finds the flaw, one on the blind spot's row finds
@@ -243,7 +246,7 @@ private def has (s t : String) : Bool := (s.splitOn t).length > 1
 example :
     let v := Vocab.salon
     let rs := ownerRules 20261120 ruleCount v
-    let fl := imperfections 20261120 rs
+    let fl := imperfections 20261120 rs v.flawKinds
     let w := writerPrompt v .prose rs fl ""
     let c := writerPrompt v .conversation rs fl ""
     let rv := reviewerPrompt v .prose "some text"

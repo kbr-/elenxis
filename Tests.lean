@@ -472,7 +472,7 @@ def testOwners : IO Unit := do
           pure (some (tells (if n % 6 == 2 then 0 else 2)))
         else if has "# Text\n" then r.modifyGet fun l => (l.head?, l.tail)
         else if has "# The message" then pure (some (Lean.Json.mkObj [("verdict", "owner"),
-          ("confidence", Lean.toJson (80 : Nat)), ("reasons", Lean.Json.arr #[])]).compress)
+          ("confidence", Lean.toJson (80 : Nat)), ("reasons", Lean.Json.arr #["typos"])]).compress)
         else pure (some doc)
       return reply.map fun a =>
         { exitCode := 0, stdout := "", stderr := "", readBack := [("answer.json", a)], millis := 1 }
@@ -484,7 +484,8 @@ def testOwners : IO Unit := do
   ensure (kept.text == some "We do hair." && calls == 15 && kept.steps.length == 6 &&
     (kept.steps.filter (·.notes.isEmpty)).length == 2 && kept.faults == [[]] &&
     kept.lastTells.length == 2 && kept.lastVerdict == some true && kept.usage.calls == 15 &&
-    kept.heldOut == some ("owner", 80) && SpecTools.Owners.passesJudge .prose kept.heldOut &&
+    kept.heldOut == some ("owner", 80) && kept.heldOutReasons == ["typos"] &&
+    SpecTools.Owners.passesJudge .prose kept.heldOut &&
     !SpecTools.Owners.passesJudge .conversation kept.heldOut &&
     !SpecTools.Owners.passesJudge .prose (some ("ai", 70)) &&
     !SpecTools.Owners.passesJudge .prose none)

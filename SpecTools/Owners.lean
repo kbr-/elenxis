@@ -54,14 +54,23 @@ def drawFlaws (rs : List Rule) : Nat → List Flaw → List Nat → List Imperfe
       let r := (q :: qs)[draw s (qs.length + 1)]'(Nat.mod_lt _ (Nat.succ_pos _))
       ⟨r.id, f⟩ :: drawFlaws rs (next s) fs (taken ++ [r.id])
 
-/-- How many rules an owner's test has: one per flaw kind, and four stated clearly for the shared
-blind spots, few enough for an owner to tell. -/
-def ruleCount : Nat := 8
+/-- How many rules an owner's test has: two flawed and three stated clearly for the shared blind
+spots, few enough that an owner would state them (a held-out judge read eight as "a full matrix of
+eligibility rules"). -/
+def ruleCount : Nat := 5
 
-/-- A test's flaws: one of each kind, on distinct rules, drawn from the seed; the forgotten
-exception first, since only a rule with an exception can take it. -/
-def imperfections (seed : Nat) (rs : List Rule) : List Imperfection :=
-  drawFlaws rs (next (seed + 104723)) [.forgotten, .loose, .twoLimits, .openBoundary] []
+/-- The two flaw kinds an owner of the domain makes, chosen so each kind falls on some test; a
+forgotten exception comes first, since only a rule with an exception can take it. -/
+def _root_.SpecTools.Generated.Vocab.flawKinds (v : Vocab) : List Flaw :=
+  match v.name with
+  | "salon" => [.loose, .twoLimits]
+  | "tailor" => [.forgotten, .openBoundary]
+  | "bakery" => [.twoLimits, .openBoundary]
+  | _ => [.forgotten, .loose, .twoLimits, .openBoundary]
+
+/-- A test's flaws: one of each of `kinds`, on distinct rules, drawn from the seed. -/
+def imperfections (seed : Nat) (rs : List Rule) (kinds : List Flaw) : List Imperfection :=
+  drawFlaws rs (next (seed + 104723)) kinds []
 
 /-- The shapes of an owners' test's shared blind spots: the library's that change the artifacts
 (a twin exception changes the prose, which the owner's text replaces, so it would plant nothing),
@@ -392,6 +401,12 @@ def judgeOf (r : Except Failure Outcome) : Option (String × Nat) :=
     | some v, some c => some (v, c)
     | _, _ => none
 
+/-- The judge's quoted reasons, empty when its answer has none. -/
+def judgeReasonsOf (r : Except Failure Outcome) : List String :=
+  match r with
+  | .error _ => []
+  | .ok o => ((o.answer.getObjValAs? (Array String) "reasons").toOption.getD #[]).toList
+
 /-- Whether a held-out verdict passes the bar: "owner" for prose, "real" for a call. -/
 def passesJudge (form : Form) : Option (String × Nat) → Bool
   | some (v, _) => v == (match form with | .prose => "owner" | .conversation => "real")
@@ -407,6 +422,8 @@ structure Writing where
   lastVerdict : Option Bool
   /-- The held-out judge's verdict on the kept text and its confidence: the test's bar. -/
   heldOut : Option (String × Nat) := none
+  /-- The passages the judge quoted for its verdict. -/
+  heldOutReasons : List String := []
   faults : List (List String)
   brief : String
   usage : Usage.Usage
@@ -494,9 +511,10 @@ def writeOwner (runner : Runner) (allowed : List Backend) (backend : Backend) (v
         match tellsOf (← ask "owner-reviewer" (reviewerPrompt v form text) tellsSchema) with
         | .error e => steps := steps ++ [⟨s!"{label}: last review failed", text, [e]⟩]; break
         | .ok (tells, real) =>
-          let heldOut := judgeOf (← ask "owner-judge" (judgePrompt form text) judgeSchema)
+          let judged ← ask "owner-judge" (judgePrompt form text) judgeSchema
           return { text := some text, steps, lastTells := tells, lastVerdict := some real,
-                   heldOut, faults := faultLog, brief, usage := ← used.get }
+                   heldOut := judgeOf judged, heldOutReasons := judgeReasonsOf judged,
+                   faults := faultLog, brief, usage := ← used.get }
       if check == fidelityRounds then break
       let fixes := faults.map fun f => s!"a reader of your text got this wrong: {f}"
       match documentOf (← ask "owner-writer" (revisionPrompt brief text fixes) Prose.documentSchema) with

@@ -203,7 +203,7 @@ def synthetic (args : List String) : IO UInt32 := do
       | some model => SpecTools.Model.selectedBackend "configured" model
       | none => SpecTools.Model.configuredBackend
     let rs := SpecTools.Generated.ownerRules seed SpecTools.Owners.ruleCount vocab
-    let flaws := SpecTools.Owners.imperfections seed rs
+    let flaws := SpecTools.Owners.imperfections seed rs vocab.flawKinds
     let dir := System.FilePath.mk outDir
     IO.FS.createDirAll dir
     let scratch := dir / "calls"
@@ -222,6 +222,7 @@ def synthetic (args : List String) : IO UInt32 := do
         | some (v, c) => Lean.Json.mkObj [("verdict", Lean.Json.str v), ("confidence", Lean.toJson c)]
         | none => Lean.Json.null),
       ("passes_judge", Lean.toJson (SpecTools.Owners.passesJudge form w.heldOut)),
+      ("held_out_reasons", Lean.toJson w.heldOutReasons),
       ("fidelity_faults", Lean.toJson w.faults),
       ("flaws", Lean.toJson (flaws.map fun i => s!"r{i.rule}: {i.flaw.name}")),
       ("usage", SpecTools.Usage.asJson w.usage)]).compress
@@ -230,6 +231,7 @@ def synthetic (args : List String) : IO UInt32 := do
     for t in w.lastTells do IO.println s!"  - {t}"
     for (fs, k) in w.faults.zipIdx do IO.println s!"fidelity check {k + 1}: {if fs.isEmpty then "faithful" else "; ".intercalate fs}"
     IO.println s!"held-out judge: {w.heldOut}; passes the bar: {SpecTools.Owners.passesJudge form w.heldOut}"
+    for t in w.heldOutReasons do IO.println s!"  - {t}"
     IO.println s!"owners-write {SpecTools.Usage.line w.usage (SpecTools.Usage.brief backend)}"
     match w.text with
     | some t => IO.FS.writeFile (dir / "text.md") t; IO.println s!"kept: {dir}/text.md"; return 0
@@ -248,7 +250,7 @@ def synthetic (args : List String) : IO UInt32 := do
     let text ← IO.FS.readFile (dir / "text.md")
     let all := SpecTools.Generated.ownerRules seed (SpecTools.Owners.ruleCount + 1) vocab
     let rs := all.take SpecTools.Owners.ruleCount
-    let flaws := SpecTools.Owners.imperfections seed rs
+    let flaws := SpecTools.Owners.imperfections seed rs vocab.flawKinds
     IO.FS.writeFile (dir / "vocab") (vocab.name ++ "\n")
     let flawPlants := flaws.map fun i =>
       let p := SpecTools.Owners.flawPlant rs i
