@@ -63,9 +63,11 @@ exception first, since only a rule with an exception can take it. -/
 def imperfections (seed : Nat) (rs : List Rule) : List Imperfection :=
   drawFlaws rs (next (seed + 104723)) [.forgotten, .loose, .twoLimits, .openBoundary] []
 
-/-- The shapes of an owners' test's shared blind spots: the library's, and a limit every artifact
-moves, which any rule allows, so that rules without exceptions can carry one. -/
-def ownerShapes : List String := blindShapes ++ ["limit moved"]
+/-- The shapes of an owners' test's shared blind spots: the library's that change the artifacts
+(a twin exception changes the prose, which the owner's text replaces, so it would plant nothing),
+and a limit every artifact moves, which any rule allows, so that rules without exceptions can
+carry one. -/
+def ownerShapes : List String := blindShapes.filter (· != "twin exception") ++ ["limit moved"]
 
 /-- The plants of `shape` on the rules `rs` touching no rule of `touched`. -/
 def freePlants (rs : List Rule) (extra : Rule) (shape : String) (touched : List Nat) :

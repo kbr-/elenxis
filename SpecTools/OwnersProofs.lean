@@ -139,6 +139,19 @@ example : ownerSeeds.all fun (v, seed) =>
         rs.all fun r => cat.any fun e => e.kind == r.kind && e.measures == r.measures &&
           e.lo ≤ r.bound && r.bound ≤ e.hi && r.flag.all e.flags.contains := by native_decide
 
+/-- No owners' blind spot changes the prose view, which the owner's text replaces: a plant there
+would plant nothing. At each owner's seed every variant's views keep each rule's prose as stated. -/
+example : ownerSeeds.all fun (v, seed) =>
+      let all := ownerRules seed (ruleCount + 1) v
+      let rs := all.take ruleCount
+      let flawed := (imperfections seed rs).map (·.rule)
+      (List.range 12).all fun i =>
+        let vs := (ownerVariant rs (all.getLastD default) flawed seed i 2).1
+        vs.length == rs.length &&
+          (vs.zip rs).all fun (w, r) => w.prose.map Rule.id == some r.id &&
+            w.prose.map Rule.bound == some r.bound && w.prose.map Rule.flag == some r.flag := by
+  native_decide
+
 /-- At each owner's seed, every variant of its batch past the empty ones gets its three shared
 blind spots, none on a flawed rule, the batch's extra rule drawn as `owners-variants` draws it. -/
 example : ownerSeeds.all fun (v, seed) =>
