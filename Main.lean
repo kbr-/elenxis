@@ -206,10 +206,15 @@ def synthetic (args : List String) : IO UInt32 := do
     let flaws := SpecTools.Owners.imperfections seed rs vocab.flawKinds
     let dir := System.FilePath.mk outDir
     IO.FS.createDirAll dir
-    let scratch := dir / "calls"
-    IO.FS.createDirAll scratch
+    -- The calls run in a neutral temporary directory: a model sees its working directory, and the
+    -- judges read a path naming owners' tests as a sign of generated text (the task's theory).
+    -- Their records are copied into the test's directory after.
+    let scratch ← IO.FS.createTempDir
     let w ← SpecTools.Owners.writeOwner SpecTools.Model.liveRunner [backend] backend vocab form rs
       flaws notes scratch 900000
+    let copied ← IO.Process.output { cmd := "cp", args := #["-a", scratch.toString, (dir / "calls").toString] }
+    if copied.exitCode != 0 then IO.eprintln s!"the calls' records were not copied: {copied.stderr}"
+    else IO.FS.removeDirAll scratch
     IO.FS.writeFile (dir / "brief.txt") w.brief
     IO.FS.writeFile (dir / "steps.jsonl") ("\n".intercalate (w.steps.map fun s =>
       (Lean.Json.mkObj [("step", Lean.Json.str s.what), ("text", Lean.Json.str s.text),
