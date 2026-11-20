@@ -434,7 +434,10 @@ def synthetic (args : List String) : IO UInt32 := do
     let backend ← SpecTools.Model.selectedBackend "configured" agentModel
     -- The tools arm starts each run's audit, tests and gaps at once: three controls together peaked
     -- at 2.037 GiB, so ten of its runs with their agents near the 10 GiB budget; five at a time.
-    let width := if arms == [.tools] then 5 else 10
+    -- On SPEC_TOOLS_HOST the agents run on that shared machine: one Claude question peaked at
+    -- 263060 kB there with 3 GiB available, so three agents at a time.
+    let onHost := (← IO.getEnv "SPEC_TOOLS_HOST").isSome
+    let width := if onHost then 3 else if arms == [.tools] then 5 else 10
     -- Each result is appended to the results file as its run ends, so a run stopped part way keeps
     -- what finished; a later run on the same directory skips each variant and arm the file holds a
     -- result for (a failed run is tried again) and counts the saved results in its totals.
