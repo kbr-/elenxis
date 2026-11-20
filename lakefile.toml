@@ -1,4 +1,4 @@
-name = "lean-spec-tools"
+name = "Elenxis"
 version = "0.1.0"
 defaultTargets = ["SpecTools", "spec-tools"]
 testDriver = "spec_tools_tests"

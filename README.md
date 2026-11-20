@@ -1,13 +1,16 @@
-# lean-spec-tools
+<p align="center"><img src="docs/elenxis.webp" alt="Elenxis: The proof checks. Does the spec?"
+width="600"></p>
+
+# Elenxis
 
 **Lean's kernel checks a proof against its theorem. Nothing checks the theorem against what you
 meant. This does.**
 
 Formal verification can prove that code satisfies a specification. It cannot, by itself, prove that
-the specification says what the user intended. `lean-spec-tools` makes the links between
-natural-language requirements, Lean statements, proofs and implementation tests explicit and
-auditable: Lean decides what it can, a model is asked only for what Lean can't decide, and its
-answers are proposals a person judges.
+the specification says what the user intended. `Elenxis` makes the links between natural-language
+requirements, Lean statements, proofs and implementation tests explicit and auditable: Lean decides
+what it can, a model is asked only for what Lean can't decide, and its answers are proposals a
+person judges.
 
 ## The problem
 
