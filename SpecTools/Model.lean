@@ -268,11 +268,35 @@ def agentInvocation (backend : Backend) (question : Question) (tools : List Stri
 model. -/
 initialize liveCallsForbidden : IO.Ref Bool ← IO.mkRef false
 
-/-- The runner that starts real processes. It refuses while the test driver runs, writes the
-invocation's files, waits at most `timeoutMs`, kills an overrun and reads back the named files. -/
+/-- A word quoted for a POSIX shell: in single quotes, each single quote written `'\''`. -/
+def shellQuote (s : String) : String := "'" ++ s.replace "'" "'\\''" ++ "'"
+
+/-- The command line an invocation runs on another host: in a directory at the same path, made
+first, its words quoted. -/
+def remoteCommand (inv : Invocation) : String :=
+  let dir := shellQuote inv.cwd.toString
+  s!"mkdir -p {dir} && cd {dir} && " ++ " ".intercalate ((inv.cmd :: inv.args.toList).map shellQuote)
+
+/-- An invocation run on `host` through ssh (`SPEC_TOOLS_HOST`): a question only, since an agent
+run (`--allowedTools`) acts in a copy the other host lacks, and a call that writes files or reads
+any back would find them on the wrong host. -/
+def onHost (host : String) (inv : Invocation) (readBack : List String) : Except String Invocation :=
+  if inv.args.contains "--allowedTools" then
+    .error s!"SPEC_TOOLS_HOST={host} runs questions only, and this is an agent run"
+  else if !inv.files.isEmpty || !readBack.isEmpty then
+    .error s!"SPEC_TOOLS_HOST={host} runs calls that answer on standard output only, and this \
+      one exchanges files"
+  else .ok { inv with cmd := "ssh", args := #["-o", "BatchMode=yes", host, remoteCommand inv] }
+
+/-- The runner that starts real processes. It refuses while the test driver runs, sends a question
+to `SPEC_TOOLS_HOST` when set (`onHost`), writes the invocation's files, waits at most
+`timeoutMs`, kills an overrun and reads back the named files. -/
 def liveRunner : Runner := fun inv readBack timeoutMs => do
   if ← liveCallsForbidden.get then
     throw (IO.userError s!"a live call to `{inv.cmd}` during the tests")
+  let inv ← match ← IO.getEnv "SPEC_TOOLS_HOST" with
+    | some host => IO.ofExcept ((onHost host inv readBack).mapError IO.userError)
+    | none => pure inv
   IO.FS.createDirAll inv.cwd
   for (name, text) in inv.files do
     IO.FS.writeFile (inv.cwd / name) text

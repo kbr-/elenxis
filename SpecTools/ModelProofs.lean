@@ -266,4 +266,49 @@ example : (match Json.parse "{\"is_error\":true}" with
 example : ∃ ran : Ran, ran.exitCode = 0 ∧ ran.readBack.lookup "answer.json" = none :=
   ⟨⟨0, "", "", [], 0⟩, rfl, rfl⟩
 
+/-- An agent run is never sent to another host. -/
+theorem onHost_refuses_agent (host : String) (inv : Invocation) (readBack : List String)
+    (h : inv.args.contains "--allowedTools" = true) : (onHost host inv readBack).toOption = none := by
+  unfold onHost
+  rw [if_pos h]
+  rfl
+
+/-- A call that exchanges files is never sent to another host. -/
+theorem onHost_refuses_files (host : String) (inv : Invocation) (readBack : List String)
+    (h : !inv.files.isEmpty || !readBack.isEmpty) : (onHost host inv readBack).toOption = none := by
+  unfold onHost
+  split
+  · rfl
+  · rfl
+
+/-- A question sent to another host runs ssh to that host, the whole command its last word, its
+working directory and input unchanged. -/
+theorem onHost_question (host : String) (inv i : Invocation) (readBack : List String)
+    (h : onHost host inv readBack = .ok i) :
+    i.cmd = "ssh" ∧ i.args = #["-o", "BatchMode=yes", host, remoteCommand inv] ∧
+      i.cwd = inv.cwd ∧ i.input = inv.input := by
+  unfold onHost at h
+  split at h
+  · cases h
+  · split at h
+    · cases h
+    · cases h; exact ⟨rfl, rfl, rfl, rfl⟩
+
+/-- A Claude question sent to build-host: its words quoted, a quote inside one written `'\''`. -/
+example :
+    let inv : Invocation :=
+      { cmd := "claude", args := #["-p", "--tools", "", "--", "it's"], cwd := "/tmp/q" }
+    remoteCommand inv =
+    "mkdir -p '/tmp/q' && cd '/tmp/q' && 'claude' '-p' '--tools' '' '--' 'it'\\''s'" := by
+  native_decide
+
+/-- The question invocation Claude Code gets, sent to a host, is accepted; its agent invocation
+is refused. -/
+example :
+    let b : Backend := ⟨.claudeCode, "claude-opus-5-5", "Anthropic", some "medium"⟩
+    let q : Question := { prompt := "p", schema := Json.mkObj [], timeoutMs := 1 }
+    (onHost "build-host" (callInvocation b q "/tmp/s" .question) []).toOption.isSome &&
+      (onHost "build-host" (callInvocation b q "/tmp/s" (.agent ["Read"])) []).toOption.isNone := by
+  native_decide
+
 end SpecTools.Model
