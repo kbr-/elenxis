@@ -172,13 +172,16 @@ runs never see. Every model call below is Opus (`claude-opus-5-5`) at medium eff
 | `gaps` alone, no gap planted (control) | 2 | none to find | 0 | 22 s for the batch | |
 | Agent, files only (`baseline`) | 20 | 60 of 60 | 0 | 29 s | 61531 |
 | Agent offered the tools (`ledger`) | 20 | 60 of 60 | 6 | 119 s | 161855 |
+| Agent handed the tools' reports (`tools`) | 20 | 60 of 60 | 3 | 25 s, the reports apart | 146252, the reports apart |
 
-On these variants Opus finds every planted gap from the files alone, so the tools add no gaps found
-and cost 4.1 times the time and 2.6 times the tokens. Each of the `ledger` arm's six false alarms
-names a clause beside a planted gap: five name the rule whose exception was dropped, reporting its
-unconditional Lean statement as behaviour the prose doesn't ask for (the planted gap seen from the
-rule's side), and one names the exception of a rule whose sum was planted. The scorer credits only
-the clause the key names.
+On these variants Opus finds every planted gap from the files alone, so the tools add no gaps found:
+offered the tools, the agent took 4.1 times the time and 2.6 times the tokens. In the `tools` arm
+the audit, the tests and `gaps` run before the agent starts, and the time and tokens shown are the
+agent's alone. Each false alarm of both arms names a clause beside a planted gap: eight name the
+rule whose exception was dropped, reporting its unconditional Lean statement as behaviour the prose
+doesn't ask for (the planted gap seen from the rule's side), and one names the exception of a rule
+whose sum was planted. The scorer credits only the clause the key names. A test that can tell the
+arms apart on Opus needs gaps the bare agent misses.
 
 Reproduce, from the repository's root (`DIR` any empty directory):
 
