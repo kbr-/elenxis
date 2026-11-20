@@ -154,17 +154,30 @@ a requirement of N rules from a seed with its four artifacts (prose, Lean model 
 and its tests) agreeing by construction, plant gaps in one artifact with the key kept apart, and
 score a run's findings against the key: how many planted gaps are found, and the false alarms.
 
-- `spec-tools synthetic gvariants SEED N COUNT EMPTY DIR [blind]` writes a batch of COUNT variants
-  of N rules, the first EMPTY with no plant; `blind` gives each three *shared blind spots*: a prose
-  clause the Lean, the Python and its tests all leave out (an exception dropped from all three; an
-  exception written for one rule's twin and not the rule; a sum checked on its first measure alone),
-  so the artifacts agree with each other and only the prose shows the gap.
+- `spec-tools synthetic gvariants SEED N COUNT EMPTY DIR [blind [hard]]` writes a batch of COUNT
+  variants of N rules, the first EMPTY with no plant; `blind` gives each three *shared blind spots*:
+  a prose clause the Lean, the Python and its tests all leave out (an exception dropped from all
+  three; an exception written for one rule's twin and not the rule; a sum checked on its first
+  measure alone), so the artifacts agree with each other and only the prose shows the gap. The key
+  names each plant's ledger row and each rule's *presentation*, the way a person's prose states it:
+  plain, spread (the limit and its exception in different sections), defined term (a group or
+  quantity defined elsewhere), example only (a worked case), two wordings, or folded (two rules in
+  one sentence), drawn from all six, or from spread, defined term and example only with `hard`.
+- `spec-tools synthetic prose DIR [MODEL]` rewrites each variant's `loans.md` as a library's manager
+  would write it to staff, each rule in its presentation, with the configured backend; the template
+  stays as `loans.template.md`. A document is kept only when two extractions of its rules, each
+  blind to the other and to the rule list, give the rule list back exactly; otherwise it is written
+  again, up to three times, and a variant failing all three gets `LEFT_OUT`, which `run` skips. Each
+  variant's prompt, discards and usage go to its `prose.json`.
 - `spec-tools synthetic run DIR AGENT-MODEL TOOL-MODEL [ARM]` gives each variant to an agent: the
   `baseline` arm with the files alone, the `ledger` arm offered the tools, the `workflow` arm with
   the ledger arm's prompt and no tools, the `tools` arm with the tools' reports handed over before
   it starts; both `ledger` and `baseline` when no arm is named.
 - `spec-tools synthetic gapsrun SEED N DIR MODEL` runs `gaps` alone on each variant, scored by the
   row it names.
+- A finding names the ledger row of the rule it concerns, and a plant is found by a finding naming
+  its rule's row, whatever it quotes; results saved without rows are scored by their quotes. `run`
+  and `gapsrun` print the planted, found and false alarms per presentation when the key has them.
 - `spec-tools synthetic rescore DIR` scores a batch's saved findings again.
 
 The hand-written loans fixture is in `fixtures/loans`.

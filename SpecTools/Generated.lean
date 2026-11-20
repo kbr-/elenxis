@@ -355,4 +355,61 @@ def gvariant (rs : List Rule) (extra : Rule) (seed index empty : Nat)
   let plants := drawPlants rs extra shapes s count []
   (plants.foldl (fun vs p => p.apply vs) (rs.map View.plain), plants)
 
+/-! Presentations: how a person's prose states a rule, for the prose a model writes from the rule
+list (the person-prose test). -/
+
+inductive Presentation where
+  /-- One sentence, as `prose` writes it. -/
+  | plain
+  /-- The limit in one section, its exception in another. -/
+  | spread
+  /-- The exception names a group, defined once elsewhere. -/
+  | definedTerm
+  /-- Shown only through a worked case. -/
+  | exampleOnly
+  /-- Stated twice in different words, meaning the same. -/
+  | twoWordings
+  /-- Two rules in one sentence. -/
+  | folded
+  deriving Repr, DecidableEq, Inhabited
+
+def Presentation.name : Presentation → String
+  | .plain => "plain"
+  | .spread => "spread"
+  | .definedTerm => "defined term"
+  | .exampleOnly => "example only"
+  | .twoWordings => "two wordings"
+  | .folded => "folded"
+
+def Presentation.all : List Presentation :=
+  [.plain, .spread, .definedTerm, .exampleOnly, .twoWordings, .folded]
+
+/-- The presentations the deciding test weights toward, if Opus finds every blind spot. -/
+def Presentation.hard : List Presentation := [.spread, .definedTerm, .exampleOnly]
+
+/-- Rule `id`'s presentation in variant `index` of a batch from `seed`, drawn from `offered`, or
+plain when nothing is offered: a function of these alone, so a variant's other rules and plants
+change nothing. -/
+def presentationOf (offered : List Presentation) (seed index id : Nat) : Presentation :=
+  offered.getD (draw (next (next (seed + index * 7919) + (id + 1) * 104729)) offered.length) .plain
+
+/-- Each rule's drawn presentation in a variant, by rule number. -/
+def drawn (offered : List Presentation) (seed index : Nat) (rs : List Rule) :
+    List (Nat × Presentation) :=
+  rs.map fun r => (r.id, presentationOf offered seed index r.id)
+
+/-- The last folded entry made plain when the folded ones are odd in number, the rest unchanged. -/
+def pairFolded (ps : List (Nat × Presentation)) : List (Nat × Presentation) :=
+  if (ps.countP (·.2 == .folded)) % 2 == 0 then ps
+  else (go ps.reverse).reverse
+where
+  go : List (Nat × Presentation) → List (Nat × Presentation)
+    | [] => []
+    | (id, p) :: rest => if p == .folded then (id, .plain) :: rest else (id, p) :: go rest
+
+/-- Each rule's presentation in a variant, by rule number: as drawn, the folded ones paired. -/
+def presentations (offered : List Presentation) (seed index : Nat) (rs : List Rule) :
+    List (Nat × Presentation) :=
+  pairFolded (drawn offered seed index rs)
+
 end SpecTools.Generated

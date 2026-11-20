@@ -23,8 +23,10 @@ def task : String :=
 
 def answerFormat : String :=
   "Give your findings as your final answer: for each, `clause` quotes the requirement exactly as \
-  loans.md writes it, or as the ledger row writes it when loans.md lacks it, and `kind` says which \
-  gap. Give an empty list when you find none."
+  loans.md writes it, or as the ledger row writes it when loans.md lacks it, `kind` says which \
+  gap, and `row` names the ledger row in Loans.lean of the rule the finding concerns (the rule's \
+  own row, such as `r12`, for an exception or a clause the ledger lacks). Give an empty list when \
+  you find none."
 
 /-- The final answer's schema: a list of findings, each a quoted clause and a kind. -/
 def findingsSchema : Json :=
@@ -32,8 +34,8 @@ def findingsSchema : Json :=
     ("properties", Json.mkObj [("findings", Json.mkObj [("type", "array"),
       ("items", Json.mkObj [("type", "object"),
         ("properties", Json.mkObj [("clause", Json.mkObj [("type", "string")]),
-          ("kind", Json.mkObj [("type", "string")])]),
-        ("required", Json.arr #["clause", "kind"]), ("additionalProperties", false)])])]),
+          ("kind", Json.mkObj [("type", "string")]), ("row", Json.mkObj [("type", "string")])]),
+        ("required", Json.arr #["clause", "kind", "row"]), ("additionalProperties", false)])])]),
     ("required", Json.arr #["findings"]), ("additionalProperties", false)]
 
 /-- The ledger's workflow; `check` is the command running the spec tools on the agent's directory. -/
@@ -154,12 +156,53 @@ def runCheck (sub : String) : IO UInt32 := do
   let child ← IO.Process.spawn { cmd := inv.cmd, args := inv.args, env := inv.env, cwd := some inv.cwd }
   child.wait
 
+/-- A finding's row, where the answer gives one: answers saved before rows were asked for have
+none, and are scored by their quotes. -/
 def findingsOf (j : Json) : Option (List Finding) := do
   let arr ← (j.getObjValAs? (Array Json) "findings").toOption
   arr.toList.mapM fun f => do
     let clause ← (f.getObjValAs? String "clause").toOption
     let kind ← (f.getObjValAs? String "kind").toOption
-    return { clause, kind }
+    return { clause, kind, row := (f.getObjValAs? String "row").toOption }
+
+/-- A finding as a results file saves it: `[clause, kind]`, and its row third where it has one. -/
+def savedFinding (f : Finding) : Json :=
+  Json.arr (#[Json.str f.clause, Json.str f.kind] ++ (f.row.map fun r => #[Json.str r]).getD #[])
+
+def findingOfSaved (j : Json) : Option Finding := do
+  let clause ← (j.getArrVal? 0 >>= Json.getStr?).toOption
+  let kind ← (j.getArrVal? 1 >>= Json.getStr?).toOption
+  return { clause, kind, row := (j.getArrVal? 2 >>= Json.getStr?).toOption }
+
+example : findingOfSaved (savedFinding ⟨"a", "b", some "r3"⟩) = some ⟨"a", "b", some "r3"⟩ := by
+  native_decide
+example : findingOfSaved (savedFinding ⟨"a", "b", none⟩) = some ⟨"a", "b", none⟩ := by
+  native_decide
+
+/-- Each variant's presentations by rule number, from a batch's `key.jsonl`, by variant number; a
+key written before presentations has none. -/
+def keyPresentations (keyText : String) : List (Nat × List (Nat × Generated.Presentation)) :=
+  (keyText.splitOn "\n").filter (· ≠ "") |>.filterMap fun l => do
+    let j ← (Json.parse l).toOption
+    let v ← (j.getObjValAs? Nat "variant").toOption
+    let ps ← (j.getObjValAs? (Array Json) "presentations").toOption
+    let shown ← ps.toList.mapM fun p => do
+      let id ← (p.getObjValAs? Nat "rule").toOption
+      let name ← (p.getObjValAs? String "presentation").toOption
+      let pr ← Generated.Presentation.all.find? (·.name == name)
+      return (id, pr)
+    return (v, shown)
+
+/-- Each variant's plants, from a batch's `key.jsonl`, one line a variant; a plant's row where the
+key gives one. -/
+def keyPlants (keyText : String) : List (List Plant) :=
+  (keyText.splitOn "\n").filter (· ≠ "") |>.filterMap fun l => do
+    let j ← (Json.parse l).toOption
+    let plants ← (j.getObjValAs? (Array Json) "plants").toOption
+    plants.toList.mapM fun p => do
+      return { kind := ← (p.getObjValAs? String "kind").toOption,
+               clause := ← (p.getObjValAs? String "clause").toOption, edits := [],
+               row := (p.getObjValAs? String "row").toOption }
 
 /-- The command an agent runs the spec tools with, the executable in `root`. -/
 def checkCommand (root : String) : String := root ++ "/.lake/build/bin/spec-tools check"

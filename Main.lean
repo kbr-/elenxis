@@ -66,11 +66,15 @@ def synthetic (args : List String) : IO UInt32 := do
     IO.println s!"{SpecTools.Generated.shapes.length} single-plant variants and the control `omitted` (rule r{r.id}) in {outDir}"
     return 0
   | ["gvariants", seed, n, count, empty, outDir]
-  | ["gvariants", seed, n, count, empty, outDir, "blind"] =>
+  | ["gvariants", seed, n, count, empty, outDir, "blind"]
+  | ["gvariants", seed, n, count, empty, outDir, "blind", "hard"] =>
     -- A batch of COUNT variants of the fixture of N rules from SEED, the first EMPTY with no plant,
     -- in the loans batches' layout, so `synthetic run` takes it; `blind` gives each three shared
-    -- blind spots and nothing else (the scaling measure).
-    let blindOnly := args.getLast? == some "blind"
+    -- blind spots and nothing else (the scaling measure). The key names each rule's presentation
+    -- for the person-prose writer, drawn from all six, or from the hard three with `hard`.
+    let blindOnly := args.contains "blind"
+    let offered := if args.contains "hard" then SpecTools.Generated.Presentation.hard
+      else SpecTools.Generated.Presentation.all
     let some seed := seed.toNat? | IO.eprintln "SEED is a number"; return 2
     let some n := n.toNat? | IO.eprintln "N is a number"; return 2
     let some count := count.toNat? | IO.eprintln "COUNT is a number"; return 2
@@ -87,11 +91,73 @@ def synthetic (args : List String) : IO UInt32 := do
       let dir := System.FilePath.mk outDir / s!"v{i}"
       IO.FS.createDirAll dir
       for (f, text) in SpecTools.Generated.files vs do IO.FS.writeFile (dir / f) text
-      let plants := ps.map fun p => s!"\{\"kind\": {p.kind.quote}, \"clause\": {p.clause.quote}}"
-      key := key ++ [s!"\{\"variant\": {i}, \"plants\": [{", ".intercalate plants}]}"]
+      IO.FS.writeFile (dir / "prose-rules.json")
+        (Lean.Json.arr ((vs.filterMap (·.prose)).map SpecTools.Prose.ruleJson).toArray).compress
+      let plants := ps.map fun p =>
+        let row := match p.touches.head? with
+          | some id => s!", \"row\": {(SpecTools.Generated.rowId ⟨id, "", [], 0, none⟩).quote}"
+          | none => ""
+        s!"\{\"kind\": {p.kind.quote}, \"clause\": {p.clause.quote}{row}}"
+      let shown := (SpecTools.Generated.presentations offered seed i rs).map fun (id, p) =>
+        s!"\{\"rule\": {id}, \"presentation\": {p.name.quote}}"
+      key := key ++ [s!"\{\"variant\": {i}, \"plants\": [{", ".intercalate plants}], \"presentations\": [{", ".intercalate shown}]}"]
     IO.FS.writeFile (System.FilePath.mk outDir / "key.jsonl") ("\n".intercalate key ++ "\n")
     IO.println s!"{count} variants of {n} rules in {outDir}, the key in {outDir}/key.jsonl"
     return 0
+  | ["prose", outDir] | ["prose", outDir, _] =>
+    -- Each variant's prose rewritten as a person writes it (SpecTools.Prose), three variants at a
+    -- time: the template stays as loans.template.md, a kept document becomes loans.md, and a
+    -- variant whose three writings all fail gets LEFT_OUT, which `run` skips. Each variant's
+    -- prompt, discards and usage go to vI/prose.json.
+    let backend ← match (args.drop 2).head? with
+      | some model => SpecTools.Model.selectedBackend "configured" model
+      | none => SpecTools.Model.configuredBackend
+    let keyText ← IO.FS.readFile (System.FilePath.mk outDir / "key.jsonl")
+    let shownOf := SpecTools.SyntheticRun.keyPresentations keyText
+    if shownOf.isEmpty then
+      IO.eprintln s!"{outDir}/key.jsonl names no presentations: write the batch with gvariants"; return 2
+    let width := 3
+    let batches := (List.range ((shownOf.length + width - 1) / width)).map fun j =>
+      (shownOf.drop (j * width)).take width
+    let mut used : List SpecTools.Usage.Usage := []
+    let mut kept := 0
+    let mut writings := 0
+    let mut leftOut : List Nat := []
+    for batch in batches do
+      let tasks ← batch.mapM fun (i, shown) => IO.asTask do
+        let dir := System.FilePath.mk outDir / s!"v{i}"
+        let rulesText ← IO.FS.readFile (dir / "prose-rules.json")
+        let some rules := (Lean.Json.parse rulesText).toOption.bind (·.getArr?.toOption) |>.bind
+            (·.toList.mapM SpecTools.Prose.ruleOfJson)
+          | throw (IO.userError s!"{dir}/prose-rules.json holds no rule list")
+        let scratch ← IO.FS.createTempDir
+        let w ← SpecTools.Prose.writeFaithful SpecTools.Model.liveRunner [backend] backend rules
+          shown scratch 600000
+        IO.FS.removeDirAll scratch
+        unless ← (dir / "loans.template.md").pathExists do
+          IO.FS.writeFile (dir / "loans.template.md") (← IO.FS.readFile (dir / "loans.md"))
+        match w.document with
+        | some d => IO.FS.writeFile (dir / "loans.md") d
+        | none => IO.FS.writeFile (dir / "LEFT_OUT") ("\n".intercalate w.discarded ++ "\n")
+        IO.FS.writeFile (dir / "prose.json") (Lean.Json.mkObj [
+          ("kept", Lean.toJson w.document.isSome), ("writings", Lean.toJson w.writings),
+          ("discarded", Lean.toJson w.discarded), ("prompt", Lean.Json.str w.prompt),
+          ("usage", SpecTools.Usage.asJson w.usage)]).compress
+        return (i, w)
+      for t in tasks do
+        let (i, w) ← IO.ofExcept t.get
+        used := used ++ [w.usage]
+        writings := writings + w.writings
+        for d in w.discarded do IO.println s!"v{i}: discarded {d}"
+        if w.document.isSome then
+          kept := kept + 1
+          IO.println s!"v{i}: kept after {w.writings} writings"
+        else
+          leftOut := leftOut ++ [i]
+          IO.println s!"v{i}: left out after {w.writings} writings"
+    IO.println s!"prose: {kept} of {shownOf.length} variants kept, {writings} writings, left out {leftOut}"
+    IO.println s!"prose {SpecTools.Usage.line (SpecTools.Usage.total used) (SpecTools.Usage.brief backend)}"
+    return if leftOut.isEmpty then 0 else 1
   | ["gapsrun", seed, n, outDir, model] =>
     -- `gaps` itself on each variant of a batch written by gvariants SEED N, three at a time, scored
     -- by row against the key (Generated.rowScore); the full output of each goes to vI/gaps.txt.
@@ -113,6 +179,9 @@ def synthetic (args : List String) : IO UInt32 := do
     let mut alarms := 0
     let mut failed := 0
     let mut used : List SpecTools.Usage.Usage := []
+    let shownAll := SpecTools.SyntheticRun.keyPresentations keyText
+    let plantsAll := SpecTools.SyntheticRun.keyPlants keyText
+    let mut byPres : List (String × Nat × Nat × Nat) := []
     for batch in batches do
       let tasks ← batch.mapM fun ((k, i) : List String × Nat) => IO.asTask do
         let dir := System.FilePath.mk outDir / s!"v{i}"
@@ -145,7 +214,16 @@ def synthetic (args : List String) : IO UInt32 := do
           planted := planted + k.length
           alarms := alarms + a
           IO.println s!"v{i}: found {f} of {k.length}, false alarms {a}; rows {rows}"
+          let shown := (shownAll.lookup i).getD []
+          unless shown.isEmpty do
+            let bp := SpecTools.Score.byPresentation shown (plantsAll.getD i [])
+              (rows.map fun r => { clause := "", kind := "", row := some r })
+            byPres := byPres ++ bp
+            IO.println s!"v{i} by presentation (planted, found, false alarms): {bp}"
     IO.println s!"gaps: {keys.length - failed} variants scored, found {found} of {planted}, false alarms {alarms}, {failed} failed"
+    for n in (byPres.map (·.1)).eraseDups do
+      let rs := byPres.filter (·.1 == n)
+      IO.println s!"gaps {n}: planted {(rs.map (·.2.1)).sum}, found {(rs.map (·.2.2.1)).sum}, false alarms {(rs.map (·.2.2.2)).sum}"
     IO.println s!"gaps {SpecTools.Usage.line (SpecTools.Usage.total used) s!"model {model}"}"
     return if failed == 0 then 0 else 1
   | "control" :: dirs =>
@@ -203,12 +281,8 @@ def synthetic (args : List String) : IO UInt32 := do
     let resultsFile := if arms.length == 1 then s!"results-{(arms.headD .baseline).name}.jsonl"
       else "results.jsonl"
     let keyText ← IO.FS.readFile (System.FilePath.mk outDir / "key.jsonl")
-    let keys := (keyText.splitOn "\n").filter (· ≠ "") |>.filterMap fun l => do
-      let j ← (Lean.Json.parse l).toOption
-      let plants ← (j.getObjValAs? (Array Lean.Json) "plants").toOption
-      plants.toList.mapM fun p => do
-        return ({ kind := ← (p.getObjValAs? String "kind").toOption,
-                  clause := ← (p.getObjValAs? String "clause").toOption, edits := [] } : Plant)
+    let keys := SpecTools.SyntheticRun.keyPlants keyText
+    let shownAll := SpecTools.SyntheticRun.keyPresentations keyText
     let root ← IO.currentDir
     let backend ← SpecTools.Model.selectedBackend "configured" agentModel
     -- The tools arm starts each run's audit, tests and gaps at once: three controls together peaked
@@ -233,8 +307,13 @@ def synthetic (args : List String) : IO UInt32 := do
       let kinds := ((j.getObjValAs? (List String) "found_kinds").toOption).getD []
       return (i, a, found, missed, alarms, (kinds.filter (· == "shared blind spot")).length)
     let previous := saved.filterMap savedResult
+    -- A variant whose person-prose writing failed (`prose`'s LEFT_OUT) is not run.
+    let leftOut ← keys.zipIdx.filterMapM fun (_, i) => do
+      if ← (System.FilePath.mk outDir / s!"v{i}" / "LEFT_OUT").pathExists then pure (some i)
+      else pure none
+    unless leftOut.isEmpty do IO.println s!"variants left out by prose: {leftOut}"
     let jobs : List (List Plant × Nat × SpecTools.SyntheticRun.Arm) :=
-      keys.zipIdx.flatMap fun (k, i) => arms.filterMap fun a =>
+      keys.zipIdx.flatMap fun (k, i) => if leftOut.contains i then [] else arms.filterMap fun a =>
         if previous.any (fun (j, b, _) => j == i && b == a) then none else some (k, i, a)
     if !previous.isEmpty then
       IO.println s!"{previous.length} results already in {resultsPath}; {jobs.length} runs left"
@@ -254,8 +333,9 @@ def synthetic (args : List String) : IO UInt32 := do
       return (k, i, a, r)
     let mut pending := jobs
     let mut running := #[]
-    -- Each run's agent and tools usage, this invocation's runs only.
+    -- Each run's agent and tools usage, and its score by presentation, this invocation's runs only.
     let mut used : List (SpecTools.SyntheticRun.Arm × SpecTools.Usage.Usage × SpecTools.Usage.Usage) := []
+    let mut byPres : List (SpecTools.SyntheticRun.Arm × List (String × Nat × Nat × Nat)) := []
     while !pending.isEmpty || !running.isEmpty do
       while running.size < width do
         match pending with
@@ -282,8 +362,12 @@ def synthetic (args : List String) : IO UInt32 := do
         | .ok (fs, checks) =>
           let s := SpecTools.Score.score k fs
           let ms := agentUsage.millis
+          let bp := SpecTools.Score.byPresentation ((shownAll.lookup i).getD []) k fs
+          byPres := (a, bp) :: byPres
           IO.println s!"v{i} {arm}: found {s.found} missed {s.missed} false alarms {s.falseAlarms} ({ms} ms; check ran {checks})"
-          out.putStrLn s!"\{\"variant\": {i}, \"arm\": \"{arm}\", \"found\": {s.found.length}, \"missed\": {s.missed.length}, \"false_alarms\": {s.falseAlarms}, \"ms\": {ms}, {usages}, \"checks\": {(checks.map (·.quote)).toString}, \"found_kinds\": {(s.found.map (·.quote)).toString}, \"missed_kinds\": {(s.missed.map (·.quote)).toString}, \"findings\": {(fs.map fun f => s!"[{f.clause.quote}, {f.kind.quote}]").toString}}"
+          unless ((shownAll.lookup i).getD []).isEmpty do
+            IO.println s!"v{i} {arm} by presentation (planted, found, false alarms): {bp}"
+          out.putStrLn s!"\{\"variant\": {i}, \"arm\": \"{arm}\", \"found\": {s.found.length}, \"missed\": {s.missed.length}, \"false_alarms\": {s.falseAlarms}, \"ms\": {ms}, {usages}, \"checks\": {(checks.map (·.quote)).toString}, \"found_kinds\": {(s.found.map (·.quote)).toString}, \"missed_kinds\": {(s.missed.map (·.quote)).toString}, \"findings\": {(Lean.Json.arr (fs.map SpecTools.SyntheticRun.savedFinding).toArray).compress}}"
           out.flush
           stdout.flush
           totals := (a, s.found.length, s.missed.length, s.falseAlarms) :: totals
@@ -292,6 +376,10 @@ def synthetic (args : List String) : IO UInt32 := do
       let ts := totals.filter (·.1 == arm)
       IO.println s!"{arm.name}: {ts.length} runs, found \
         {(ts.map (·.2.1)).sum}, missed {(ts.map (·.2.2.1)).sum}, false alarms {(ts.map (·.2.2.2)).sum}"
+      let rows := ((byPres.filter (·.1 == arm)).flatMap (·.2))
+      for n in (rows.map (·.1)).eraseDups do
+        let rs := rows.filter (·.1 == n)
+        IO.println s!"{arm.name} {n}: planted {(rs.map (·.2.1)).sum}, found {(rs.map (·.2.2.1)).sum}, false alarms {(rs.map (·.2.2.2)).sum}"
       let us := used.filter (·.1 == arm)
       unless us.isEmpty do
         IO.println s!"{arm.name} agents' {SpecTools.Usage.line (SpecTools.Usage.total (us.map (·.2.1))) (SpecTools.Usage.brief backend)}"
@@ -312,12 +400,7 @@ def synthetic (args : List String) : IO UInt32 := do
     -- current scorer, per arm in total; a run that failed has no findings and is left out.
     let dir := System.FilePath.mk outDir
     let keyText ← IO.FS.readFile (dir / "key.jsonl")
-    let keys := (keyText.splitOn "\n").filter (· ≠ "") |>.filterMap fun l => do
-      let j ← (Lean.Json.parse l).toOption
-      let plants ← (j.getObjValAs? (Array Lean.Json) "plants").toOption
-      plants.toList.mapM fun p => do
-        return ({ kind := ← (p.getObjValAs? String "kind").toOption,
-                  clause := ← (p.getObjValAs? String "clause").toOption, edits := [] } : Plant)
+    let keys := SpecTools.SyntheticRun.keyPlants keyText
     let files := ((← dir.readDir).map (·.fileName)).toList.filter fun n =>
       n.startsWith "results" && n.endsWith ".jsonl"
     let mut totals : List (String × Nat × Nat × Nat × Nat) := []
@@ -327,10 +410,7 @@ def synthetic (args : List String) : IO UInt32 := do
         let some arm := (j.getObjValAs? String "arm").toOption | continue
         let some v := (j.getObjValAs? Nat "variant").toOption | continue
         let some fsJ := (j.getObjValAs? (Array Lean.Json) "findings").toOption | continue
-        let fs : List SpecTools.Score.Finding := fsJ.toList.filterMap fun f => do
-          let a ← (f.getArrVal? 0).toOption
-          let b ← (f.getArrVal? 1).toOption
-          return { clause := ← (Lean.Json.getStr? a).toOption, kind := ← (Lean.Json.getStr? b).toOption }
+        let fs := fsJ.toList.filterMap SpecTools.SyntheticRun.findingOfSaved
         let some k := keys[v]? | IO.eprintln s!"{file}: variant {v} not in the key"; return 1
         let s := SpecTools.Score.score k fs
         let blindFound := (s.found.filter (· == "shared blind spot")).length

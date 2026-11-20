@@ -26,3 +26,5 @@ import SpecTools.ScoreProofs
 import SpecTools.SyntheticRun
 import SpecTools.Generated
 import SpecTools.GeneratedProofs
+import SpecTools.Prose
+import SpecTools.ProseProofs

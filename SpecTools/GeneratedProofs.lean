@@ -143,4 +143,79 @@ example : rowScore [{ id := 3, kind := "pay", measures := ["fines"], bound := 9,
 theorem rules_pairs_nodup (seed n : Nat) : ((rules seed n).flatMap Rule.pairs).Nodup :=
   (go_pairs _ _ _ _ _).1
 
+/-- A rule's presentation is one of those offered. -/
+theorem presentationOf_mem {offered : List Presentation} (h : offered ≠ []) (seed index id : Nat) :
+    presentationOf offered seed index id ∈ offered := by
+  unfold presentationOf Synthetic.draw
+  have hl : 0 < offered.length := List.length_pos_iff.mpr h
+  rw [← List.getElem_eq_getD (h := Nat.mod_lt _ hl)]
+  exact List.getElem_mem _
+
+/-- Rules added to a variant leave the others' presentations as they were, and each rule's entry is
+its own draw. -/
+theorem drawn_append (offered : List Presentation) (seed index : Nat) (rs rs' : List Rule) :
+    drawn offered seed index (rs ++ rs') =
+      drawn offered seed index rs ++ drawn offered seed index rs' := by
+  simp [drawn]
+
+theorem drawn_entry (offered : List Presentation) (seed index : Nat) (rs : List Rule)
+    (r : Rule) (h : r ∈ rs) :
+    (r.id, presentationOf offered seed index r.id) ∈ drawn offered seed index rs :=
+  List.mem_map.mpr ⟨r, h, rfl⟩
+
+private theorem go_ids (l : List (Nat × Presentation)) :
+    (pairFolded.go l).map (·.1) = l.map (·.1) := by
+  induction l with
+  | nil => rfl
+  | cons x rest ih =>
+    obtain ⟨id, p⟩ := x
+    by_cases hp : p = .folded <;> simp [pairFolded.go, hp, ih]
+
+private theorem go_count (l : List (Nat × Presentation)) (h : 0 < l.countP (·.2 == .folded)) :
+    (pairFolded.go l).countP (·.2 == .folded) + 1 = l.countP (·.2 == .folded) := by
+  induction l with
+  | nil => simp at h
+  | cons x rest ih =>
+    obtain ⟨id, p⟩ := x
+    by_cases hp : p = .folded
+    · simp [pairFolded.go, hp]
+    · simp [pairFolded.go, hp] at h ⊢
+      exact ih (by simpa using h)
+
+/-- Pairing keeps every rule, in order. -/
+theorem pairFolded_ids (ps : List (Nat × Presentation)) :
+    (pairFolded ps).map (·.1) = ps.map (·.1) := by
+  unfold pairFolded
+  split
+  · rfl
+  · rw [List.map_reverse, go_ids, List.map_reverse, List.reverse_reverse]
+
+/-- After pairing, the folded rules are even in number, so each has a partner. -/
+theorem pairFolded_even (ps : List (Nat × Presentation)) :
+    (pairFolded ps).countP (·.2 == .folded) % 2 = 0 := by
+  unfold pairFolded
+  split
+  · next h => simpa using h
+  · next h =>
+    have hpos : 0 < ps.reverse.countP (·.2 == .folded) := by
+      rw [List.countP_reverse]; simp at h; omega
+    have := go_count ps.reverse hpos
+    simp only [List.countP_reverse] at this hpos ⊢
+    simp at h
+    omega
+
+/-- On the batches' fixture (seed 20261107, 30 rules), the first variant draws each of the six
+presentations for some rule, and the deciding test's weighting draws each of its three. -/
+example : Presentation.all.all fun p =>
+    (presentations Presentation.all 20261107 0 (rules 20261107 30)).any (·.2 == p) := by
+  native_decide
+example : Presentation.hard.all fun p =>
+    (presentations Presentation.hard 20261107 0 (rules 20261107 30)).any (·.2 == p) := by
+  native_decide
+
+/-- Two variants of one batch present some rule differently. -/
+example : presentations Presentation.all 20261107 0 (rules 20261107 30) ≠
+    presentations Presentation.all 20261107 1 (rules 20261107 30) := by
+  native_decide
+
 end SpecTools.Generated

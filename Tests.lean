@@ -387,9 +387,59 @@ def testUsage : IO Unit := do
   IO.FS.removeDirAll dir2
   IO.println "PASS: usage (Claude Code, Codex, adapter file, unreported, gaps line, record, trace)"
 
+open SpecTools.Prose SpecTools.Generated in
+/-- The person-prose writer's loop with a scripted model: a kept document, a rewrite, a variant left
+out, a failed call. Each extraction answer is taken from a queue, each writer call from another. -/
+def testProse : IO Unit := do
+  let rules : List Rule := [⟨0, "deliver", ["requests", "loans"], 15, none⟩,
+    ⟨1, "pay", ["fines"], 3, some "staff"⟩]
+  let shown := [(0, Presentation.exampleOnly), (1, Presentation.definedTerm)]
+  let answer (r : Rule) := Lean.Json.mkObj [("kind", Lean.Json.str r.kind),
+    ("measures", Lean.Json.arr (r.measures.reverse.map Lean.Json.str).toArray),
+    ("bound", Lean.toJson r.bound), ("exempt", Lean.Json.str (r.flag.getD "none"))]
+  let exact := (Lean.Json.mkObj [("rules", Lean.Json.arr (rules.map answer).toArray)]).compress
+  let wrong := (Lean.Json.mkObj [("rules", Lean.Json.arr #[answer rules[0]!,
+    answer { rules[1]! with flag := none }])]).compress
+  let backend : Backend := ⟨.codex, "test-model", "test", none⟩
+  let run (writes : List (Option String)) (extractions : List String) : IO (Writing × Nat) := do
+    let w ← IO.mkRef writes
+    let e ← IO.mkRef extractions
+    let calls ← IO.mkRef (0 : Nat)
+    let runner : Runner := fun invocation _ _ => do
+      calls.modify (· + 1)
+      let prompt := invocation.input.getD ""
+      let reply ← if (prompt.splitOn "# Rules").length > 1 then
+          w.modifyGet fun l => (l.head?.join, l.tail)
+        else e.modifyGet fun l => (l.head?, l.tail)
+      return reply.map fun a =>
+        { exitCode := 0, stdout := "", stderr := "", readBack := [("answer.json", a)], millis := 1 }
+    let dir ← IO.FS.createTempDir
+    let result ← writeFaithful runner [backend] backend rules shown dir 10000
+    IO.FS.removeDirAll dir
+    return (result, ← calls.get)
+  let doc := some "{\"document\":\"Our desk rules.\"}"
+  let (kept, calls) ← run [doc] [exact, exact]
+  ensure (kept.document == some "Our desk rules." && kept.writings == 1 && kept.discarded.isEmpty &&
+    calls == 3 && kept.usage.calls == 3) s!"equal extractions didn't keep the document: {kept.discarded}"
+  ensure ((kept.prompt.splitOn "worked example").length > 1 && (kept.prompt.splitOn "group name").length > 1)
+    "the writer's prompt lacks the rules' presentations"
+  let (rewritten, _) ← run [doc, doc] [wrong, exact, exact, exact]
+  ensure (rewritten.document.isSome && rewritten.writings == 2 && rewritten.discarded.length == 1 &&
+    (rewritten.discarded[0]!.splitOn "exempt staff").length > 1)
+    s!"one differing rule didn't rewrite the document: {rewritten.discarded}"
+  let (leftOut, calls) ← run [doc, doc, doc] [wrong, wrong, wrong, wrong, wrong, wrong]
+  ensure (leftOut.document.isNone && leftOut.writings == 3 && leftOut.discarded.length == 3 && calls == 9)
+    s!"three failed writings didn't leave the variant out: {leftOut.discarded}"
+  let (afterFailure, calls) ← run [none, doc] [exact, exact]
+  ensure (afterFailure.document.isSome && afterFailure.writings == 2 && calls == 4 &&
+    (afterFailure.discarded[0]!.splitOn "writing 1").length > 1)
+    s!"a failed writer call didn't count as a failed writing: {afterFailure.discarded}"
+  IO.println "PASS: person prose (kept, rewritten, left out, failed call)"
+
 def main : IO Unit := do
   testCommandAdapter
   testUsage
+  testProse
   let requirements ← IO.asTask testRequirementAudits
   testFinishedProcess
   testOverrun

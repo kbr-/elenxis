@@ -14,11 +14,13 @@ structure Edit where
   new : String
   deriving Repr, DecidableEq, Inhabited
 
-/-- A planted gap: its kind (one of the eight), the clause it concerns, and its edits. -/
+/-- A planted gap: its kind (one of the eight), the clause it concerns, its edits, and the ledger
+row of the rule it concerns where the fixture has one (the generated fixture's `rK`). -/
 structure Plant where
   kind : String
   clause : String
   edits : List Edit
+  row : Option String := none
   deriving Repr, DecidableEq, Inhabited
 
 /-- The number of times `pat` occurs in `s`, by position. -/
