@@ -69,4 +69,30 @@ theorem table_agrees : (power 20 0.05 0.2 0.5 * 1000).round / 1000 ==
     ((((List.range 21).filter (passes 20 · 0.05 0.2)).map (pmf 20 · 0.5)).foldl (· + ·) 0 * 1000).round / 1000 := by
   native_decide
 
+/-! ## The per-text bar's calibration size
+
+The threshold is the `r`-th lowest of `n` real posts' scores (a higher score reading more human, a text passing at
+or above it). It keeps at least a share `p` of all real posts exactly when at least `r` of the `n` scores fall below
+the `1 - p` quantile of real posts' scores, each one doing so with probability `1 - p`; so the confidence is
+`1 - cdf n (r - 1) (1 - p)`, for continuous scores. -/
+
+/-- The confidence that a threshold at the `r`-th lowest of `n` real posts' scores passes at least a share `p` of
+all real posts. -/
+def coverageConfidence (n r : Nat) (p : Float) : Float := 1 - cdf n (r - 1) (1 - p)
+
+/-- The minimum of 59 scores keeps 95% of real posts with confidence above 0.95, and of 58 below: the published
+tolerance bound, 1 − 0.95^59 = 0.9515 and 1 − 0.95^58 = 0.9489. -/
+theorem fifty_nine_suffice : coverageConfidence 59 1 0.95 > 0.95 ∧ coverageConfidence 58 1 0.95 < 0.95 := by
+  native_decide
+
+/-- The fewest real posts whose `r`-th lowest score keeps a share `p` with confidence `c`, searched below 1000. -/
+def fewest (r : Nat) (p c : Float) : Option Nat :=
+  (List.range 1000).find? fun n => n ≥ r && coverageConfidence n r p ≥ c
+
+/-- The table `synthetic power-threshold` prints: for each rank of the threshold and each share kept, the fewest
+calibration posts reaching confidence 0.95. -/
+def thresholdTable : List String :=
+  "rank\tshare\tposts" :: ([1, 2, 3, 5].flatMap fun r => ([0.9, 0.95] : List Float).map fun p =>
+    s!"{r}\t{p}\t{((fewest r p 0.95).map toString).getD "1000 or more"}")
+
 end SpecTools.Power

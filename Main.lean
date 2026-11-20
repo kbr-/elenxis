@@ -304,6 +304,9 @@ def synthetic (args : List String) : IO UInt32 := do
   | ["power"] =>
     for line in SpecTools.Power.table do IO.println line
     return 0
+  | ["power-threshold"] =>
+    for line in SpecTools.Power.thresholdTable do IO.println line
+    return 0
   | ["owners-table", outDir] =>
     -- The five rows of the test in OUT-DIR from its saved results (Owners.table).
     let dir := System.FilePath.mk outDir
