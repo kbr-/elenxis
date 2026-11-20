@@ -407,8 +407,23 @@ def judgeReasonsOf (r : Except Failure Outcome) : List String :=
   | .error _ => []
   | .ok o => ((o.answer.getObjValAs? (Array String) "reasons").toOption.getD #[]).toList
 
-/-- How many times the writer revises against the first judge's reasons. -/
+/-- How many times the writer revises against the development judge's reasons. -/
 def judgeRounds : Nat := 3
+
+/-- The development judge's prompt, the loop's to learn from: the bar's question (a probability)
+in other words than the second judge's, which the loop never sees. -/
+def devJudgePrompt (form : Form) (text : String) : String :=
+  match form with
+  | .prose => s!"Here is a message a freelancer got through their contact form from a small \
+      business owner who wants a website made. If you had to bet, how likely is it that the owner \
+      wrote this themselves, rather than having it written by an AI? Answer `human_probability` \
+      from 0 to 100, and in `why` list what in the message makes it read as a person's or as \
+      generated, quoting it.\n\n---\n\n{text}"
+  | .conversation => s!"Here is what is said to be a transcript of a first phone call between a \
+      freelancer and a small business owner who wants a website made. If you had to bet, how \
+      likely is it that this was a real call, rather than written by an AI? Answer \
+      `human_probability` from 0 to 100, and in `why` list what in it makes it read as a real call \
+      or as generated, quoting it.\n\n---\n\n{text}"
 
 /-- The second judge's prompt, which the loop never sees: how likely a person running the business
 typed the text (for a call: that it transcribes a real call), 0 to 100. -/
@@ -536,12 +551,12 @@ def writeOwner (runner : Runner) (allowed : List Backend) (backend : Backend) (v
           text := d
           steps := steps ++ [⟨s!"{label}: revised after review {round + 1}", d, tells⟩]
     if broken then continue
-    -- The first judge's reasons are the loop's to learn from: on "ai", the writer revises
-    -- against them, up to `judgeRounds` times, before the fidelity checks.
+    -- The development judge's reasons are the loop's to learn from: under the bar, the writer
+    -- revises against them, up to `judgeRounds` times, before the fidelity checks.
     for round in List.range judgeRounds do
-      let judged ← ask "owner-judge" (judgePrompt form text) judgeSchema
-      if passesJudge form (judgeOf judged) then break
-      let reasons := judgeReasonsOf judged
+      let judged ← ask "owner-dev-judge" (devJudgePrompt form text) testJudgeSchema
+      if passesBar (humanProbabilityOf judged) then break
+      let reasons := whyOf judged
       if reasons.isEmpty then break
       let fixes := reasons.map fun r => s!"a reader took your text for a model's imitation: {r}"
       match documentOf (← ask "owner-writer" (revisionPrompt brief text fixes) Prose.documentSchema) with

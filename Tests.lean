@@ -473,12 +473,15 @@ def testOwners : IO Unit := do
           let n ← reviews.modifyGet fun n => (n, n + 1)
           pure (some (tells (if n % 6 == 2 then 0 else 2)))
         else if has "# Text\n" then r.modifyGet fun l => (l.head?, l.tail)
+        else if has "If you had to bet" then do
+          -- The development judge: the scripted probabilities first, then 92.
+          let p ← js.modifyGet fun l => ((l.head?.bind String.toNat?).getD 92, l.tail)
+          pure (some (Lean.Json.mkObj [("human_probability", Lean.toJson p),
+            ("why", Lean.Json.arr #["typos"])]).compress)
         else if has "`human_probability`" then pure (some (Lean.Json.mkObj [
           ("human_probability", Lean.toJson (92 : Nat)), ("why", Lean.Json.arr #["fragments"])]).compress)
         else if has "# The message" then do
-          -- The scripted verdicts first, then "owner".
-          let verdict ← js.modifyGet fun l => (l.headD "owner", l.tail)
-          pure (some (Lean.Json.mkObj [("verdict", Lean.Json.str verdict),
+          pure (some (Lean.Json.mkObj [("verdict", "owner"),
             ("confidence", Lean.toJson (80 : Nat)), ("reasons", Lean.Json.arr #["typos"])]).compress)
         else pure (some doc)
       return reply.map fun a =>
@@ -503,13 +506,16 @@ def testOwners : IO Unit := do
   ensure (rprompts.length == 6 && rprompts.all fun p =>
       (p.splitOn "no shows").length == 1 && (p.splitOn "# What you want").length == 1)
     "a reviewer's prompt holds the rules"
-  let (judgedBack, calls, _) ← run [exact, exact] ["ai", "ai"]
+  let (judgedBack, calls, _) ← run [exact, exact] ["70", "89"]
   let judgeRevisions := judgedBack.steps.filter fun s => (s.what.splitOn "revised after judge").length > 1
   ensure (judgedBack.text.isSome && judgeRevisions.length == 2 &&
     judgeRevisions.all (·.notes == ["typos"]) &&
-    calls == 21) s!"two 'ai' verdicts didn't bring two revisions against the judge's reasons: \
+    calls == 21) s!"two scores under the bar didn't bring two revisions against the judge's reasons: \
       {judgeRevisions.length} revisions, {calls} calls"
-  let (judgeCapped, _, _) ← run [exact, exact] ["ai", "ai", "ai", "ai"]
+  let (judgeCapped, _, _) ← run [exact, exact] ["50", "50", "50", "50"]
+  let (judgeAtBar, _, _) ← run [exact, exact] ["90"]
+  ensure ((judgeAtBar.steps.filter fun s => (s.what.splitOn "revised after judge").length > 1).isEmpty)
+    "a score at the bar brought a revision"
   ensure ((judgeCapped.steps.filter fun s => (s.what.splitOn "revised after judge").length > 1).length ==
     SpecTools.Owners.judgeRounds) "the judge's revisions didn't stop at judgeRounds"
   let (sentBack, calls, _) ← run [ruleWrong, exact, exact, exact]
