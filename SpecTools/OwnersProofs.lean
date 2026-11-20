@@ -104,6 +104,28 @@ theorem ownerVariant_plants_disjoint (rs : List Rule) (extra : Rule) (flawed : L
       (fun p q => ∀ x ∈ p.touches, x ∉ q.touches) :=
   (drawOwnerPlants_disjoint _ _ _ _ _).2
 
+/-- The writing chosen has a score, and no writing scores higher. -/
+theorem bestIndex_best (scores : List (Option Nat)) (i : Nat) (h : bestIndex scores = some i) :
+    ∃ s, scores[i]? = some (some s) ∧ ∀ (j t : Nat), scores[j]? = some (some t) → t ≤ s := by
+  unfold bestIndex at h
+  cases hm : (scores.filterMap id).max? with
+  | none => simp [hm] at h
+  | some m =>
+    simp only [hm, Option.bind_eq_bind, Option.bind_some] at h
+    obtain ⟨hi, hp, -⟩ := List.findIdx?_eq_some_iff_getElem.mp h
+    refine ⟨m, ?_, ?_⟩
+    · simp at hp
+      simp [List.getElem?_eq_getElem hi, hp]
+    · intro j t ht
+      have hmem : t ∈ scores.filterMap id := by
+        rw [List.mem_filterMap]
+        exact ⟨some t, List.mem_of_getElem? ht, rfl⟩
+      exact (List.max?_eq_some_iff.mp hm).2 t hmem
+
+/-- The first of equal best is chosen, and writings without a score are passed over. -/
+example : bestIndex [some 70, none, some 85, some 85] = some 2 := by decide
+example : bestIndex [none, none] = none := by decide
+
 /-- The fidelity check is a permutation of the normalized reads. -/
 theorem faithful_iff (exp got : List Read) :
     faithful exp got = true ↔ (exp.map Read.norm).Perm (got.map Read.norm) := by

@@ -454,9 +454,22 @@ def whyOf (r : Except Failure Outcome) : List String :=
   | .error _ => []
   | .ok o => ((o.answer.getObjValAs? (Array String) "why").toOption.getD #[]).toList
 
-/-- The bar: the second judge's probability at least the lowest it gave a human post (the
-theory's calibration on three owners' posts, 90). -/
+/-- The bar: the second judge's mean probability at least the lowest it gave a human post (the
+theory's calibration on three owners' posts, 90; the salon post's three samples 90, 92, 90). -/
 def testBar : Nat := 90
+
+/-- How many samples of the second judge the bar averages. -/
+def testSamples : Nat := 3
+
+/-- Of a test's writings, by their development judge's scores (none for a writing with no kept
+text or no score), the index of the first with the highest score; none when no writing has one. -/
+def bestIndex (scores : List (Option Nat)) : Option Nat := do
+  let m ← (scores.filterMap id).max?
+  scores.findIdx? (· == some m)
+
+/-- The mean of the samples, rounded down; none for no sample. -/
+def meanOf (xs : List Nat) : Option Nat :=
+  if xs.isEmpty then none else some (xs.sum / xs.length)
 
 def passesBar : Option Nat → Bool
   | some p => p ≥ testBar
@@ -483,6 +496,10 @@ structure Writing where
   never reads it. -/
   testJudge : Option Nat := none
   testJudgeWhy : List String := []
+  /-- The second judge's samples, whose mean (rounded down) is `testJudge`. -/
+  testSamples : List Nat := []
+  /-- The development judge's score of the kept text, by which a test's writings are chosen. -/
+  devJudge : Option Nat := none
   faults : List (List String)
   brief : String
   usage : Usage.Usage
@@ -584,10 +601,20 @@ def writeOwner (runner : Runner) (allowed : List Backend) (backend : Backend) (v
         | .error e => steps := steps ++ [⟨s!"{label}: last review failed", text, [e]⟩]; break
         | .ok (tells, real) =>
           let judged ← ask "owner-judge" (judgePrompt form text) judgeSchema
-          let tested ← ask "owner-test-judge" (testJudgePrompt form text) testJudgeSchema
+          let dev ← ask "owner-dev-judge" (devJudgePrompt form text) testJudgeSchema
+          -- The bar's judge three times at once, its samples varying by a few points.
+          let tasks ← (List.range testSamples).mapM fun _ =>
+            IO.asTask (ask "owner-test-judge" (testJudgePrompt form text) testJudgeSchema)
+          let mut samples : List Nat := []
+          let mut why : List String := []
+          for t in tasks do
+            let r ← IO.ofExcept t.get
+            if let some p := humanProbabilityOf r then samples := samples ++ [p]
+            if why.isEmpty then why := whyOf r
           return { text := some text, steps, lastTells := tells, lastVerdict := some real,
                    heldOut := judgeOf judged, heldOutReasons := judgeReasonsOf judged,
-                   testJudge := humanProbabilityOf tested, testJudgeWhy := whyOf tested,
+                   devJudge := humanProbabilityOf dev, testSamples := samples,
+                   testJudge := meanOf samples, testJudgeWhy := why,
                    faults := faultLog, brief, usage := ← used.get }
       if check == fidelityRounds then break
       let fixes := faults.map fun f => s!"a reader of your text got this wrong: {f}"

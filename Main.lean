@@ -223,6 +223,7 @@ def synthetic (args : List String) : IO UInt32 := do
         | none => Lean.Json.null),
       ("passes_judge", Lean.toJson (SpecTools.Owners.passesJudge form w.heldOut)),
       ("test_judge", Lean.toJson w.testJudge), ("test_judge_why", Lean.toJson w.testJudgeWhy),
+      ("test_samples", Lean.toJson w.testSamples), ("dev_judge", Lean.toJson w.devJudge),
       ("passes_bar", Lean.toJson (SpecTools.Owners.passesBar w.testJudge)),
       ("held_out_reasons", Lean.toJson w.heldOutReasons),
       ("fidelity_faults", Lean.toJson w.faults),
@@ -232,7 +233,8 @@ def synthetic (args : List String) : IO UInt32 := do
     IO.println s!"last review of the kept text: could be real {w.lastVerdict}; tells ({w.lastTells.length}):"
     for t in w.lastTells do IO.println s!"  - {t}"
     for (fs, k) in w.faults.zipIdx do IO.println s!"fidelity check {k + 1}: {if fs.isEmpty then "faithful" else "; ".intercalate fs}"
-    IO.println s!"second judge (the bar, {SpecTools.Owners.testBar}): {w.testJudge}; passes: {SpecTools.Owners.passesBar w.testJudge}"
+    IO.println s!"development judge on the kept text: {w.devJudge}"
+    IO.println s!"second judge (the bar, mean of {SpecTools.Owners.testSamples} at least {SpecTools.Owners.testBar}): samples {w.testSamples}, mean {w.testJudge}; passes: {SpecTools.Owners.passesBar w.testJudge}"
     for t in w.testJudgeWhy do IO.println s!"  - {t}"
     IO.println s!"first judge: {w.heldOut}; says owner: {SpecTools.Owners.passesJudge form w.heldOut}"
     for t in w.heldOutReasons do IO.println s!"  - {t}"
@@ -277,6 +279,23 @@ def synthetic (args : List String) : IO UInt32 := do
     IO.FS.writeFile (dir / "key.jsonl") ("\n".intercalate key ++ "\n")
     IO.println s!"{count} variants of {rs.length} rules ({flaws.length} flawed) in {dir}, the key in {dir}/key.jsonl"
     return 0
+  | "owners-best" :: outDir :: dirs =>
+    -- Of a test's writings in DIRS (each written by owners-write), the one the development judge
+    -- scored highest (Owners.bestIndex) is copied to OUT-DIR, to go on to its variants.
+    let scores ← dirs.mapM fun d => do
+      let f := System.FilePath.mk d / "writing.json"
+      if !(← f.pathExists) then return none
+      let j ← IO.ofExcept (Lean.Json.parse (← IO.FS.readFile f))
+      return (j.getObjValAs? Nat "dev_judge").toOption
+    IO.println s!"development judge's scores: {scores}"
+    match SpecTools.Owners.bestIndex scores with
+    | none => IO.eprintln "no writing has a score"; return 1
+    | some i =>
+      let chosen := dirs.getD i ""
+      let out ← IO.Process.output { cmd := "cp", args := #["-a", chosen, outDir] }
+      if out.exitCode != 0 then IO.eprintln out.stderr; return 1
+      IO.println s!"chose {chosen} for {outDir}"
+      return 0
   | ["owners-table", outDir] =>
     -- The five rows of the test in OUT-DIR from its saved results (Owners.table).
     let dir := System.FilePath.mk outDir

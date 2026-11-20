@@ -491,9 +491,12 @@ def testOwners : IO Unit := do
     IO.FS.removeDirAll dir
     return (w, ← calls.get, ← reviewerPrompts.get)
   let (kept, calls, rprompts) ← run [exact, exact]
-  ensure (kept.text == some "We do hair." && calls == 17 && kept.steps.length == 6 &&
+  ensure (kept.text == some "We do hair." && calls == 20 && kept.steps.length == 6 &&
     (kept.steps.filter (·.notes.isEmpty)).length == 2 && kept.faults == [[]] &&
-    kept.lastTells.length == 2 && kept.lastVerdict == some true && kept.usage.calls == 17 &&
+    kept.lastTells.length == 2 && kept.lastVerdict == some true && kept.usage.calls == 20 &&
+    kept.testSamples == [92, 92, 92] && kept.devJudge == some 92 &&
+    SpecTools.Owners.meanOf [90, 88, 88] == some 88 && SpecTools.Owners.meanOf [90, 92, 90] == some 90 &&
+    SpecTools.Owners.meanOf [] == none &&
     kept.heldOut == some ("owner", 80) && kept.heldOutReasons == ["typos"] &&
     kept.testJudge == some 92 && kept.testJudgeWhy == ["fragments"] &&
     SpecTools.Owners.passesBar kept.testJudge && !SpecTools.Owners.passesBar (some 89) &&
@@ -510,7 +513,7 @@ def testOwners : IO Unit := do
   let judgeRevisions := judgedBack.steps.filter fun s => (s.what.splitOn "revised after judge").length > 1
   ensure (judgedBack.text.isSome && judgeRevisions.length == 2 &&
     judgeRevisions.all (·.notes == ["typos"]) &&
-    calls == 21) s!"two scores under the bar didn't bring two revisions against the judge's reasons: \
+    calls == 24) s!"two scores under the bar didn't bring two revisions against the judge's reasons: \
       {judgeRevisions.length} revisions, {calls} calls"
   let (judgeCapped, _, _) ← run [exact, exact] ["50", "50", "50", "50"]
   let (judgeAtBar, _, _) ← run [exact, exact] ["90"]
@@ -520,7 +523,7 @@ def testOwners : IO Unit := do
     SpecTools.Owners.judgeRounds) "the judge's revisions didn't stop at judgeRounds"
   let (sentBack, calls, _) ← run [ruleWrong, exact, exact, exact]
   ensure (sentBack.text.isSome && sentBack.faults.length == 2 && sentBack.steps.length == 7 &&
-    calls == 20) s!"a clear rule read wrong didn't send the text back: {sentBack.faults}"
+    calls == 23) s!"a clear rule read wrong didn't send the text back: {sentBack.faults}"
   let (flawBack, _, _) ← run [flawStated, exact, exact, exact]
   let firstFault := (flawBack.faults.headD []).headD ""
   ensure (flawBack.text.isSome && flawBack.faults.length == 2 &&
