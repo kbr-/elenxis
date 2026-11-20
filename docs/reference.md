@@ -147,6 +147,10 @@ specification, record more:
   backend, prompt, schema, raw answer or failure, and usage. Unset, nothing is written, since a
   prompt carries the target's text; a directory that can't be written fails before the call.
 
+`SPEC_TOOLS_HOST=HOST` runs each question on HOST through ssh, in a directory at the same path, so
+the harness runs under HOST's login while Lean runs here. Only a question, which answers on standard
+output, goes there; an agent run, or a call that exchanges files (Codex's answer file), is refused.
+
 ## The synthetic evaluation
 
 `SpecTools.Synthetic`, `SpecTools.Generated`, `SpecTools.Score` and `spec-tools synthetic` generate
@@ -179,6 +183,28 @@ score a run's findings against the key: how many planted gaps are found, and the
   its rule's row, whatever it quotes; results saved without rows are scored by their quotes. `run`
   and `gapsrun` print the planted, found and false alarms per presentation when the key has them.
 - `spec-tools synthetic rescore DIR` scores a batch's saved findings again.
+- `generate`, `gplants`, `gvariants` and the owners' commands take `vocab=NAME` for the domain's
+  words: `library` (the default), `salon`, `tailor` or `bakery`.
+
+The owners' tests (`SpecTools.Owners`) have a small business owner, non-technical and imperfect,
+describe the program they want. The owner gets two rules of each kind wrong: a limit given loosely,
+a limit given twice with two numbers, an exception the business has but the owner forgets, and a
+number given without saying whether that number itself is refused.
+
+- `spec-tools synthetic owners-write DIR SEED prose|conversation [NOTES-FILE [MODEL]] vocab=NAME`
+  writes the owner's text from the 15 rules of SEED: a message to a developer, or a first call with
+  one (NOTES-FILE, notes on how real calls go, given to the writer). The text goes through five
+  rounds of a reviewer who sees only the persona and the text and lists what gives away that no such
+  person wrote it, then through two blind readings, which must give each rule as the owner was told
+  to state it, its flaw included. Every step's text and reader's list go to `steps.jsonl`, the kept
+  text to `text.md`.
+- `spec-tools synthetic owners-variants DIR SEED COUNT EMPTY vocab=NAME` writes COUNT variants with
+  the owner's text as their prose, the first EMPTY without plants, the others three shared blind
+  spots on rules with no flaw; the key names the blind spots and the flaws by row, so a finding on a
+  flaw's row counts as an imperfection found and no false alarm.
+- `spec-tools synthetic owners-table DIR` prints the five rows from the saved results: `gaps` alone
+  on the variants with blind spots, `gaps` on those without, and the baseline, ledger and tools
+  arms.
 
 The hand-written loans fixture is in `fixtures/loans`.
 
