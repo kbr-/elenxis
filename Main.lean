@@ -231,21 +231,35 @@ def synthetic (args : List String) : IO UInt32 := do
         if previous.any (fun (j, b, _) => j == i && b == a) then none else some (k, i, a)
     if !previous.isEmpty then
       IO.println s!"{previous.length} results already in {resultsPath}; {jobs.length} runs left"
-    let batches := (List.range ((jobs.length + width - 1) / width)).map fun j =>
-      (jobs.drop (j * width)).take width
     let out ← IO.FS.Handle.mk resultsPath .append
     let stdout ← IO.getStdout
     let mut totals : List (SpecTools.SyntheticRun.Arm × Nat × Nat × Nat) :=
       previous.map fun (_, a, f, m, fa, _) => (a, f, m, fa)
     let mut blind : List (SpecTools.SyntheticRun.Arm × Nat) :=
       previous.map fun (_, a, _, _, _, b) => (a, b)
-    for batch in batches do
-      let tasks ← batch.mapM fun ((k, i, a) : List Plant × Nat × SpecTools.SyntheticRun.Arm) =>
-        IO.asTask do
-          let r ← SpecTools.SyntheticRun.runArm backend (System.FilePath.mk outDir / s!"v{i}") a
-            root.toString toolModel 1200000
-          return (k, i, a, r)
-      for t in tasks do
+    -- `width` runs at a time, the next starting as soon as one ends, so a slow run holds only its
+    -- own slot. Each run is stopped after 600 s: the slowest measured on Opus took 140 s (a ledger
+    -- run on a 30-rule variant), and an agent stuck on a wait of its own makes no progress.
+    let start (job : List Plant × Nat × SpecTools.SyntheticRun.Arm) := IO.asTask do
+      let (k, i, a) := job
+      let r ← SpecTools.SyntheticRun.runArm backend (System.FilePath.mk outDir / s!"v{i}") a
+        root.toString toolModel 600000
+      return (k, i, a, r)
+    let mut pending := jobs
+    let mut running := #[]
+    while !pending.isEmpty || !running.isEmpty do
+      while running.size < width do
+        match pending with
+        | [] => break
+        | job :: rest => running := running.push (← start job); pending := rest
+      if h : running.toList.length > 0 then
+        let _ ← IO.waitAny running.toList h
+      let mut still := #[]
+      let mut ended := #[]
+      for t in running do
+        if ← IO.hasFinished t then ended := ended.push t else still := still.push t
+      running := still
+      for t in ended do
         let (k, i, a, r) ← IO.ofExcept t.get
         let arm := a.name
         match r with

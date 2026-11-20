@@ -43,7 +43,9 @@ def ledgerTools (check : String) : String :=
   which guards no test notices) first and read their findings, then `{check} gaps` (a model's \
   proposed gaps between the prose and the ledger) and, if you need them, `{check} clauses` (the \
   clauses of loans.md, extracted twice). Check each finding against the files before you report \
-  it. Each command takes up to a few minutes."
+  it. Each command takes up to a few minutes: run it in the foreground with a Bash timeout of \
+  600000 ms and read its output when it returns, never in the background. Write files only in \
+  this directory."
 
 /-- The ledger's workflow with its tools taken out: the prompt-only control, which tells a gain
 the prompt gives from one the tools give. -/
@@ -65,7 +67,8 @@ def toolsIntro (check : String) : String :=
   s!"The spec tools ran on this directory before you started; their reports follow (the audit's \
   verdicts other than proved rows, `tests`' findings, `gaps`' proposals). Check each against the \
   files before you report it, and look past them: a tool can miss a gap and propose a false one. \
-  You may rerun them with `{check} audit|tests|gaps`."
+  You may rerun them with `{check} audit|tests|gaps`, each in the foreground with a Bash timeout \
+  of 600000 ms, never in the background; write files only in this directory."
 
 /-- An arm's prompt; `check` is the spec tools' command, `reports` the tools arm's tool output,
 empty for the others. -/
