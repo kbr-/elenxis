@@ -277,6 +277,13 @@ def remoteCommand (inv : Invocation) : String :=
   let dir := shellQuote inv.cwd.toString
   s!"mkdir -p {dir} && cd {dir} && " ++ " ".intercalate ((inv.cmd :: inv.args.toList).map shellQuote)
 
+/-- A question's command on another host: `remoteCommand`, then its directory and the parents
+`mkdir -p` made removed when empty (a question writes no file there; `rmdir` stops at a directory
+that isn't empty, such as `/tmp`), the command's exit status kept. -/
+def questionCommand (inv : Invocation) : String :=
+  s!"{remoteCommand inv}; s=$?; cd / && rmdir -p --ignore-fail-on-non-empty \
+    {shellQuote inv.cwd.toString} 2>/dev/null; exit $s"
+
 /-- The script an agent run follows on another host: its working directory (a copy it only reads)
 mirrored there by rsync, the harness run in the mirror, the mirror removed, the harness's exit
 status kept. -/
@@ -303,7 +310,7 @@ def onHost (host : String) (inv : Invocation) (readBack : List String) : Except 
       .ok { inv with cmd := "sh", args := #["-c", agentScript host inv] }
     else .error s!"SPEC_TOOLS_HOST={host} mirrors an agent's copy only under /tmp, and this one \
       is in {inv.cwd}"
-  else .ok { inv with cmd := "ssh", args := #["-o", "BatchMode=yes", host, remoteCommand inv] }
+  else .ok { inv with cmd := "ssh", args := #["-o", "BatchMode=yes", host, questionCommand inv] }
 
 /-- The runner that starts real processes. It refuses while the test driver runs, sends a question
 to `SPEC_TOOLS_HOST` when set (`onHost`), writes the invocation's files, waits at most

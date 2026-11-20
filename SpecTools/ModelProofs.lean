@@ -298,7 +298,7 @@ working directory and input unchanged. -/
 theorem onHost_question (host : String) (inv i : Invocation) (readBack : List String)
     (hq : inv.args.contains "--allowedTools" = false)
     (h : onHost host inv readBack = .ok i) :
-    i.cmd = "ssh" ∧ i.args = #["-o", "BatchMode=yes", host, remoteCommand inv] ∧
+    i.cmd = "ssh" ∧ i.args = #["-o", "BatchMode=yes", host, questionCommand inv] ∧
       i.cwd = inv.cwd ∧ i.input = inv.input := by
   unfold onHost at h
   split at h
@@ -313,6 +313,14 @@ example :
       { cmd := "claude", args := #["-p", "--tools", "", "--", "it's"], cwd := "/tmp/q" }
     remoteCommand inv =
     "mkdir -p '/tmp/q' && cd '/tmp/q' && 'claude' '-p' '--tools' '' '--' 'it'\\''s'" := by
+  native_decide
+
+/-- The question's directory removed after, its status kept. -/
+example :
+    let inv : Invocation := { cmd := "claude", args := #["-p"], cwd := "/tmp/t/q" }
+    questionCommand inv =
+    "mkdir -p '/tmp/t/q' && cd '/tmp/t/q' && 'claude' '-p'; s=$?; cd / && rmdir -p \
+    --ignore-fail-on-non-empty '/tmp/t/q' 2>/dev/null; exit $s" := by
   native_decide
 
 /-- Claude Code's question sent to a host runs through ssh; its agent run in a copy under `/tmp`
