@@ -74,6 +74,20 @@ example : expectedRead ⟨0, "perm", ["no_shows"], 3, some "regular"⟩ (some .f
     ⟨"perm", ["no_shows"], some 3, none, .stated⟩ := by native_decide
 example : expectedRead ⟨0, "perm", ["no_shows"], 3, none⟩ none =
     ⟨"perm", ["no_shows"], some 3, none, .stated⟩ := by native_decide
+example : expectedRead ⟨0, "perm", ["no_shows"], 3, some "vip"⟩ (some .twoLimits) =
+    ⟨"perm", ["no_shows"], none, some "vip", .conflicting⟩ := by native_decide
+example : expectedRead ⟨0, "perm", ["no_shows"], 3, none⟩ (some .openBoundary) =
+    ⟨"perm", ["no_shows"], none, none, .loose⟩ := by native_decide
+
+/-- A sum's measures read in either order, and a loose limit's number ignored, are faithful; a
+stated limit's number differing is not. -/
+example :
+    let exp := expected [⟨0, "perm", ["no_shows", "complaints"], 3, none⟩,
+      ⟨1, "colour", ["rebookings"], 5, none⟩] [⟨1, .loose⟩]
+    faithful exp [⟨"colour", ["rebookings"], some 9, none, .loose⟩,
+        ⟨"perm", ["complaints", "no_shows"], some 3, none, .stated⟩] &&
+      !faithful exp [⟨"colour", ["rebookings"], some 9, none, .loose⟩,
+        ⟨"perm", ["complaints", "no_shows"], some 4, none, .stated⟩] := by native_decide
 
 /-- A finding naming a flawed rule's row finds the flaw, whatever its quote, when the flaw's row
 reads back as its rule (which the evaluation below checks for every flaw drawn). -/
