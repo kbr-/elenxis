@@ -30,3 +30,4 @@ import SpecTools.Prose
 import SpecTools.ProseProofs
 import SpecTools.Owners
 import SpecTools.OwnersProofs
+import SpecTools.Power
