@@ -277,15 +277,29 @@ def remoteCommand (inv : Invocation) : String :=
   let dir := shellQuote inv.cwd.toString
   s!"mkdir -p {dir} && cd {dir} && " ++ " ".intercalate ((inv.cmd :: inv.args.toList).map shellQuote)
 
-/-- An invocation run on `host` through ssh (`SPEC_TOOLS_HOST`): a question only, since an agent
-run (`--allowedTools`) acts in a copy the other host lacks, and a call that writes files or reads
-any back would find them on the wrong host. -/
+/-- The script an agent run follows on another host: its working directory (a copy it only reads)
+mirrored there by rsync, the harness run in the mirror, the mirror removed, the harness's exit
+status kept. -/
+def agentScript (host : String) (inv : Invocation) : String :=
+  let dir := inv.cwd.toString
+  let ssh (cmd : String) := s!"ssh -o BatchMode=yes {shellQuote host} {shellQuote cmd}"
+  s!"{ssh s!"mkdir -p {shellQuote dir}"} && rsync -a --delete {shellQuote (dir ++ "/")} \
+    {shellQuote s!"{host}:{dir}/"} && {ssh (remoteCommand inv)}; s=$?; \
+    {ssh s!"rm -rf {shellQuote dir}"}; exit $s"
+
+/-- An invocation run on `host` through ssh (`SPEC_TOOLS_HOST`). A question runs in a directory at
+the same path; an agent run (`--allowedTools`) in a mirror of its copy (`agentScript`), which must
+lie under `/tmp`, since the mirror is removed after. A call that writes files or reads any back
+would find them on the wrong host, so it is refused. -/
 def onHost (host : String) (inv : Invocation) (readBack : List String) : Except String Invocation :=
-  if inv.args.contains "--allowedTools" then
-    .error s!"SPEC_TOOLS_HOST={host} runs questions only, and this is an agent run"
-  else if !inv.files.isEmpty || !readBack.isEmpty then
+  if !inv.files.isEmpty || !readBack.isEmpty then
     .error s!"SPEC_TOOLS_HOST={host} runs calls that answer on standard output only, and this \
       one exchanges files"
+  else if inv.args.contains "--allowedTools" then
+    if inv.cwd.toString.startsWith "/tmp/" then
+      .ok { inv with cmd := "sh", args := #["-c", agentScript host inv] }
+    else .error s!"SPEC_TOOLS_HOST={host} mirrors an agent's copy only under /tmp, and this one \
+      is in {inv.cwd}"
   else .ok { inv with cmd := "ssh", args := #["-o", "BatchMode=yes", host, remoteCommand inv] }
 
 /-- The runner that starts real processes. It refuses while the test driver runs, sends a question

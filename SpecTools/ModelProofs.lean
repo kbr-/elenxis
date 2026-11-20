@@ -266,33 +266,46 @@ example : (match Json.parse "{\"is_error\":true}" with
 example : ∃ ran : Ran, ran.exitCode = 0 ∧ ran.readBack.lookup "answer.json" = none :=
   ⟨⟨0, "", "", [], 0⟩, rfl, rfl⟩
 
-/-- An agent run is never sent to another host. -/
-theorem onHost_refuses_agent (host : String) (inv : Invocation) (readBack : List String)
-    (h : inv.args.contains "--allowedTools" = true) : (onHost host inv readBack).toOption = none := by
+/-- An agent run outside `/tmp` is never sent to another host, since its mirror is removed after. -/
+theorem onHost_refuses_agent_outside_tmp (host : String) (inv : Invocation) (readBack : List String)
+    (h : inv.args.contains "--allowedTools" = true)
+    (ht : inv.cwd.toString.startsWith "/tmp/" = false) :
+    (onHost host inv readBack).toOption = none := by
+  have hm : "--allowedTools" ∈ inv.args := by simpa using h
   unfold onHost
-  rw [if_pos h]
-  rfl
+  split
+  · rfl
+  · simp [hm, ht, Except.toOption]
+
+/-- An agent run under `/tmp` follows `agentScript`. -/
+theorem onHost_agent (host : String) (inv : Invocation) (readBack : List String)
+    (hf : inv.files = []) (hr : readBack = [])
+    (h : inv.args.contains "--allowedTools" = true)
+    (ht : inv.cwd.toString.startsWith "/tmp/" = true) :
+    onHost host inv readBack = .ok { inv with cmd := "sh", args := #["-c", agentScript host inv] } := by
+  have hm : "--allowedTools" ∈ inv.args := by simpa using h
+  simp [onHost, hf, hr, hm, ht]
 
 /-- A call that exchanges files is never sent to another host. -/
 theorem onHost_refuses_files (host : String) (inv : Invocation) (readBack : List String)
     (h : !inv.files.isEmpty || !readBack.isEmpty) : (onHost host inv readBack).toOption = none := by
   unfold onHost
-  split
-  · rfl
-  · rfl
+  rw [if_pos h]
+  rfl
 
 /-- A question sent to another host runs ssh to that host, the whole command its last word, its
 working directory and input unchanged. -/
 theorem onHost_question (host : String) (inv i : Invocation) (readBack : List String)
+    (hq : inv.args.contains "--allowedTools" = false)
     (h : onHost host inv readBack = .ok i) :
     i.cmd = "ssh" ∧ i.args = #["-o", "BatchMode=yes", host, remoteCommand inv] ∧
       i.cwd = inv.cwd ∧ i.input = inv.input := by
   unfold onHost at h
   split at h
   · cases h
-  · split at h
-    · cases h
-    · cases h; exact ⟨rfl, rfl, rfl, rfl⟩
+  · rw [if_neg (by rw [hq]; exact Bool.false_ne_true)] at h
+    cases h
+    exact ⟨rfl, rfl, rfl, rfl⟩
 
 /-- A Claude question sent to build-host: its words quoted, a quote inside one written `'\''`. -/
 example :
@@ -302,13 +315,27 @@ example :
     "mkdir -p '/tmp/q' && cd '/tmp/q' && 'claude' '-p' '--tools' '' '--' 'it'\\''s'" := by
   native_decide
 
-/-- The question invocation Claude Code gets, sent to a host, is accepted; its agent invocation
-is refused. -/
+/-- Claude Code's question sent to a host runs through ssh; its agent run in a copy under `/tmp`
+runs the mirroring script; one in a copy elsewhere is refused. -/
 example :
     let b : Backend := ⟨.claudeCode, "claude-opus-5-5", "Anthropic", some "medium"⟩
     let q : Question := { prompt := "p", schema := Json.mkObj [], timeoutMs := 1 }
-    (onHost "build-host" (callInvocation b q "/tmp/s" .question) []).toOption.isSome &&
-      (onHost "build-host" (callInvocation b q "/tmp/s" (.agent ["Read"])) []).toOption.isNone := by
+    ((onHost "build-host" (callInvocation b q "/tmp/s" .question) []).toOption.map (·.cmd)) ==
+        some "ssh" &&
+      ((onHost "build-host" (callInvocation b q "/tmp/s" (.agent ["Read"])) []).toOption.map (·.cmd)) ==
+        some "sh" &&
+      (onHost "build-host" (callInvocation b q "/home/user" (.agent ["Read"])) []).toOption.isNone := by
+  native_decide
+
+/-- The mirroring script: the copy made on the host, synced, the harness run there, the mirror
+removed, the harness's status kept. -/
+example :
+    let inv : Invocation := { cmd := "claude", args := #["-p"], cwd := "/tmp/c" }
+    agentScript "build-host" inv =
+      "ssh -o BatchMode=yes 'build-host' 'mkdir -p '\\''/tmp/c'\\''' && rsync -a --delete '/tmp/c/' \
+      'build-host:/tmp/c/' && ssh -o BatchMode=yes 'build-host' 'mkdir -p '\\''/tmp/c'\\'' && cd \
+      '\\''/tmp/c'\\'' && '\\''claude'\\'' '\\''-p'\\'''; s=$?; ssh -o BatchMode=yes 'build-host' \
+      'rm -rf '\\''/tmp/c'\\'''; exit $s" := by
   native_decide
 
 end SpecTools.Model
