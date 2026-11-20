@@ -19,8 +19,33 @@ def commands : List (String × String) := [
 /-- The loans fixture's files a variant is made of. -/
 def fixtureFiles : List String := ["loans.md", "Loans.lean", "loans.py", "test_loans.py"]
 
+/-- The domain a command's `vocab=NAME` argument names (the library without one), and the other
+arguments. -/
+def splitVocab (args : List String) : Except String (SpecTools.Generated.Vocab × List String) :=
+  let (named, rest) := args.partition (·.startsWith "vocab=")
+  match named with
+  | [] => .ok (.library, rest)
+  | [a] => match SpecTools.Generated.Vocab.named (a.drop 6).toString with
+    | some v => .ok (v, rest)
+    | none => .error s!"{a}: no such domain; the domains are \
+        {SpecTools.Generated.Vocab.all.map (·.name)}"
+  | _ => .error "give vocab=NAME once"
+
+/-- A batch's domain, from the `vocab` file gvariants writes beside its key (the library when the
+batch predates it). -/
+def batchVocab (outDir : String) : IO SpecTools.Generated.Vocab := do
+  let f := System.FilePath.mk outDir / "vocab"
+  unless ← f.pathExists do return .library
+  let name := (← IO.FS.readFile f).trimAscii.toString
+  match SpecTools.Generated.Vocab.named name with
+  | some v => return v
+  | none => throw (IO.userError s!"{f} names {name}, no domain")
+
 open SpecTools.Synthetic in
 def synthetic (args : List String) : IO UInt32 := do
+  let (vocab, args) ← match splitVocab args with
+    | .ok r => pure r
+    | .error e => IO.eprintln e; return 2
   match args with
   | ["generate", seeds, ns, outDir] =>
     -- The complete generated fixture of N rules from SEED, for each seed and N of the comma-separated
@@ -29,7 +54,7 @@ def synthetic (args : List String) : IO UInt32 := do
     let some ns := (ns.splitOn ",").mapM String.toNat? | IO.eprintln "NS are numbers"; return 2
     for seed in seeds do
       for n in ns do
-        let rs := SpecTools.Generated.rules seed n
+        let rs := SpecTools.Generated.rules seed n vocab
         let dir := System.FilePath.mk outDir / s!"s{seed}-n{n}"
         IO.FS.createDirAll dir
         for (f, text) in SpecTools.Generated.files (rs.map SpecTools.Generated.View.plain) do
@@ -43,7 +68,7 @@ def synthetic (args : List String) : IO UInt32 := do
     -- rule, and the negative control `omitted`, a rule's theorem left out with no row naming one.
     let some seed := seed.toNat? | IO.eprintln "SEED is a number"; return 2
     let some n := n.toNat? | IO.eprintln "N is a number"; return 2
-    let all := SpecTools.Generated.rules seed (n + 1)
+    let all := SpecTools.Generated.rules seed (n + 1) vocab
     let rs := all.take n
     let extra := all.getLastD default
     let plain := rs.map SpecTools.Generated.View.plain
@@ -79,9 +104,10 @@ def synthetic (args : List String) : IO UInt32 := do
     let some n := n.toNat? | IO.eprintln "N is a number"; return 2
     let some count := count.toNat? | IO.eprintln "COUNT is a number"; return 2
     let some empty := empty.toNat? | IO.eprintln "EMPTY is a number"; return 2
-    let all := SpecTools.Generated.rules seed (n + 1)
+    let all := SpecTools.Generated.rules seed (n + 1) vocab
     let rs := all.take n
     IO.FS.createDirAll outDir
+    IO.FS.writeFile (System.FilePath.mk outDir / "vocab") (vocab.name ++ "\n")
     let mut key : List String := []
     for i in List.range count do
       let (vs, ps) := if blindOnly then
@@ -158,12 +184,104 @@ def synthetic (args : List String) : IO UInt32 := do
     IO.println s!"prose: {kept} of {shownOf.length} variants kept, {writings} writings, left out {leftOut}"
     IO.println s!"prose {SpecTools.Usage.line (SpecTools.Usage.total used) (SpecTools.Usage.brief backend)}"
     return if leftOut.isEmpty then 0 else 1
+  | ["owners-write", outDir, seed, form]
+  | ["owners-write", outDir, seed, form, _]
+  | ["owners-write", outDir, seed, form, _, _] =>
+    -- An owner's text for the test in OUT-DIR (SpecTools.Owners): 15 rules of the vocab= domain
+    -- from SEED, their flaws, written as `prose` or a `conversation`, five review rounds, the
+    -- fidelity check; with NOTES-FILE, notes on real first calls for a conversation, and MODEL the
+    -- model. Writes text.md when kept, steps.jsonl (every text and reader's list), writing.json.
+    let some seed := seed.toNat? | IO.eprintln "SEED is a number"; return 2
+    let form ← match form with
+      | "prose" => pure SpecTools.Owners.Form.prose
+      | "conversation" => pure .conversation
+      | _ => IO.eprintln "FORM is prose or conversation"; return 2
+    let notes ← match (args[4]? : Option String) with
+      | some f => IO.FS.readFile (System.FilePath.mk f)
+      | none => pure ""
+    let backend ← match (args[5]? : Option String) with
+      | some model => SpecTools.Model.selectedBackend "configured" model
+      | none => SpecTools.Model.configuredBackend
+    let rs := SpecTools.Generated.rules seed 15 vocab
+    let flaws := SpecTools.Owners.imperfections seed rs
+    let dir := System.FilePath.mk outDir
+    IO.FS.createDirAll dir
+    let scratch := dir / "calls"
+    IO.FS.createDirAll scratch
+    let w ← SpecTools.Owners.writeOwner SpecTools.Model.liveRunner [backend] backend vocab form rs
+      flaws notes scratch 900000
+    IO.FS.writeFile (dir / "brief.txt") w.brief
+    IO.FS.writeFile (dir / "steps.jsonl") ("\n".intercalate (w.steps.map fun s =>
+      (Lean.Json.mkObj [("step", Lean.Json.str s.what), ("text", Lean.Json.str s.text),
+        ("notes", Lean.toJson s.notes)]).compress) ++ "\n")
+    IO.FS.writeFile (dir / "writing.json") (Lean.Json.mkObj [
+      ("vocab", Lean.Json.str vocab.name), ("seed", Lean.toJson seed), ("form", Lean.Json.str form.name),
+      ("kept", Lean.toJson w.text.isSome), ("last_tells", Lean.toJson w.lastTells),
+      ("fidelity_faults", Lean.toJson w.faults),
+      ("flaws", Lean.toJson (flaws.map fun i => s!"r{i.rule}: {i.flaw.name}")),
+      ("usage", SpecTools.Usage.asJson w.usage)]).compress
+    for s in w.steps do IO.println s!"{s.what} ({s.notes.length} notes)"
+    IO.println s!"last review's tells ({w.lastTells.length}):"
+    for t in w.lastTells do IO.println s!"  - {t}"
+    for (fs, k) in w.faults.zipIdx do IO.println s!"fidelity check {k + 1}: {if fs.isEmpty then "faithful" else "; ".intercalate fs}"
+    IO.println s!"owners-write {SpecTools.Usage.line w.usage (SpecTools.Usage.brief backend)}"
+    match w.text with
+    | some t => IO.FS.writeFile (dir / "text.md") t; IO.println s!"kept: {dir}/text.md"; return 0
+    | none => IO.println "not kept"; return 1
+  | ["owners-variants", outDir, seed, count, empty] =>
+    -- The batch of the test in OUT-DIR, after owners-write kept its text: COUNT variants of its
+    -- rules, the first EMPTY with no plant, the others three shared blind spots on unflawed rules,
+    -- each with the owner's text as its prose; the key names the blind spots and every variant's
+    -- flaws by row, so `run` and `gapsrun` score both.
+    let some seed := seed.toNat? | IO.eprintln "SEED is a number"; return 2
+    let some count := count.toNat? | IO.eprintln "COUNT is a number"; return 2
+    let some empty := empty.toNat? | IO.eprintln "EMPTY is a number"; return 2
+    let dir := System.FilePath.mk outDir
+    unless ← (dir / "text.md").pathExists do
+      IO.eprintln s!"{dir}/text.md is missing: run owners-write first"; return 2
+    let text ← IO.FS.readFile (dir / "text.md")
+    let all := SpecTools.Generated.rules seed 16 vocab
+    let rs := all.take 15
+    let flaws := SpecTools.Owners.imperfections seed rs
+    IO.FS.writeFile (dir / "vocab") (vocab.name ++ "\n")
+    let flawPlants := flaws.map fun i =>
+      let p := SpecTools.Owners.flawPlant rs i
+      s!"\{\"kind\": {p.kind.quote}, \"clause\": {p.clause.quote}, \"row\": {(p.row.getD "").quote}}"
+    let mut key : List String := []
+    for i in List.range count do
+      let (vs, ps) := SpecTools.Owners.ownerVariant rs (all.getLastD default) (flaws.map (·.rule))
+        seed i empty
+      let vdir := dir / s!"v{i}"
+      IO.FS.createDirAll vdir
+      for (f, t) in SpecTools.Generated.files vs do IO.FS.writeFile (vdir / f) t
+      IO.FS.writeFile (vdir / "loans.template.md") (← IO.FS.readFile (vdir / "loans.md"))
+      IO.FS.writeFile (vdir / "loans.md") text
+      let plants := ps.map fun p =>
+        let row := match p.touches.head? with
+          | some id => s!", \"row\": {(SpecTools.Generated.rowId ⟨id, "", [], 0, none⟩).quote}"
+          | none => ""
+        s!"\{\"kind\": {p.kind.quote}, \"clause\": {p.clause.quote}{row}}"
+      key := key ++ [s!"\{\"variant\": {i}, \"plants\": [{", ".intercalate (plants ++ flawPlants)}]}"]
+    IO.FS.writeFile (dir / "key.jsonl") ("\n".intercalate key ++ "\n")
+    IO.println s!"{count} variants of {rs.length} rules ({flaws.length} flawed) in {dir}, the key in {dir}/key.jsonl"
+    return 0
+  | ["owners-table", outDir] =>
+    -- The five rows of the test in OUT-DIR from its saved results (Owners.table).
+    let dir := System.FilePath.mk outDir
+    let lines (f : String) : IO (List Lean.Json) := do
+      if ← (dir / f).pathExists then
+        return ((← IO.FS.readFile (dir / f)).splitOn "\n").filter (· ≠ "") |>.filterMap
+          fun l => (Lean.Json.parse l).toOption
+      else return []
+    IO.println (SpecTools.Owners.table (← lines "results-gaps.jsonl")
+      (← lines "results-baseline.jsonl") (← lines "results-ledger.jsonl") (← lines "results-tools.jsonl"))
+    return 0
   | ["gapsrun", seed, n, outDir, model] =>
     -- `gaps` itself on each variant of a batch written by gvariants SEED N, three at a time, scored
     -- by row against the key (Generated.rowScore); the full output of each goes to vI/gaps.txt.
     let some seed := seed.toNat? | IO.eprintln "SEED is a number"; return 2
     let some n := n.toNat? | IO.eprintln "N is a number"; return 2
-    let rs := SpecTools.Generated.rules seed n
+    let rs := SpecTools.Generated.rules seed n (← batchVocab outDir)
     let keyText ← IO.FS.readFile (System.FilePath.mk outDir / "key.jsonl")
     let keys : List (List String) := (keyText.splitOn "\n").filter (· ≠ "") |>.filterMap fun l => do
       let j ← (Lean.Json.parse l).toOption
@@ -182,6 +300,13 @@ def synthetic (args : List String) : IO UInt32 := do
     let shownAll := SpecTools.SyntheticRun.keyPresentations keyText
     let plantsAll := SpecTools.SyntheticRun.keyPlants keyText
     let mut byPres : List (String × Nat × Nat × Nat) := []
+    -- A key whose every plant names its row (gvariants since rows, owners-variants) is scored by
+    -- `Score.score` with each row `gaps` names as a finding, as the agents' arms are, so shared blind
+    -- spots, an owner's flaws and false alarms count apart; each variant's line goes to
+    -- results-gaps.jsonl. An older key is scored by `rowScore` as before.
+    let byRow := !plantsAll.isEmpty && plantsAll.all (·.all (·.row.isSome))
+    let resultsOut ← IO.FS.Handle.mk (System.FilePath.mk outDir / "results-gaps.jsonl") .write
+    let mut split : List (Bool × Nat × Nat × Nat × Nat × Nat) := []
     for batch in batches do
       let tasks ← batch.mapM fun ((k, i) : List String × Nat) => IO.asTask do
         let dir := System.FilePath.mk outDir / s!"v{i}"
@@ -208,6 +333,22 @@ def synthetic (args : List String) : IO UInt32 := do
         if out.exitCode != 0 || summary.isEmpty then
           failed := failed + 1
           IO.println s!"v{i}: failed (exit {out.exitCode}); see v{i}/gaps.txt"
+          resultsOut.putStrLn s!"\{\"variant\": {i}, \"arm\": \"gaps\", \"error\": \"exit {out.exitCode}\", \"usage\": {(SpecTools.Usage.asJson u).compress}}"
+        else if byRow then
+          let key := plantsAll.getD i []
+          let s := SpecTools.Score.score key (rows.map fun r => { clause := "", kind := "", row := some r })
+          let blindPlanted := (key.filter (·.kind == "shared blind spot")).length
+          let blindFound := (s.found.filter (· == "shared blind spot")).length
+          let flawsFound := (s.found.filter SpecTools.Owners.isFlawKind).length
+          let flawsPlanted := (key.filter (SpecTools.Owners.isFlawKind ·.kind)).length
+          found := found + s.found.length
+          planted := planted + key.length
+          alarms := alarms + s.falseAlarms
+          split := split ++ [(blindPlanted == 0, blindPlanted, blindFound, flawsPlanted, flawsFound,
+            s.falseAlarms)]
+          IO.println s!"v{i}: blind spots {blindFound} of {blindPlanted}, imperfections {flawsFound} of {flawsPlanted}, false alarms {s.falseAlarms}; rows {rows}"
+          resultsOut.putStrLn s!"\{\"variant\": {i}, \"arm\": \"gaps\", \"found\": {s.found.length}, \"missed\": {s.missed.length}, \"false_alarms\": {s.falseAlarms}, \"ms\": {u.millis}, \"usage\": {(SpecTools.Usage.asJson u).compress}, \"found_kinds\": {(s.found.map (·.quote)).toString}, \"missed_kinds\": {(s.missed.map (·.quote)).toString}, \"rows\": {(rows.map (·.quote)).toString}}"
+          resultsOut.flush
         else
           let (f, a) := SpecTools.Generated.rowScore rs k rows
           found := found + f
@@ -221,6 +362,10 @@ def synthetic (args : List String) : IO UInt32 := do
             byPres := byPres ++ bp
             IO.println s!"v{i} by presentation (planted, found, false alarms): {bp}"
     IO.println s!"gaps: {keys.length - failed} variants scored, found {found} of {planted}, false alarms {alarms}, {failed} failed"
+    for (empty, label) in [(false, "variants with blind spots"), (true, "variants with none")] do
+      let rs := split.filter (·.1 == empty)
+      unless rs.isEmpty do
+        IO.println s!"gaps on {label} ({rs.length}): blind spots {(rs.map (·.2.2.1)).sum} of {(rs.map (·.2.1)).sum}, imperfections {(rs.map (·.2.2.2.2.1)).sum} of {(rs.map (·.2.2.2.1)).sum}, false alarms {(rs.map (·.2.2.2.2.2)).sum}"
     for n in (byPres.map (·.1)).eraseDups do
       let rs := byPres.filter (·.1 == n)
       IO.println s!"gaps {n}: planted {(rs.map (·.2.1)).sum}, found {(rs.map (·.2.2.1)).sum}, false alarms {(rs.map (·.2.2.2)).sum}"

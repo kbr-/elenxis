@@ -28,3 +28,5 @@ import SpecTools.Generated
 import SpecTools.GeneratedProofs
 import SpecTools.Prose
 import SpecTools.ProseProofs
+import SpecTools.Owners
+import SpecTools.OwnersProofs

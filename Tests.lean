@@ -436,6 +436,70 @@ def testProse : IO Unit := do
     s!"a failed writer call didn't count as a failed writing: {afterFailure.discarded}"
   IO.println "PASS: person prose (kept, rewritten, left out, failed call)"
 
+/-- The owners' loop with a scripted runner (Path step 14.4 and 14.5): five review rounds each
+followed by a revision, a round whose review finds nothing among them, then one more review and
+the fidelity check; one clear rule read wrong, or a flaw read as stated, sends the text back; four
+failed checks start again, and two failed starts leave no text. -/
+def testOwners : IO Unit := do
+  let v := SpecTools.Generated.Vocab.salon
+  let rules : List SpecTools.Generated.Rule := [⟨0, "perm", ["no_shows"], 3, some "regular"⟩,
+    ⟨1, "colour", ["complaints"], 5, none⟩]
+  let flaws : List SpecTools.Owners.Imperfection := [⟨0, .loose⟩]
+  let read (kind : String) (m : String) (bound : Nat) (mark exempt : String) :=
+    Lean.Json.mkObj [("kind", Lean.Json.str kind), ("measures", Lean.Json.arr #[Lean.Json.str m]),
+      ("bound", Lean.toJson bound), ("mark", Lean.Json.str mark), ("exempt", Lean.Json.str exempt)]
+  let reads (rs : List Lean.Json) := (Lean.Json.mkObj [("rules", Lean.Json.arr rs.toArray)]).compress
+  let exact := reads [read "perm" "no_shows" 4 "loose" "regular", read "colour" "complaints" 5 "stated" "none"]
+  let ruleWrong := reads [read "perm" "no_shows" 4 "loose" "regular", read "colour" "complaints" 6 "stated" "none"]
+  let flawStated := reads [read "perm" "no_shows" 3 "stated" "regular", read "colour" "complaints" 5 "stated" "none"]
+  let doc := (Lean.Json.mkObj [("document", Lean.Json.str "We do hair.")]).compress
+  let tells (n : Nat) := (Lean.Json.mkObj [("tells", Lean.toJson ((List.range n).map fun k =>
+    s!"tell {k}"))]).compress
+  let backend : Backend := ⟨.codex, "test-model", "test", none⟩
+  let run (readings : List String) : IO (SpecTools.Owners.Writing × Nat × List String) := do
+    let r ← IO.mkRef readings
+    let reviews ← IO.mkRef (0 : Nat)
+    let calls ← IO.mkRef (0 : Nat)
+    let reviewerPrompts ← IO.mkRef ([] : List String)
+    let runner : Runner := fun invocation _ _ => do
+      calls.modify (· + 1)
+      let prompt := invocation.input.getD ""
+      let has (t : String) := (prompt.splitOn t).length > 1
+      let reply ← if has "# Text to judge" then do
+          reviewerPrompts.modify (· ++ [prompt])
+          -- The third review of each start finds nothing.
+          let n ← reviews.modifyGet fun n => (n, n + 1)
+          pure (some (tells (if n % 6 == 2 then 0 else 2)))
+        else if has "# Text\n" then r.modifyGet fun l => (l.head?, l.tail)
+        else pure (some doc)
+      return reply.map fun a =>
+        { exitCode := 0, stdout := "", stderr := "", readBack := [("answer.json", a)], millis := 1 }
+    let dir ← IO.FS.createTempDir
+    let w ← SpecTools.Owners.writeOwner runner [backend] backend v .prose rules flaws "" dir 10000
+    IO.FS.removeDirAll dir
+    return (w, ← calls.get, ← reviewerPrompts.get)
+  let (kept, calls, rprompts) ← run [exact, exact]
+  ensure (kept.text == some "We do hair." && calls == 14 && kept.steps.length == 6 &&
+    (kept.steps.filter (·.notes.isEmpty)).length == 2 && kept.faults == [[]] &&
+    kept.lastTells.length == 2 && kept.usage.calls == 14)
+    s!"five rounds and a faithful reading didn't keep the text: {calls} calls, {kept.steps.length} steps"
+  ensure (rprompts.length == 6 && rprompts.all fun p =>
+      (p.splitOn "no shows").length == 1 && (p.splitOn "# What you want").length == 1)
+    "a reviewer's prompt holds the rules"
+  let (sentBack, calls, _) ← run [ruleWrong, exact, exact, exact]
+  ensure (sentBack.text.isSome && sentBack.faults.length == 2 && sentBack.steps.length == 7 &&
+    calls == 17) s!"a clear rule read wrong didn't send the text back: {sentBack.faults}"
+  let (flawBack, _, _) ← run [flawStated, exact, exact, exact]
+  let firstFault := (flawBack.faults.headD []).headD ""
+  ensure (flawBack.text.isSome && flawBack.faults.length == 2 &&
+    (firstFault.splitOn "(stated)").length > 1)
+    s!"a flaw read as stated didn't send the text back: {flawBack.faults}"
+  let (failed, calls, _) ← run (List.replicate 16 ruleWrong)
+  ensure (failed.text.isNone && failed.faults.length == 8 && calls == 46 &&
+    (failed.steps.filter fun s => s.what.startsWith "start 2").length > 0)
+    s!"four failed checks didn't start again, or two failed starts kept a text: {calls} calls"
+  IO.println "PASS: owners (five rounds, kept, sent back for a rule and for a flaw, started again, failed)"
+
 /-- Run `act` as a task, printing its wall time when it ends, so a slow group is named. -/
 def timed (name : String) (act : IO Unit) : IO (Task (Except IO.Error Unit)) := IO.asTask do
   let start ← IO.monoMsNow
@@ -447,6 +511,7 @@ def main : IO Unit := do
   -- processes' environments its own), so they run at once; the live runner's prohibition below is
   -- the one global, set after all of them end.
   let groups ← [("command adapter", testCommandAdapter), ("usage", testUsage), ("prose", testProse),
+      ("owners", testOwners),
       ("requirement audits", testRequirementAudits), ("finished process", testFinishedProcess),
       ("overrun", testOverrun), ("full codex prompt", testFullCodexPrompt),
       ("draft review", testDraftReview), ("approved contracts", testApprovedContracts),

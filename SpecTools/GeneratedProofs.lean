@@ -15,24 +15,25 @@ private theorem not_mem_of_contains_false {l : List (String × String)} {p : Str
   simp_all
 
 /-- A sum's second measure differs from the first and is new for the kind. -/
-theorem secondMeasure_spec (used : List (String × String)) (kind m m2 : String)
-    (h : secondMeasure used kind m = some m2) : m2 ≠ m ∧ used.contains (kind, m2) = false := by
+theorem secondMeasure_spec (v : Vocab) (used : List (String × String)) (kind m m2 : String)
+    (h : secondMeasure v used kind m = some m2) : m2 ≠ m ∧ used.contains (kind, m2) = false := by
   have hm := List.mem_of_mem_head? h
   simp only [List.mem_filter, Bool.and_eq_true, bne_iff_ne, ne_eq, Bool.not_eq_true'] at hm
   exact hm.2
 
 /-- A rule made on a new pair reads distinct pairs, none already used. -/
-theorem makeRule_pairs (s i : Nat) (used : List (String × String)) (kind m : String)
+theorem makeRule_pairs (v : Vocab) (s i : Nat) (used : List (String × String)) (kind m : String)
     (hm : used.contains (kind, m) = false) :
-    (makeRule s i used kind m).pairs.Nodup ∧ ∀ p ∈ (makeRule s i used kind m).pairs, p ∉ used := by
-  have hs : ∀ m2, (if i % 7 == 6 then secondMeasure used kind m else none) = some m2 →
+    (makeRule v s i used kind m).pairs.Nodup ∧
+      ∀ p ∈ (makeRule v s i used kind m).pairs, p ∉ used := by
+  have hs : ∀ m2, (if i % 7 == 6 then secondMeasure v used kind m else none) = some m2 →
       m2 ≠ m ∧ used.contains (kind, m2) = false := by
     intro m2 h
     split at h
-    · exact secondMeasure_spec used kind m m2 h
+    · exact secondMeasure_spec v used kind m m2 h
     · simp at h
   simp only [makeRule, Rule.pairs]
-  generalize (if i % 7 == 6 then secondMeasure used kind m else none) = second at hs ⊢
+  generalize (if i % 7 == 6 then secondMeasure v used kind m else none) = second at hs ⊢
   cases second with
   | none =>
     refine ⟨by simp [List.nodup_cons], ?_⟩
@@ -64,9 +65,9 @@ private theorem join (a b used : List (String × String)) (ha : a.Nodup) (hau : 
     · exact fun hu => hbu p h (List.mem_append_left _ hu)
 
 /-- The invariant of `rules.go`: the pairs of what it returns are distinct and none is in `used`. -/
-theorem go_pairs (s i k : Nat) (used : List (String × String)) (order : List Nat) :
-    ((rules.go s i k used order).flatMap Rule.pairs).Nodup ∧
-      ∀ p ∈ (rules.go s i k used order).flatMap Rule.pairs, p ∉ used := by
+theorem go_pairs (v : Vocab) (s i k : Nat) (used : List (String × String)) (order : List Nat) :
+    ((rules.go v s i k used order).flatMap Rule.pairs).Nodup ∧
+      ∀ p ∈ (rules.go v s i k used order).flatMap Rule.pairs, p ∉ used := by
   induction order generalizing s i k used with
   | nil => simp [rules.go]
   | cons j rest ih =>
@@ -74,14 +75,15 @@ theorem go_pairs (s i k : Nat) (used : List (String × String)) (order : List Na
     by_cases hk : k = 0
     · simp [hk]
     · simp only [hk, ite_false]
-      by_cases hc : used.contains pairsAll[j]! = true
+      by_cases hc : used.contains (pairsAll v)[j]! = true
       · simp only [hc, ite_true]
         exact ih _ _ _ _
       · simp only [hc]
-        have hc' : used.contains (pairsAll[j]!.1, pairsAll[j]!.2) = false := by simpa using hc
-        obtain ⟨hn, hu⟩ := makeRule_pairs s i used _ _ hc'
+        have hc' : used.contains ((pairsAll v)[j]!.1, (pairsAll v)[j]!.2) = false := by
+          simpa using hc
+        obtain ⟨hn, hu⟩ := makeRule_pairs v s i used _ _ hc'
         obtain ⟨ihn, ihu⟩ := ih (Synthetic.next (Synthetic.next (Synthetic.next s))) (i + 1) (k - 1)
-          (used ++ (makeRule s i used pairsAll[j]!.1 pairsAll[j]!.2).pairs)
+          (used ++ (makeRule v s i used (pairsAll v)[j]!.1 (pairsAll v)[j]!.2).pairs)
         exact join _ _ used hn hu ihn ihu
 
 /-- The invariant of `drawPlants`: no drawn plant touches a rule in `touched`, and no two drawn
@@ -139,9 +141,13 @@ example : rowScore [{ id := 3, kind := "pay", measures := ["fines"], bound := 9,
     ["The limit on the fines for a pay request doesn't apply to a staff member."]
     ["r3-exempt", "r3", "r5", "loans"] = (1, 2) := by native_decide
 
-/-- No two rules of a generated requirement read the same (kind, measure) pair. -/
-theorem rules_pairs_nodup (seed n : Nat) : ((rules seed n).flatMap Rule.pairs).Nodup :=
-  (go_pairs _ _ _ _ _).1
+/-- No two rules of a generated requirement read the same (kind, measure) pair, in any domain. -/
+theorem rules_pairs_nodup (seed n : Nat) (v : Vocab := .library) :
+    ((rules seed n v).flatMap Rule.pairs).Nodup :=
+  (go_pairs _ _ _ _ _ _).1
+
+/-- Each owner's domain gives its 15 rules at the owners' tests' seed. -/
+example : Vocab.all.all fun v => (rules 20261120 15 v).length == 15 := by native_decide
 
 /-- A rule's presentation is one of those offered. -/
 theorem presentationOf_mem {offered : List Presentation} (h : offered ≠ []) (seed index id : Nat) :

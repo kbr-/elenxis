@@ -24,6 +24,47 @@ def measures : List String := ["loans", "fines", "holds", "renewals", "days_late
 def flags : List String := ["premium", "staff", "verified", "student", "senior", "partner",
   "trusted", "urgent"]
 
+/-- A domain's words: its request kinds, the counts a rule reads (each one where more is worse),
+and the customer statuses an exception names. -/
+structure Vocab where
+  name : String
+  kinds : List String
+  measures : List String
+  flags : List String
+  deriving Repr, Inhabited
+
+/-- The library's words, the generator's first domain. -/
+def Vocab.library : Vocab :=
+  ⟨"library", Generated.kinds, Generated.measures, Generated.flags⟩
+
+/-- A hair salon's bookings. -/
+def Vocab.salon : Vocab := ⟨"salon",
+  ["booking", "rebooking", "colour", "highlights", "perm", "bridal", "home visit", "kids cut",
+    "gift card", "evening slot"],
+  ["no_shows", "late_cancellations", "unpaid_visits", "open_bookings", "missed_patch_tests",
+    "complaints", "rebookings", "deposits_owed"],
+  ["regular", "staff", "vip", "family"]⟩
+
+/-- A tailor's alteration orders. -/
+def Vocab.tailor : Vocab := ⟨"tailor",
+  ["hemming", "taking in", "letting out", "zip repair", "suit alteration", "wedding dress",
+    "rush job", "collection", "delivery", "remake"],
+  ["open_orders", "uncollected_items", "unpaid_orders", "days_overdue", "garments", "rush_jobs",
+    "fittings", "remakes"],
+  ["regular", "trade", "staff", "wedding"]⟩
+
+/-- A home bakery's cake orders. -/
+def Vocab.bakery : Vocab := ⟨"bakery",
+  ["birthday cake", "wedding cake", "cupcakes", "custom cake", "delivery", "same day order",
+    "tasting", "large order", "cookie box", "rush order"],
+  ["orders_this_week", "late_pickups", "unpaid_deposits", "cancelled_orders", "tiers", "dozens",
+    "allergy_changes", "complaints"],
+  ["regular", "wholesale", "staff", "charity"]⟩
+
+def Vocab.all : List Vocab := [.library, .salon, .tailor, .bakery]
+
+def Vocab.named (name : String) : Option Vocab := Vocab.all.find? (·.name == name)
+
 structure Rule where
   id : Nat
   kind : String
@@ -36,35 +77,36 @@ structure Rule where
 def Rule.pairs (r : Rule) : List (String × String) := r.measures.map fun m => (r.kind, m)
 
 /-- A sum's second measure: the next measure of the kind not yet used and not the first, if any. -/
-def secondMeasure (used : List (String × String)) (kind m : String) : Option String :=
-  (measures.filter fun m2 => m2 != m && !used.contains (kind, m2)).head?
+def secondMeasure (v : Vocab) (used : List (String × String)) (kind m : String) : Option String :=
+  (v.measures.filter fun m2 => m2 != m && !used.contains (kind, m2)).head?
 
 /-- Rule `i` on the pair `(kind, m)` from state `s`; every seventh a sum of two measures. -/
-def makeRule (s i : Nat) (used : List (String × String)) (kind m : String) : Rule :=
+def makeRule (v : Vocab) (s i : Nat) (used : List (String × String)) (kind m : String) : Rule :=
   let s1 := next s
   let s2 := next s1
   let s3 := next s2
-  let second := if i % 7 == 6 then secondMeasure used kind m else none
+  let second := if i % 7 == 6 then secondMeasure v used kind m else none
   let ms := match second with | some m2 => [m, m2] | none => [m]
-  let flag := if draw s2 2 == 0 then some flags[draw s3 flags.length]! else none
+  let flag := if draw s2 2 == 0 then some v.flags[draw s3 v.flags.length]! else none
   { id := i, kind, measures := ms, bound := 2 + draw s1 29, flag }
 
-def pairsAll : List (String × String) := kinds.flatMap fun k => measures.map fun m => (k, m)
+def pairsAll (v : Vocab) : List (String × String) :=
+  v.kinds.flatMap fun k => v.measures.map fun m => (k, m)
 
-/-- `n` rules from `seed`: a (kind, measure) pair each, never reused; every seventh a sum of two
-measures, about half with a flag, bounds from 2 to 30. -/
-def rules (seed n : Nat) : List Rule :=
-  go seed 0 n [] (pick seed pairsAll.length pairsAll.length)
+/-- `n` rules from `seed` over a domain's words: a (kind, measure) pair each, never reused; every
+seventh a sum of two measures, about half with a flag, bounds from 2 to 30. -/
+def rules (seed n : Nat) (v : Vocab := .library) : List Rule :=
+  go v seed 0 n [] (pick seed (pairsAll v).length (pairsAll v).length)
 where
   /-- Structural on the remaining order: each pair is taken or skipped once. -/
-  go (s i k : Nat) (used : List (String × String)) : List Nat → List Rule
+  go (v : Vocab) (s i k : Nat) (used : List (String × String)) : List Nat → List Rule
     | [] => []
     | j :: rest =>
       if k = 0 then [] else
-      let pr := pairsAll[j]!
-      if used.contains pr then go s i k used rest else
-      let rule := makeRule s i used pr.1 pr.2
-      rule :: go (next (next (next s))) (i + 1) (k - 1) (used ++ rule.pairs) rest
+      let pr := (pairsAll v)[j]!
+      if used.contains pr then go v s i k used rest else
+      let rule := makeRule v s i used pr.1 pr.2
+      rule :: go v (next (next (next s))) (i + 1) (k - 1) (used ++ rule.pairs) rest
 
 /-- How each artifact renders one rule: the prose, the Lean model, the Python and the tests may
 each hold a different version, and the ledger's rows may be changed. A plant edits a view. -/
