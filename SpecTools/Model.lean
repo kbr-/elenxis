@@ -282,10 +282,13 @@ mirrored there by rsync, the harness run in the mirror, the mirror removed, the 
 status kept. -/
 def agentScript (host : String) (inv : Invocation) : String :=
   let dir := inv.cwd.toString
+  -- The parents `mkdir -p` made are removed too when left empty; rmdir stops at one that isn't.
+  let parent := (inv.cwd.parent.getD "/tmp").toString
   let ssh (cmd : String) := s!"ssh -o BatchMode=yes {shellQuote host} {shellQuote cmd}"
   s!"{ssh s!"mkdir -p {shellQuote dir}"} && rsync -a --delete {shellQuote (dir ++ "/")} \
     {shellQuote s!"{host}:{dir}/"} && {ssh (remoteCommand inv)}; s=$?; \
-    {ssh s!"rm -rf {shellQuote dir}"}; exit $s"
+    {ssh s!"rm -rf {shellQuote dir}; rmdir -p --ignore-fail-on-non-empty {shellQuote parent}"}; \
+    exit $s"
 
 /-- An invocation run on `host` through ssh (`SPEC_TOOLS_HOST`). A question runs in a directory at
 the same path; an agent run (`--allowedTools`) in a mirror of its copy (`agentScript`), which must

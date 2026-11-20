@@ -328,14 +328,14 @@ example :
   native_decide
 
 /-- The mirroring script: the copy made on the host, synced, the harness run there, the mirror
-removed, the harness's status kept. -/
+removed with the parents left empty, the harness's status kept. -/
 example :
-    let inv : Invocation := { cmd := "claude", args := #["-p"], cwd := "/tmp/c" }
+    let inv : Invocation := { cmd := "claude", args := #["-p"], cwd := "/tmp/t/c" }
     agentScript "build-host" inv =
-      "ssh -o BatchMode=yes 'build-host' 'mkdir -p '\\''/tmp/c'\\''' && rsync -a --delete '/tmp/c/' \
-      'build-host:/tmp/c/' && ssh -o BatchMode=yes 'build-host' 'mkdir -p '\\''/tmp/c'\\'' && cd \
-      '\\''/tmp/c'\\'' && '\\''claude'\\'' '\\''-p'\\'''; s=$?; ssh -o BatchMode=yes 'build-host' \
-      'rm -rf '\\''/tmp/c'\\'''; exit $s" := by
+      "ssh -o BatchMode=yes 'build-host' 'mkdir -p '\\''/tmp/t/c'\\''' && rsync -a --delete '/tmp/t/c/' \
+      'build-host:/tmp/t/c/' && ssh -o BatchMode=yes 'build-host' 'mkdir -p '\\''/tmp/t/c'\\'' && cd \
+      '\\''/tmp/t/c'\\'' && '\\''claude'\\'' '\\''-p'\\'''; s=$?; ssh -o BatchMode=yes 'build-host' \
+      'rm -rf '\\''/tmp/t/c'\\''; rmdir -p --ignore-fail-on-non-empty '\\''/tmp/t'\\'''; exit $s" := by
   native_decide
 
 end SpecTools.Model
