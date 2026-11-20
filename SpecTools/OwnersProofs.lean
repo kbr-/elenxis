@@ -56,15 +56,31 @@ theorem faithful_iff (exp got : List Read) :
   unfold faithful
   exact List.isPerm_iff
 
-/-- At each owner's seed every flaw kind falls on two rules, and a forgotten exception on a rule
+/-- The owners' domains with their tests' seeds. -/
+def ownerSeeds : List (Vocab × Nat) :=
+  [(Vocab.salon, 20261120), (Vocab.tailor, 20261121), (Vocab.bakery, 20261122)]
+
+/-- At each owner's seed every flaw kind falls on one rule, and a forgotten exception on a rule
 with an exception. -/
-example : [(Vocab.salon, 20261120), (Vocab.tailor, 20261121), (Vocab.bakery, 20261122)].all
-    fun (v, seed) =>
-      let rs := rules seed 15 v
+example : ownerSeeds.all fun (v, seed) =>
+      let rs := ownerRules seed 10 v
       let fl := imperfections seed rs
-      Flaw.all.all (fun f => (fl.filter (·.flaw == f)).length == 2) &&
+      Flaw.all.all (fun f => (fl.filter (·.flaw == f)).length == 1) &&
         fl.all fun i => i.flaw != .forgotten ||
           (rs.find? (·.id == i.rule)).any (·.flag.isSome) := by native_decide
+
+/-- Each catalogue's (kind, measure) pairs are distinct, and its words are its domain's; at each
+domain's seed the 10 drawn rules come from distinct entries (their pairs distinct), each limit in its
+entry's range and each exemption one of its statuses. -/
+example : ownerSeeds.all fun (v, seed) =>
+      let cat := v.catalogue
+      let pairs := cat.flatMap fun e => e.measures.map (e.kind, ·)
+      let rs := ownerRules seed 10 v
+      pairs.Nodup && cat.all (fun e => v.kinds.contains e.kind && e.lo ≤ e.hi &&
+          e.measures.all v.measures.contains && e.flags.all v.flags.contains) &&
+        rs.length == 10 && (rs.flatMap Rule.pairs).Nodup &&
+        rs.all fun r => cat.any fun e => e.kind == r.kind && e.measures == r.measures &&
+          e.lo ≤ r.bound && r.bound ≤ e.hi && r.flag.all e.flags.contains := by native_decide
 
 /-- A loose limit reads with no number and the loose mark; a forgotten exception with no
 exemption; an unflawed rule as stated. -/
@@ -108,8 +124,8 @@ theorem other_row_alarm (key : List Synthetic.Plant) (f : Score.Finding)
 
 /-- Every flaw drawn at the owners' seeds has a row that reads back as its rule, both kinds of row
 (`rK`, `rK-exempt`) among them. -/
-example : [(Vocab.salon, 20261120), (Vocab.tailor, 20261121), (Vocab.bakery, 20261122)].all
-    fun (v, seed) => (imperfections seed (rules seed 15 v)).all
+example : ownerSeeds.all
+    fun (v, seed) => (imperfections seed (ownerRules seed 10 v)).all
       fun i => rowRule (flawRow i) == some i.rule := by native_decide
 
 /-- On a hand key, a finding on the flaw's row finds the flaw, one on the blind spot's row finds
@@ -131,7 +147,7 @@ private def has (s t : String) : Bool := (s.splitOn t).length > 1
 (no row, theorem or Lean name); the reviewer's holds no rule. -/
 example :
     let v := Vocab.salon
-    let rs := rules 20261120 15 v
+    let rs := ownerRules 20261120 10 v
     let fl := imperfections 20261120 rs
     let w := writerPrompt v .prose rs fl ""
     let c := writerPrompt v .conversation rs fl ""

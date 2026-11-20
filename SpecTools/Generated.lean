@@ -33,6 +33,16 @@ structure Vocab where
   flags : List String
   deriving Repr, Inhabited
 
+/-- A plausible rule of an owner's domain: the request it turns away, the count or counts it reads,
+a realistic range for its limit, and the customer statuses that could plausibly be exempt. -/
+structure Entry where
+  kind : String
+  measures : List String
+  lo : Nat
+  hi : Nat
+  flags : List String
+  deriving Repr, Inhabited
+
 /-- The library's words, the generator's first domain. -/
 def Vocab.library : Vocab :=
   ⟨"library", Generated.kinds, Generated.measures, Generated.flags⟩
@@ -62,6 +72,64 @@ def Vocab.bakery : Vocab := ⟨"bakery",
   ["regular", "wholesale", "staff", "charity"]⟩
 
 def Vocab.all : List Vocab := [.library, .salon, .tailor, .bakery]
+
+/-- The rules an owner of the domain could plausibly have: limits a small business sets, on counts
+it keeps (the library's generator draws its own, and has none here). -/
+def Vocab.catalogue (v : Vocab) : List Entry :=
+  match v.name with
+  | "salon" => [
+      ⟨"booking", ["no_shows"], 2, 4, ["regular", "family"]⟩,
+      ⟨"booking", ["unpaid_visits"], 1, 3, ["family"]⟩,
+      ⟨"booking", ["open_bookings"], 3, 6, ["staff", "vip"]⟩,
+      ⟨"colour", ["missed_patch_tests"], 1, 1, []⟩,
+      ⟨"colour", ["complaints"], 2, 4, ["regular"]⟩,
+      ⟨"highlights", ["missed_patch_tests"], 1, 1, []⟩,
+      ⟨"highlights", ["open_bookings"], 2, 3, ["vip"]⟩,
+      ⟨"perm", ["complaints"], 2, 3, ["vip"]⟩,
+      ⟨"bridal", ["deposits_owed"], 1, 2, ["family"]⟩,
+      ⟨"home visit", ["unpaid_visits"], 1, 2, ["regular"]⟩,
+      ⟨"home visit", ["late_cancellations"], 1, 3, []⟩,
+      ⟨"kids cut", ["no_shows"], 2, 3, ["family"]⟩,
+      ⟨"evening slot", ["late_cancellations"], 2, 4, ["regular"]⟩,
+      ⟨"evening slot", ["no_shows"], 1, 2, ["staff"]⟩,
+      ⟨"rebooking", ["rebookings"], 3, 5, ["regular"]⟩,
+      ⟨"gift card", ["deposits_owed"], 1, 3, ["staff"]⟩,
+      ⟨"rebooking", ["no_shows", "late_cancellations"], 3, 5, ["regular"]⟩]
+  | "tailor" => [
+      ⟨"rush job", ["open_orders"], 3, 6, ["regular", "trade"]⟩,
+      ⟨"rush job", ["rush_jobs"], 2, 4, ["trade"]⟩,
+      ⟨"suit alteration", ["unpaid_orders"], 1, 2, ["regular"]⟩,
+      ⟨"suit alteration", ["open_orders"], 2, 4, ["trade"]⟩,
+      ⟨"wedding dress", ["fittings"], 3, 5, ["regular"]⟩,
+      ⟨"wedding dress", ["unpaid_orders"], 1, 1, []⟩,
+      ⟨"delivery", ["unpaid_orders"], 1, 3, ["trade"]⟩,
+      ⟨"delivery", ["days_overdue"], 7, 21, ["trade"]⟩,
+      ⟨"collection", ["uncollected_items"], 3, 6, ["trade"]⟩,
+      ⟨"hemming", ["uncollected_items"], 4, 8, ["regular"]⟩,
+      ⟨"remake", ["remakes"], 2, 3, ["regular"]⟩,
+      ⟨"remake", ["days_overdue"], 10, 30, []⟩,
+      ⟨"taking in", ["garments"], 5, 10, ["trade"]⟩,
+      ⟨"letting out", ["garments"], 4, 8, ["trade"]⟩,
+      ⟨"zip repair", ["days_overdue"], 14, 30, ["regular"]⟩,
+      ⟨"letting out", ["unpaid_orders", "uncollected_items"], 4, 8, ["trade"]⟩]
+  | "bakery" => [
+      ⟨"same day order", ["orders_this_week"], 6, 12, ["regular"]⟩,
+      ⟨"same day order", ["allergy_changes"], 1, 2, []⟩,
+      ⟨"rush order", ["orders_this_week"], 8, 15, ["wholesale"]⟩,
+      ⟨"wedding cake", ["tiers"], 4, 6, []⟩,
+      ⟨"wedding cake", ["unpaid_deposits"], 1, 1, ["charity"]⟩,
+      ⟨"custom cake", ["unpaid_deposits"], 1, 2, ["regular"]⟩,
+      ⟨"custom cake", ["allergy_changes"], 2, 4, []⟩,
+      ⟨"birthday cake", ["late_pickups"], 2, 4, ["regular"]⟩,
+      ⟨"birthday cake", ["complaints"], 2, 3, ["staff"]⟩,
+      ⟨"cookie box", ["dozens"], 6, 12, ["wholesale"]⟩,
+      ⟨"cupcakes", ["dozens"], 8, 15, ["wholesale"]⟩,
+      ⟨"delivery", ["dozens"], 4, 10, ["wholesale"]⟩,
+      ⟨"delivery", ["cancelled_orders"], 2, 4, ["regular"]⟩,
+      ⟨"tasting", ["cancelled_orders"], 2, 3, ["charity"]⟩,
+      ⟨"tasting", ["unpaid_deposits"], 1, 2, ["regular"]⟩,
+      ⟨"large order", ["orders_this_week"], 10, 20, ["wholesale"]⟩]
+  | _ => []
 
 def Vocab.named (name : String) : Option Vocab := Vocab.all.find? (·.name == name)
 
@@ -107,6 +175,21 @@ where
       if used.contains pr then go v s i k used rest else
       let rule := makeRule v s i used pr.1 pr.2
       rule :: go v (next (next (next s))) (i + 1) (k - 1) (used ++ rule.pairs) rest
+
+/-- `n` rules of an owner's domain from `seed`: distinct catalogue entries in a drawn order, rule
+`i` taking the `i`-th, its limit drawn in the entry's range and, half the time, an exemption from its
+statuses. -/
+def ownerRules (seed n : Nat) (v : Vocab) : List Rule :=
+  let cat := v.catalogue
+  (pick seed cat.length n).zipIdx.map fun (j, i) =>
+    let e := cat.getD j default
+    let s1 := next (seed + (i + 1) * 104729)
+    let s2 := next s1
+    let s3 := next s2
+    let flag := if e.flags.isEmpty || draw s2 2 == 1 then none
+      else some (e.flags.getD (draw s3 e.flags.length) "")
+    { id := i, kind := e.kind, measures := e.measures, bound := e.lo + draw s1 (e.hi - e.lo + 1),
+      flag }
 
 /-- How each artifact renders one rule: the prose, the Lean model, the Python and the tests may
 each hold a different version, and the ledger's rows may be changed. A plant edits a view. -/

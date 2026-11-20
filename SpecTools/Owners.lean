@@ -54,9 +54,9 @@ def drawFlaws (rs : List Rule) : Nat → List Flaw → List Nat → List Imperfe
       let r := (q :: qs)[draw s (qs.length + 1)]'(Nat.mod_lt _ (Nat.succ_pos _))
       ⟨r.id, f⟩ :: drawFlaws rs (next s) fs (taken ++ [r.id])
 
-/-- A test's flaws: two of each kind, on distinct rules, drawn from the seed. -/
+/-- A test's flaws: one of each kind, on distinct rules, drawn from the seed. -/
 def imperfections (seed : Nat) (rs : List Rule) : List Imperfection :=
-  drawFlaws rs (next (seed + 104723)) (Flaw.all.flatMap fun f => [f, f]) []
+  drawFlaws rs (next (seed + 104723)) Flaw.all []
 
 /-- Variant `index` of an owners' batch: the first `empty` plant nothing, the others three shared
 blind spots, each on a rule no flaw took, applied to the plain views of every rule. The flaws live
