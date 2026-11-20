@@ -197,7 +197,7 @@ def synthetic (args : List String) : IO UInt32 := do
       | "conversation" => pure .conversation
       | _ => IO.eprintln "FORM is prose or conversation"; return 2
     let notes ← match (args[4]? : Option String) with
-      | some f => IO.FS.readFile (System.FilePath.mk f)
+      | some f => if f.isEmpty then pure "" else IO.FS.readFile (System.FilePath.mk f)
       | none => pure ""
     let backend ← match (args[5]? : Option String) with
       | some model => SpecTools.Model.selectedBackend "configured" model
