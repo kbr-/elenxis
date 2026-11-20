@@ -150,7 +150,12 @@ def writerPrompt (v : Vocab) (form : Form) (rs : List Rule) (flaws : List Imperf
         person really writes: your own order, your own words for things, wandering into how the \
         shop works, things you want that matter more to you than these rules, some repetition, \
         the odd slip. No headings with numbers, no bullet list of rules, no software or maths \
-        words (never \"threshold\", \"parameter\", \"validation\", \"edge case\")."
+        words (never \"threshold\", \"parameter\", \"validation\", \"edge case\"). Say numbers \
+        the way you would say them (mostly in words, \"three\", \"a couple\"), not as digits. \
+        Don't give every rule its own paragraph or its own little story: some come up in passing, \
+        some through one customer you are annoyed with, some together; your detail is uneven, a \
+        lot about what you care about and little about the rest. Say once, not for every rule, \
+        that the phone still works for people the website turns away."
     | .conversation => "Write, in English, the transcript of a first call between you and a \
         developer you might hire. You know nothing about how software is made. The developer \
         asks questions and proposes concrete numbers and behaviours; you answer as you really \
@@ -177,13 +182,16 @@ def reviewerPrompt (v : Vocab) (form : Form) (text : String) : String :=
     software or mathematical word, precision a busy owner wouldn't have, a voice too even or \
     too polished, turns too long or too tidy, a developer who doesn't ask or propose, anything \
     that reads like a model wrote it. Quote the passage behind each tell. Give them as `tells`, \
-    an empty list if you find none.\n\n# Text to judge\n\n{text}"
+    an empty list if you find none. Then judge the whole: could a real person like this have \
+    written it, as it stands? Give `could_be_real` true only if you would believe it came from \
+    them.\n\n# Text to judge\n\n{text}"
 
 def tellsSchema : Json :=
   Json.mkObj [("type", "object"),
     ("properties", Json.mkObj [("tells", Json.mkObj [("type", "array"),
-      ("items", Json.mkObj [("type", "string")])])]),
-    ("required", Json.arr #["tells"]), ("additionalProperties", false)]
+      ("items", Json.mkObj [("type", "string")])]),
+      ("could_be_real", Json.mkObj [("type", "boolean")])]),
+    ("required", Json.arr #["tells", "could_be_real"]), ("additionalProperties", false)]
 
 /-- The revision's prompt: the writer's brief, its draft, and what to fix. -/
 def revisionPrompt (brief draft : String) (fixes : List String) : String :=
@@ -311,6 +319,8 @@ structure Writing where
   text : Option String
   steps : List Step
   lastTells : List String
+  /-- The last review's verdict on the kept text: could a person of the persona have written it. -/
+  lastVerdict : Option Bool
   faults : List (List String)
   brief : String
   usage : Usage.Usage
@@ -323,17 +333,19 @@ def documentOf (r : Except Failure Outcome) : Except String String :=
     | some d => .ok d
     | none => .error "no document"
 
-def tellsOf (r : Except Failure Outcome) : Except String (List String) :=
+/-- A review's tells and its verdict, whether a person of the persona could have written the text. -/
+def tellsOf (r : Except Failure Outcome) : Except String (List String × Bool) :=
   match r with
   | .error f => .error f.describe
-  | .ok o => match (o.answer.getObjValAs? (Array String) "tells").toOption with
-    | some ts => .ok ts.toList
-    | none => .error "no tells"
+  | .ok o => match (o.answer.getObjValAs? (Array String) "tells").toOption,
+      (o.answer.getObjValAs? Bool "could_be_real").toOption with
+    | some ts, some real => .ok (ts.toList, real)
+    | _, _ => .error "no tells or no verdict"
 
-/-- Write the test's text, put it through `reviewRounds` rounds of review and revision, review it
-once more for the record, then check it with two blind extractions, revising for their
-differences up to `fidelityRounds` times; failing, start again, up to `maxStarts` starts. A failed
-call fails the start it is in. -/
+/-- Write the test's text, put it through `reviewRounds` rounds of review and revision, then check
+it with two blind extractions, revising for their differences up to `fidelityRounds` times, and
+review the text so kept once more, for the record, the verdict and tells the result reports;
+failing, start again, up to `maxStarts` starts. A failed call fails the start it is in. -/
 def writeOwner (runner : Runner) (allowed : List Backend) (backend : Backend) (v : Vocab)
     (form : Form) (rs : List Rule) (flaws : List Imperfection) (notes : String)
     (scratch : System.FilePath) (timeoutMs : Nat) : IO Writing := do
@@ -351,6 +363,7 @@ def writeOwner (runner : Runner) (allowed : List Backend) (backend : Backend) (v
   let mut steps : List Step := []
   let mut faultLog : List (List String) := []
   let mut lastTells : List String := []
+  let mut lastVerdict : Option Bool := none
   for start in List.range maxStarts do
     let label := s!"start {start + 1}"
     let first ← ask "owner-writer" brief Prose.documentSchema
@@ -365,7 +378,7 @@ def writeOwner (runner : Runner) (allowed : List Backend) (backend : Backend) (v
         steps := steps ++ [⟨s!"{label}: review {round + 1} failed", text, [e]⟩]
         broken := true
         break
-      | .ok tells =>
+      | .ok (tells, _) =>
         let revised ← ask "owner-writer" (revisionPrompt brief text tells) Prose.documentSchema
         match documentOf revised with
         | .error e =>
@@ -376,9 +389,6 @@ def writeOwner (runner : Runner) (allowed : List Backend) (backend : Backend) (v
           text := d
           steps := steps ++ [⟨s!"{label}: revised after review {round + 1}", d, tells⟩]
     if broken then continue
-    match tellsOf (← ask "owner-reviewer" (reviewerPrompt v form text) tellsSchema) with
-    | .error e => steps := steps ++ [⟨s!"{label}: last review failed", text, [e]⟩]; continue
-    | .ok tells => lastTells := tells
     for check in List.range (fidelityRounds + 1) do
       let t1 ← IO.asTask (ask "owner-reader" (readPrompt text) (readSchema v))
       let t2 ← IO.asTask (ask "owner-reader" (readPrompt text) (readSchema v))
@@ -395,7 +405,11 @@ def writeOwner (runner : Runner) (allowed : List Backend) (backend : Backend) (v
                 and reads [{"; ".intercalate (adds.map (·.describe))}]"]
       faultLog := faultLog ++ [faults]
       if faults.isEmpty then
-        return { text := some text, steps, lastTells, faults := faultLog, brief, usage := ← used.get }
+        match tellsOf (← ask "owner-reviewer" (reviewerPrompt v form text) tellsSchema) with
+        | .error e => steps := steps ++ [⟨s!"{label}: last review failed", text, [e]⟩]; break
+        | .ok (tells, real) =>
+          return { text := some text, steps, lastTells := tells, lastVerdict := some real,
+                   faults := faultLog, brief, usage := ← used.get }
       if check == fidelityRounds then break
       let fixes := faults.map fun f => s!"a reader of your text got this wrong: {f}"
       match documentOf (← ask "owner-writer" (revisionPrompt brief text fixes) Prose.documentSchema) with
@@ -403,7 +417,8 @@ def writeOwner (runner : Runner) (allowed : List Backend) (backend : Backend) (v
       | .ok d =>
         text := d
         steps := steps ++ [⟨s!"{label}: revised after fidelity check {check + 1}", d, faults⟩]
-  return { text := none, steps, lastTells, faults := faultLog, brief, usage := ← used.get }
+  return { text := none, steps, lastTells, lastVerdict, faults := faultLog, brief,
+           usage := ← used.get }
 
 /-! The table: the five rows the user asked for, from the saved results. -/
 

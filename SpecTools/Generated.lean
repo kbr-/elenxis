@@ -83,7 +83,7 @@ def Vocab.catalogue (v : Vocab) : List Entry :=
       ⟨"booking", ["open_bookings"], 3, 6, ["staff", "vip"]⟩,
       ⟨"colour", ["missed_patch_tests"], 1, 1, []⟩,
       ⟨"colour", ["complaints"], 2, 4, ["regular"]⟩,
-      ⟨"highlights", ["missed_patch_tests"], 1, 1, []⟩,
+      ⟨"bridal", ["no_shows"], 1, 2, ["family"]⟩,
       ⟨"highlights", ["open_bookings"], 2, 3, ["vip"]⟩,
       ⟨"perm", ["complaints"], 2, 3, ["vip"]⟩,
       ⟨"bridal", ["deposits_owed"], 1, 2, ["family"]⟩,
@@ -93,8 +93,7 @@ def Vocab.catalogue (v : Vocab) : List Entry :=
       ⟨"evening slot", ["late_cancellations"], 2, 4, ["regular"]⟩,
       ⟨"evening slot", ["no_shows"], 1, 2, ["staff"]⟩,
       ⟨"rebooking", ["rebookings"], 3, 5, ["regular"]⟩,
-      ⟨"gift card", ["deposits_owed"], 1, 3, ["staff"]⟩,
-      ⟨"rebooking", ["no_shows", "late_cancellations"], 3, 5, ["regular"]⟩]
+      ⟨"booking", ["late_cancellations"], 2, 4, ["regular"]⟩]
   | "tailor" => [
       ⟨"rush job", ["open_orders"], 3, 6, ["regular", "trade"]⟩,
       ⟨"rush job", ["rush_jobs"], 2, 4, ["trade"]⟩,
@@ -111,7 +110,7 @@ def Vocab.catalogue (v : Vocab) : List Entry :=
       ⟨"taking in", ["garments"], 5, 10, ["trade"]⟩,
       ⟨"letting out", ["garments"], 4, 8, ["trade"]⟩,
       ⟨"zip repair", ["days_overdue"], 14, 30, ["regular"]⟩,
-      ⟨"letting out", ["unpaid_orders", "uncollected_items"], 4, 8, ["trade"]⟩]
+      ⟨"hemming", ["unpaid_orders"], 2, 3, ["regular"]⟩]
   | "bakery" => [
       ⟨"same day order", ["orders_this_week"], 6, 12, ["regular"]⟩,
       ⟨"same day order", ["allergy_changes"], 1, 2, []⟩,
