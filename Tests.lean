@@ -456,7 +456,7 @@ def testOwners : IO Unit := do
   let tells (n : Nat) := (Lean.Json.mkObj [("tells", Lean.toJson ((List.range n).map fun k =>
     s!"tell {k}")), ("could_be_real", Lean.toJson (n == 2))]).compress
   let backend : Backend := ⟨.codex, "test-model", "test", none⟩
-  let run (readings : List String) (judges : List String := [])
+  let run (readings : List String) (judges : List String := []) (rounds : Nat := 3)
       : IO (SpecTools.Owners.Writing × Nat × List String) := do
     let r ← IO.mkRef readings
     let js ← IO.mkRef judges
@@ -488,6 +488,7 @@ def testOwners : IO Unit := do
         { exitCode := 0, stdout := "", stderr := "", readBack := [("answer.json", a)], millis := 1 }
     let dir ← IO.FS.createTempDir
     let w ← SpecTools.Owners.writeOwner runner [backend] backend v .prose rules flaws "" dir 10000
+      (judgeRounds := rounds)
     IO.FS.removeDirAll dir
     return (w, ← calls.get, ← reviewerPrompts.get)
   let (kept, calls, rprompts) ← run [exact, exact]
@@ -520,7 +521,11 @@ def testOwners : IO Unit := do
   ensure ((judgeAtBar.steps.filter fun s => (s.what.splitOn "revised after judge").length > 1).isEmpty)
     "a score at the bar brought a revision"
   ensure ((judgeCapped.steps.filter fun s => (s.what.splitOn "revised after judge").length > 1).length ==
-    SpecTools.Owners.judgeRounds) "the judge's revisions didn't stop at judgeRounds"
+    3) "the judge's revisions didn't stop at the rounds given"
+  let (noRounds, calls, _) ← run [exact, exact] ["50", "50"] SpecTools.Owners.judgeRounds
+  ensure (SpecTools.Owners.judgeRounds == 0 && calls == 19 &&
+    (noRounds.steps.filter fun s => (s.what.splitOn "revised after judge").length > 1).isEmpty)
+    s!"the default revised against the development judge: {calls} calls"
   let (sentBack, calls, _) ← run [ruleWrong, exact, exact, exact]
   ensure (sentBack.text.isSome && sentBack.faults.length == 2 && sentBack.steps.length == 7 &&
     calls == 23) s!"a clear rule read wrong didn't send the text back: {sentBack.faults}"

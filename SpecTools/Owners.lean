@@ -407,8 +407,10 @@ def judgeReasonsOf (r : Except Failure Outcome) : List String :=
   | .error _ => []
   | .ok o => ((o.answer.getObjValAs? (Array String) "reasons").toOption.getD #[]).toList
 
-/-- How many times the writer revises against the development judge's reasons. -/
-def judgeRounds : Nat := 3
+/-- How many times the writer revises against the development judge's reasons: none, since on the
+ninth writing the salon's text scored 76.3 by the second judge as first written, 86.0 after the
+review rounds and 71 after three such revisions (the task's theory). -/
+def judgeRounds : Nat := 0
 
 /-- The development judge's prompt, the loop's to learn from: the bar's question (a probability)
 in other words than the second judge's, which the loop never sees. -/
@@ -527,7 +529,8 @@ review the text so kept once more, for the record, the verdict and tells the res
 failing, start again, up to `maxStarts` starts. A failed call fails the start it is in. -/
 def writeOwner (runner : Runner) (allowed : List Backend) (backend : Backend) (v : Vocab)
     (form : Form) (rs : List Rule) (flaws : List Imperfection) (notes : String)
-    (scratch : System.FilePath) (timeoutMs : Nat) : IO Writing := do
+    (scratch : System.FilePath) (timeoutMs : Nat) (judgeRounds : Nat := judgeRounds) :
+    IO Writing := do
   let brief := writerPrompt v form rs flaws notes
   let exp := expected rs flaws
   let used ← IO.mkRef ({} : Usage.Usage)
