@@ -54,9 +54,7 @@ def synthetic (args : List String) : IO UInt32 := do
     let some ns := (ns.splitOn ",").mapM String.toNat? | IO.eprintln "NS are numbers"; return 2
     for seed in seeds do
       for n in ns do
-        -- An owner's domain draws from its catalogue of plausible rules, the library its own.
-        let rs := if vocab.catalogue.isEmpty then SpecTools.Generated.rules seed n vocab
-          else SpecTools.Generated.ownerRules seed n vocab
+        let rs := SpecTools.Generated.rulesOf seed n vocab
         let dir := System.FilePath.mk outDir / s!"s{seed}-n{n}"
         IO.FS.createDirAll dir
         for (f, text) in SpecTools.Generated.files (rs.map SpecTools.Generated.View.plain) do
@@ -189,7 +187,7 @@ def synthetic (args : List String) : IO UInt32 := do
   | ["owners-write", outDir, seed, form]
   | ["owners-write", outDir, seed, form, _]
   | ["owners-write", outDir, seed, form, _, _] =>
-    -- An owner's text for the test in OUT-DIR (SpecTools.Owners): 10 rules of the vocab= domain
+    -- An owner's text for the test in OUT-DIR (SpecTools.Owners): `ruleCount` rules of the vocab= domain
     -- from SEED, their flaws, written as `prose` or a `conversation`, five review rounds, the
     -- fidelity check; with NOTES-FILE, notes on real first calls for a conversation, and MODEL the
     -- model. Writes text.md when kept, steps.jsonl (every text and reader's list), writing.json.
@@ -204,7 +202,7 @@ def synthetic (args : List String) : IO UInt32 := do
     let backend ← match (args[5]? : Option String) with
       | some model => SpecTools.Model.selectedBackend "configured" model
       | none => SpecTools.Model.configuredBackend
-    let rs := SpecTools.Generated.ownerRules seed 10 vocab
+    let rs := SpecTools.Generated.ownerRules seed SpecTools.Owners.ruleCount vocab
     let flaws := SpecTools.Owners.imperfections seed rs
     let dir := System.FilePath.mk outDir
     IO.FS.createDirAll dir
@@ -243,8 +241,8 @@ def synthetic (args : List String) : IO UInt32 := do
     unless ← (dir / "text.md").pathExists do
       IO.eprintln s!"{dir}/text.md is missing: run owners-write first"; return 2
     let text ← IO.FS.readFile (dir / "text.md")
-    let all := SpecTools.Generated.ownerRules seed 11 vocab
-    let rs := all.take 10
+    let all := SpecTools.Generated.ownerRules seed (SpecTools.Owners.ruleCount + 1) vocab
+    let rs := all.take SpecTools.Owners.ruleCount
     let flaws := SpecTools.Owners.imperfections seed rs
     IO.FS.writeFile (dir / "vocab") (vocab.name ++ "\n")
     let flawPlants := flaws.map fun i =>
@@ -284,7 +282,7 @@ def synthetic (args : List String) : IO UInt32 := do
     -- by row against the key (Generated.rowScore); the full output of each goes to vI/gaps.txt.
     let some seed := seed.toNat? | IO.eprintln "SEED is a number"; return 2
     let some n := n.toNat? | IO.eprintln "N is a number"; return 2
-    let rs := SpecTools.Generated.rules seed n (← batchVocab outDir)
+    let rs := SpecTools.Generated.rulesOf seed n (← batchVocab outDir)
     let keyText ← IO.FS.readFile (System.FilePath.mk outDir / "key.jsonl")
     let keys : List (List String) := (keyText.splitOn "\n").filter (· ≠ "") |>.filterMap fun l => do
       let j ← (Lean.Json.parse l).toOption

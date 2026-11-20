@@ -44,11 +44,65 @@ theorem imperfections_distinct (seed : Nat) (rs : List Rule) :
     ((imperfections seed rs).map (·.rule)).Nodup :=
   (drawFlaws_rules _ _ _ _).1
 
+/-- A plant the owners' draw takes at a step touches no rule already touched. -/
+theorem drawOwnerPlants_step (rs : List Rule) (extra : Rule) (touched : List Nat)
+    (open_ : List (List GPlant))
+    (hopen : ∀ ps ∈ open_, ∃ shape, ps = freePlants rs extra shape touched) (i j : Nat)
+    (p : GPlant) (hp : (open_.getD i [])[j]? = some p) : ∀ x ∈ p.touches, x ∉ touched := by
+  have hmem : p ∈ open_.getD i [] := List.mem_of_getElem? hp
+  rw [List.getD_eq_getElem?_getD] at hmem
+  cases hi : open_[i]? with
+  | none => simp [hi] at hmem
+  | some ps =>
+    simp only [hi, Option.getD_some] at hmem
+    obtain ⟨shape, rfl⟩ := hopen ps (List.mem_of_getElem? hi)
+    have := (List.mem_filter.mp hmem).2
+    intro x hx hxt
+    have hx' := List.all_eq_true.mp this x hx
+    simp at hx'
+    exact hx' hxt
+
+/-- The owners' draw touches no rule of `touched`, and no two of its plants share a rule. -/
+theorem drawOwnerPlants_disjoint (rs : List Rule) (extra : Rule) (s k : Nat)
+    (touched : List Nat) :
+    (∀ p ∈ drawOwnerPlants rs extra s k touched, ∀ x ∈ p.touches, x ∉ touched) ∧
+      (drawOwnerPlants rs extra s k touched).Pairwise
+        (fun p q => ∀ x ∈ p.touches, x ∉ q.touches) := by
+  induction k generalizing s touched with
+  | zero => simp [drawOwnerPlants]
+  | succ k ih =>
+    unfold drawOwnerPlants
+    dsimp only
+    split
+    · simp
+    · rename_i p hp
+      have hpt := drawOwnerPlants_step rs extra touched _ (by
+        intro ps hps
+        obtain ⟨hps, -⟩ := List.mem_filter.mp hps
+        obtain ⟨shape, -, rfl⟩ := List.mem_map.mp hps
+        exact ⟨shape, rfl⟩) _ _ p hp
+      obtain ⟨ih1, ih2⟩ := ih (Synthetic.next (Synthetic.next s)) (touched ++ p.touches)
+      refine ⟨?_, ?_⟩
+      · intro p' hp' x hx hxt
+        rcases List.mem_cons.mp hp' with rfl | h
+        · exact hpt x hx hxt
+        · exact ih1 p' h x hx (List.mem_append_left _ hxt)
+      · refine List.Pairwise.cons ?_ ih2
+        intro p' hp' x hx hxp'
+        exact ih1 p' hp' x hxp' (List.mem_append_right _ hx)
+
 /-- No shared blind spot of an owners' variant touches a flawed rule. -/
 theorem ownerVariant_avoids_flaws (rs : List Rule) (extra : Rule) (flawed : List Nat)
     (seed index empty : Nat) :
     ∀ p ∈ (ownerVariant rs extra flawed seed index empty).2, ∀ x ∈ p.touches, x ∉ flawed :=
-  (drawPlants_disjoint _ _ _ _ _ _).1
+  (drawOwnerPlants_disjoint _ _ _ _ _).1
+
+/-- No two shared blind spots of an owners' variant touch one rule. -/
+theorem ownerVariant_plants_disjoint (rs : List Rule) (extra : Rule) (flawed : List Nat)
+    (seed index empty : Nat) :
+    (ownerVariant rs extra flawed seed index empty).2.Pairwise
+      (fun p q => ∀ x ∈ p.touches, x ∉ q.touches) :=
+  (drawOwnerPlants_disjoint _ _ _ _ _).2
 
 /-- The fidelity check is a permutation of the normalized reads. -/
 theorem faithful_iff (exp got : List Read) :
@@ -63,24 +117,38 @@ def ownerSeeds : List (Vocab × Nat) :=
 /-- At each owner's seed every flaw kind falls on one rule, and a forgotten exception on a rule
 with an exception. -/
 example : ownerSeeds.all fun (v, seed) =>
-      let rs := ownerRules seed 10 v
+      let rs := ownerRules seed ruleCount v
       let fl := imperfections seed rs
       Flaw.all.all (fun f => (fl.filter (·.flaw == f)).length == 1) &&
         fl.all fun i => i.flaw != .forgotten ||
           (rs.find? (·.id == i.rule)).any (·.flag.isSome) := by native_decide
 
 /-- Each catalogue's (kind, measure) pairs are distinct, and its words are its domain's; at each
-domain's seed the 10 drawn rules come from distinct entries (their pairs distinct), each limit in its
-entry's range and each exemption one of its statuses. -/
+domain's seed the drawn rules come from distinct entries (their pairs distinct), each limit a
+natural number in its entry's range, and a rule with two limits given a natural second number;
+each exemption is one of its entry's statuses. -/
 example : ownerSeeds.all fun (v, seed) =>
       let cat := v.catalogue
       let pairs := cat.flatMap fun e => e.measures.map (e.kind, ·)
-      let rs := ownerRules seed 10 v
+      let rs := ownerRules seed ruleCount v
       pairs.Nodup && cat.all (fun e => v.kinds.contains e.kind && e.lo ≤ e.hi &&
           e.measures.all v.measures.contains && e.flags.all v.flags.contains) &&
-        rs.length == 10 && (rs.flatMap Rule.pairs).Nodup &&
+        rs.length == ruleCount && (rs.flatMap Rule.pairs).Nodup &&
+        rs.all (fun r => natural r.bound && natural (secondLimit r.bound) &&
+          secondLimit r.bound ≥ r.bound + 2) &&
         rs.all fun r => cat.any fun e => e.kind == r.kind && e.measures == r.measures &&
           e.lo ≤ r.bound && r.bound ≤ e.hi && r.flag.all e.flags.contains := by native_decide
+
+/-- At each owner's seed, every variant of its batch past the empty ones gets its three shared
+blind spots, none on a flawed rule, the batch's extra rule drawn as `owners-variants` draws it. -/
+example : ownerSeeds.all fun (v, seed) =>
+      let all := ownerRules seed (ruleCount + 1) v
+      let rs := all.take ruleCount
+      let flawed := (imperfections seed rs).map (·.rule)
+      (List.range 12).all fun i =>
+        let ps := (ownerVariant rs (all.getLastD default) flawed seed i 2).2
+        ps.length == (if i < 2 then 0 else 3) &&
+          ps.all fun p => p.touches.all (!flawed.contains ·) := by native_decide
 
 /-- A loose limit reads with no number and the loose mark; a forgotten exception with no
 exemption; an unflawed rule as stated. -/
@@ -125,7 +193,7 @@ theorem other_row_alarm (key : List Synthetic.Plant) (f : Score.Finding)
 /-- Every flaw drawn at the owners' seeds has a row that reads back as its rule, both kinds of row
 (`rK`, `rK-exempt`) among them. -/
 example : ownerSeeds.all
-    fun (v, seed) => (imperfections seed (ownerRules seed 10 v)).all
+    fun (v, seed) => (imperfections seed (ownerRules seed ruleCount v)).all
       fun i => rowRule (flawRow i) == some i.rule := by native_decide
 
 /-- On a hand key, a finding on the flaw's row finds the flaw, one on the blind spot's row finds
@@ -147,7 +215,7 @@ private def has (s t : String) : Bool := (s.splitOn t).length > 1
 (no row, theorem or Lean name); the reviewer's holds no rule. -/
 example :
     let v := Vocab.salon
-    let rs := ownerRules 20261120 10 v
+    let rs := ownerRules 20261120 ruleCount v
     let fl := imperfections 20261120 rs
     let w := writerPrompt v .prose rs fl ""
     let c := writerPrompt v .conversation rs fl ""

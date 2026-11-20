@@ -54,9 +54,37 @@ def drawFlaws (rs : List Rule) : Nat → List Flaw → List Nat → List Imperfe
       let r := (q :: qs)[draw s (qs.length + 1)]'(Nat.mod_lt _ (Nat.succ_pos _))
       ⟨r.id, f⟩ :: drawFlaws rs (next s) fs (taken ++ [r.id])
 
-/-- A test's flaws: one of each kind, on distinct rules, drawn from the seed. -/
+/-- How many rules an owner's test has: one per flaw kind, and four stated clearly for the shared
+blind spots, few enough for an owner to tell. -/
+def ruleCount : Nat := 8
+
+/-- A test's flaws: one of each kind, on distinct rules, drawn from the seed; the forgotten
+exception first, since only a rule with an exception can take it. -/
 def imperfections (seed : Nat) (rs : List Rule) : List Imperfection :=
-  drawFlaws rs (next (seed + 104723)) Flaw.all []
+  drawFlaws rs (next (seed + 104723)) [.forgotten, .loose, .twoLimits, .openBoundary] []
+
+/-- The shapes of an owners' test's shared blind spots: the library's, and a limit every artifact
+moves, which any rule allows, so that rules without exceptions can carry one. -/
+def ownerShapes : List String := blindShapes ++ ["limit moved"]
+
+/-- The plants of `shape` on the rules `rs` touching no rule of `touched`. -/
+def freePlants (rs : List Rule) (extra : Rule) (shape : String) (touched : List Nat) :
+    List GPlant :=
+  (candidates rs extra shape).filter fun p => p.touches.all (!touched.contains ·)
+
+/-- `count` blind spots on the rules `rs`, none touching `touched`: each step draws among the
+shapes that still have a candidate, so a variant gets all of them while any shape can. -/
+def drawOwnerPlants (rs : List Rule) (extra : Rule) : Nat → Nat → List Nat → List GPlant
+  | _, 0, _ => []
+  | s, k + 1, touched =>
+    let s1 := next s
+    let s2 := next s1
+    let open_ := (ownerShapes.map fun shape => freePlants rs extra shape touched).filter
+      (!·.isEmpty)
+    let ps := open_.getD (draw s1 open_.length) []
+    match ps[draw s2 ps.length]? with
+    | none => []
+    | some p => p :: drawOwnerPlants rs extra s2 k (touched ++ p.touches)
 
 /-- Variant `index` of an owners' batch: the first `empty` plant nothing, the others three shared
 blind spots, each on a rule no flaw took, applied to the plain views of every rule. The flaws live
@@ -65,7 +93,7 @@ def ownerVariant (rs : List Rule) (extra : Rule) (flawed : List Nat) (seed index
     List View × List GPlant :=
   let s := next (seed + index * 7919)
   let count := if index < empty then 0 else 3
-  let plants := drawPlants (rs.filter (!flawed.contains ·.id)) extra blindShapes s count flawed
+  let plants := drawOwnerPlants (rs.filter (!flawed.contains ·.id)) extra s count flawed
   (plants.foldl (fun vs p => p.apply vs) (rs.map View.plain), plants)
 
 /-- The key's row for a flaw: the exception's row for a forgotten exception, the rule's otherwise. -/
@@ -108,16 +136,23 @@ def persona (v : Vocab) : String :=
   | _ => "You run a small business and want a website where customers make requests, refusing \
       some of them the way you would."
 
+/-- The other number a rule with two limits is given: the first natural number at least two above
+its limit, as an owner would misremember it. -/
+def secondLimit (b : Nat) : Nat :=
+  ((List.range 40).map (b + 2 + ·)).find? Generated.natural |>.getD (b + 2)
+
 /-- The owner's lines about one rule, with the flaw to commit on it, if any. -/
 def flawInstruction (r : Rule) : Option Flaw → String
   | none => "say this one clearly, with its exact number"
   | some .loose => s!"you don't remember the exact number: say it roughly (\"about\", \"a dozen \
       or so\", \"a few\"), never the exact number {r.bound}"
   | some .twoLimits => s!"mention this limit in two different places and give a different number \
-      each time, {r.bound} once and {r.bound + 2 + r.bound / 4} the other time, without noticing"
+      each time, {r.bound} once and {secondLimit r.bound} the other time; you don't notice, so \
+      never remark on it"
   | some .forgotten => "you forget its exception entirely: never mention who is exempt"
   | some .openBoundary => s!"give the number {r.bound}, but word it so it stays unclear whether \
-      exactly {r.bound} is already refused or only more than {r.bound}"
+      exactly {r.bound} is already refused or only more than {r.bound}; you don't see the \
+      question yourself, so never point it out or ask about it"
 
 /-- A rule in plain words, as the owner's notes give it to the writer. -/
 def ownerRuleText (r : Rule) : String :=

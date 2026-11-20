@@ -175,9 +175,20 @@ where
       let rule := makeRule v s i used pr.1 pr.2
       rule :: go v (next (next (next s))) (i + 1) (k - 1) (used ++ rule.pairs) rest
 
+/-- A number an owner keeps in their head: a small count, a round one, a dozen, or whole weeks of
+days. -/
+def natural (n : Nat) : Bool :=
+  n ≤ 10 || n % 5 == 0 || [12, 14, 21, 28].contains n
+
+/-- The natural numbers from `lo` to `hi`, or `lo` alone when there is none. -/
+def naturalIn (lo hi : Nat) : List Nat :=
+  match ((List.range (hi + 1 - lo)).map (lo + ·)).filter natural with
+  | [] => [lo]
+  | ns => ns
+
 /-- `n` rules of an owner's domain from `seed`: distinct catalogue entries in a drawn order, rule
-`i` taking the `i`-th, its limit drawn in the entry's range and, half the time, an exemption from its
-statuses. -/
+`i` taking the `i`-th, its limit drawn among the natural numbers of the entry's range and, one time
+in three, an exemption from its statuses. -/
 def ownerRules (seed n : Nat) (v : Vocab) : List Rule :=
   let cat := v.catalogue
   (pick seed cat.length n).zipIdx.map fun (j, i) =>
@@ -185,10 +196,16 @@ def ownerRules (seed n : Nat) (v : Vocab) : List Rule :=
     let s1 := next (seed + (i + 1) * 104729)
     let s2 := next s1
     let s3 := next s2
-    let flag := if e.flags.isEmpty || draw s2 2 == 1 then none
+    let flag := if e.flags.isEmpty || draw s2 3 != 0 then none
       else some (e.flags.getD (draw s3 e.flags.length) "")
-    { id := i, kind := e.kind, measures := e.measures, bound := e.lo + draw s1 (e.hi - e.lo + 1),
+    let ns := naturalIn e.lo e.hi
+    { id := i, kind := e.kind, measures := e.measures, bound := ns.getD (draw s1 ns.length) e.lo,
       flag }
+
+/-- A domain's `n` rules from `seed`: an owner's domain draws from its catalogue, the library from
+its own generator. -/
+def rulesOf (seed n : Nat) (v : Vocab) : List Rule :=
+  if v.catalogue.isEmpty then rules seed n v else ownerRules seed n v
 
 /-- How each artifact renders one rule: the prose, the Lean model, the Python and the tests may
 each hold a different version, and the ledger's rows may be changed. A plant edits a view. -/
@@ -429,6 +446,12 @@ def candidates (rs : List Rule) (extra : Rule) (shape : String) : List GPlant :=
                apply := onRule r.id fun v =>
                  { v with model := r', python := r', test := some r', theorem_ := r' } }
       | _ => none
+  -- Every artifact holds the limit one higher than the prose: they agree with one another.
+  | "limit moved" => rs.map fun r =>
+      let r' := { r with bound := r.bound + 1 }
+      { kind := blind, clause := ruleSentence r, touches := [r.id],
+        apply := onRule r.id fun v =>
+          { v with model := r', python := r', test := some r', theorem_ := r' } }
   | _ => []
 
 /-! Scoring `gaps` by row: a gap names a ledger row (`rK` or `rK-exempt`), a plant a clause; both
