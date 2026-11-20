@@ -166,10 +166,19 @@ prose shows the gap (an exception dropped from all three, an exception written f
 not the rule, a sum checked on one of its two measures). Each finding is scored against a key the
 runs never see. Every model call below is Opus (`claude-opus-5-5`) at medium effort.
 
-| Run | Variants | Planted gaps found | False alarms | Wall time |
-| --- | --- | --- | --- | --- |
-| `gaps` alone | 20, three blind spots each | 60 of 60 | 0 | 126 s |
-| `gaps` alone, no gap planted (control) | 2 | none to find | 0 | 22 s |
+| Run | Variants | Planted gaps found | False alarms | Time per run (mean) | Tokens per run (mean) |
+| --- | --- | --- | --- | --- | --- |
+| `gaps` alone | 20, three blind spots each | 60 of 60 | 0 | 126 s for the batch | |
+| `gaps` alone, no gap planted (control) | 2 | none to find | 0 | 22 s for the batch | |
+| Agent, files only (`baseline`) | 20 | 60 of 60 | 0 | 29 s | 61531 |
+| Agent offered the tools (`ledger`) | 20 | 60 of 60 | 6 | 119 s | 161855 |
+
+On these variants Opus finds every planted gap from the files alone, so the tools add no gaps found
+and cost 4.1 times the time and 2.6 times the tokens. Each of the `ledger` arm's six false alarms
+names a clause beside a planted gap: five name the rule whose exception was dropped, reporting its
+unconditional Lean statement as behaviour the prose doesn't ask for (the planted gap seen from the
+rule's side), and one names the exception of a rule whose sum was planted. The scorer credits only
+the clause the key names.
 
 Reproduce, from the repository's root (`DIR` any empty directory):
 
