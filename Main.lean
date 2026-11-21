@@ -284,7 +284,7 @@ def synthetic (args : List String) : IO UInt32 := do
     IO.FS.writeFile (dir / "key.jsonl") ("\n".intercalate key ++ "\n")
     IO.println s!"{count} variants of {rs.length} rules ({flaws.length} flawed) in {dir}, the key in {dir}/key.jsonl"
     return 0
-  | ["owners-suite", outDir, tellsDir] =>
+  | "owners-suite" :: outDir :: tellsDir :: only =>
     -- The three prose tests in one invocation (the task's theory, "How does the next writing
     -- run"): each test writes T-a, T-b, T-c in turn under OUT-DIR, a writing holding text.md
     -- reused, Tells (its build in TELLS-DIR) reading each kept text, until Owners.suiteNext keeps
@@ -312,7 +312,11 @@ def synthetic (args : List String) : IO UInt32 := do
       let v ← tellsRun #["verdicts", "generated/judge", "posts/sets", name]
       IO.FS.writeFile (d.withExtension "verdict.txt") (j.stdout ++ j.stderr ++ v.stdout ++ v.stderr)
       return ((v.stdout.splitOn "\n").findSome? SpecTools.Owners.parseVerdict).any (·.2)
-    let tests : List (String × Nat) := [("salon", 20261120), ("tailor", 20261121), ("bakery", 20261122)]
+    -- TEST ... after TELLS-DIR names the tests to run, all three without
+    let all : List (String × Nat) := [("salon", 20261120), ("tailor", 20261121), ("bakery", 20261122)]
+    let tests := if only.isEmpty then all else all.filter (only.contains ·.1)
+    if tests.length != only.length && !only.isEmpty then
+      IO.eprintln s!"owners-suite: tests are salon, tailor and bakery, got {only}"; return 2
     let writeTest (t : String) (seed : Nat) : IO (Option System.FilePath) := do
       let mut vs : List Bool := []
       for k in ["a", "b", "c"] do
