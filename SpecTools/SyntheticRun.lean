@@ -93,6 +93,22 @@ structure Invocation where
   cwd : String
   deriving Repr, DecidableEq
 
+/-- The invocation with a `lake env` run's variables, and `passed` (`K=V` words), moved into its
+arguments (`lake env env K=V ... CMD`): outside a launcher job the lake proxy runs lake through
+compute.sh, whose job inherits no caller environment, so a variable set on the process never
+reaches the command. Any other invocation is unchanged. -/
+def Invocation.viaArgs (i : Invocation) (passed : List String) : Invocation :=
+  if i.cmd = "lake" ∧ i.args[0]? = some "env" then
+    let vars := (i.env.filterMap fun (k, v) => v.map (s!"{k}=" ++ ·)) ++ passed.toArray
+    ⟨i.cmd, #["env", "env"] ++ vars ++ i.args.extract 1 i.args.size, #[], i.cwd⟩
+  else i
+
+theorem viaArgs_moves_env :
+    (Invocation.viaArgs ⟨"lake", #["env", "lean", "d/Loans.lean"], #[("A", some "1"), ("B", none)], "r"⟩
+      ["H=h"]) = ⟨"lake", #["env", "env", "A=1", "H=h", "lean", "d/Loans.lean"], #[], "r"⟩ ∧
+    (Invocation.viaArgs ⟨"tool", #["x"], #[("A", some "1")], "r"⟩ ["H=h"]) =
+      ⟨"tool", #["x"], #[("A", some "1")], "r"⟩ := by native_decide
+
 /-- `lake env lean` on the variant's model, from the tools' root, with `env` set. -/
 def leanOn (root dir : String) (env : Array (String × Option String)) : Invocation :=
   ⟨"lake", #["env", "lean", dir ++ "/Loans.lean"], env, root⟩
@@ -153,6 +169,9 @@ def runCheck (sub : String) : IO UInt32 := do
     | IO.eprintln "usage: spec-tools check audit|tests|gaps|clauses"; return 2
   let log ← IO.FS.Handle.mk (dir / "check.log") .append
   log.putStrLn sub
+  let passed ← ["SPEC_TOOLS_HOST", "SPEC_TOOLS_BACKEND"].filterMapM fun k => do
+    return (← IO.getEnv k).map (s!"{k}=" ++ ·)
+  let inv := inv.viaArgs passed
   let child ← IO.Process.spawn { cmd := inv.cmd, args := inv.args, env := inv.env, cwd := some inv.cwd }
   child.wait
 

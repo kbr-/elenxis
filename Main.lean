@@ -521,6 +521,7 @@ def synthetic (args : List String) : IO UInt32 := do
         -- What `spec-tools check tests` runs, which asks no model.
         let some inv := SpecTools.SyntheticRun.checkInvocation root.toString dir "" "tests"
           | throw (IO.userError "check tests has no invocation")
+        let inv := inv.viaArgs []
         let out ← IO.Process.output { cmd := inv.cmd, args := inv.args, cwd := some inv.cwd, env := inv.env }
         IO.FS.writeFile (System.FilePath.mk dir / "control.txt") (out.stdout ++ out.stderr)
         return (dir, out)
