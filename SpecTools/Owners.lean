@@ -670,6 +670,40 @@ def tellsOf (r : Except Failure Outcome) : Except String (List String × Bool) :
     | some ts, some real => .ok (ts.toList, real)
     | _, _ => .error "no tells or no verdict"
 
+/-- The fidelity check on a text however it was written (by `writeOwner`, or by hand from a real
+owner's post): two blind extractions, started together, each compared with the reads the rules and
+flaws require (`expected`); the faults, none when both read the text faithfully, and what the calls
+used. -/
+def checkFidelity (runner : Runner) (allowed : List Backend) (backend : Backend) (v : Vocab)
+    (rs : List Rule) (flaws : List Imperfection) (text : String) (scratch : System.FilePath)
+    (timeoutMs : Nat) : IO (List String × Usage.Usage) := do
+  let exp := expected rs flaws
+  let read (n : Nat) : IO (Except Failure Outcome × Usage.Usage) := do
+    let dir := scratch / s!"reading{n}"
+    IO.FS.createDirAll dir
+    Usage.askRecorded "owner-reader" runner allowed backend
+      { prompt := readPrompt text, schema := readSchema v, timeoutMs } dir
+  let t1 ← IO.asTask (read 1)
+  let t2 ← IO.asTask (read 2)
+  let mut faults : List String := []
+  let mut used : Usage.Usage := {}
+  for (name, t) in [("reading 1", t1), ("reading 2", t2)] do
+    let (r, u) ← IO.ofExcept t.get
+    used := used + u
+    match r with
+    | .error f => faults := faults ++ [s!"{name}: {f.describe}"]
+    | .ok o => match readsOf o.answer with
+      | none => faults := faults ++ [s!"{name}: no rule list"]
+      | some got =>
+        unless faithful exp got do
+          let (lacks, adds) := differences exp got
+          faults := faults ++ [s!"{name} misses [{"; ".intercalate (lacks.map (·.describe))}] \
+            and reads [{"; ".intercalate (adds.map (·.describe))}]"]
+  return (faults, used)
+
+/-- The prose tests `owners-suite` runs, each with its seed; the test's name is its vocabulary's. -/
+def suiteTests : List (String × Nat) := [("salon", 20261120), ("tailor", 20261121), ("bakery", 20261122)]
+
 /-- Write the test's text, put it through `reviewRounds` rounds of review and revision, then check
 it with two blind extractions, revising for their differences up to `fidelityRounds` times, and
 review the text so kept once more, for the record, the verdict and tells the result reports;
@@ -679,7 +713,6 @@ def writeOwner (runner : Runner) (allowed : List Backend) (backend : Backend) (v
     (scratch : System.FilePath) (timeoutMs : Nat) (judgeRounds : Nat := judgeRounds) :
     IO Writing := do
   let brief := writerPrompt v form rs flaws notes
-  let exp := expected rs flaws
   let used ← IO.mkRef ({} : Usage.Usage)
   let calls ← IO.mkRef (0 : Nat)
   let ask (tool prompt : String) (schema : Json) : IO (Except Failure Outcome) := do
@@ -732,19 +765,9 @@ def writeOwner (runner : Runner) (allowed : List Backend) (backend : Backend) (v
         text := d
         steps := steps ++ [⟨s!"{label}: revised after judge {round + 1}", d, reasons⟩]
     for check in List.range (fidelityRounds + 1) do
-      let t1 ← IO.asTask (ask "owner-reader" (readPrompt text) (readSchema v))
-      let t2 ← IO.asTask (ask "owner-reader" (readPrompt text) (readSchema v))
-      let mut faults : List String := []
-      for (name, t) in [("reading 1", t1), ("reading 2", t2)] do
-        match ← IO.ofExcept t.get with
-        | .error f => faults := faults ++ [s!"{name}: {f.describe}"]
-        | .ok o => match readsOf o.answer with
-          | none => faults := faults ++ [s!"{name}: no rule list"]
-          | some got =>
-            unless faithful exp got do
-              let (lacks, adds) := differences exp got
-              faults := faults ++ [s!"{name} misses [{"; ".intercalate (lacks.map (·.describe))}] \
-                and reads [{"; ".intercalate (adds.map (·.describe))}]"]
+      let (faults, u) ← checkFidelity runner allowed backend v rs flaws text
+        (scratch / s!"fidelity{start + 1}-{check + 1}") timeoutMs
+      used.modify (· + u)
       faultLog := faultLog ++ [faults]
       if faults.isEmpty then
         match tellsOf (← ask "owner-reviewer" (reviewerPrompt v form text) tellsSchema) with

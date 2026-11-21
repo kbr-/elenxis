@@ -284,6 +284,37 @@ def synthetic (args : List String) : IO UInt32 := do
     IO.FS.writeFile (dir / "key.jsonl") ("\n".intercalate key ++ "\n")
     IO.println s!"{count} variants of {rs.length} rules ({flaws.length} flawed) in {dir}, the key in {dir}/key.jsonl"
     return 0
+  | "owners-fidelity" :: dirs@(_ :: _) =>
+    -- The fidelity check alone (Owners.checkFidelity) on each DIR's text.md, DIR named T-k for a
+    -- test T of Owners.suiteTests, its rules and flaws from T's seed: every check started before
+    -- any is waited on; DIR/fidelity.json holds the faults; exit 1 when a text is not read
+    -- faithfully. For a text written outside owners-write, which owners-suite reuses.
+    let backend ← SpecTools.Model.selectedBackend "configured" "claude-opus-5-5"
+    let jobs ← dirs.mapM fun d => do
+      let dir := System.FilePath.mk d
+      let test := ((dir.fileName.getD "").splitOn "-").headD ""
+      let some seed := SpecTools.Owners.suiteTests.lookup test
+        | throw (IO.userError s!"{d}: its name starts with no test of {SpecTools.Owners.suiteTests.map (·.1)}")
+      let some v := SpecTools.Generated.Vocab.named test
+        | throw (IO.userError s!"{test}: no such vocabulary")
+      let text ← IO.FS.readFile (dir / "text.md")
+      let rs := SpecTools.Generated.ownerRules seed SpecTools.Owners.ruleCount v
+      let flaws := SpecTools.Owners.imperfections seed rs v.flawKinds
+      let scratch ← IO.FS.createTempDir
+      return (dir, scratch, ← IO.asTask (SpecTools.Owners.checkFidelity SpecTools.Model.liveRunner
+        [backend] backend v rs flaws text scratch 900000))
+    let mut allFaithful := true
+    for (dir, scratch, task) in jobs do
+      let (faults, used) ← IO.ofExcept task.get
+      IO.FS.removeDirAll scratch
+      IO.FS.writeFile (dir / "fidelity.json") (Lean.Json.mkObj [("faithful", Lean.toJson faults.isEmpty),
+        ("faults", Lean.toJson faults), ("usage", SpecTools.Usage.asJson used)]).compress
+      if faults.isEmpty then IO.println s!"{dir}: faithful"
+      else
+        allFaithful := false
+        IO.println s!"{dir}: not faithful"
+        for f in faults do IO.println s!"  - {f}"
+    return if allFaithful then 0 else 1
   | "owners-suite" :: outDir :: tellsDir :: only =>
     -- The three prose tests in one invocation (the task's theory, "How does the next writing
     -- run"): each test writes T-a, T-b, T-c in turn under OUT-DIR, a writing holding text.md
@@ -320,7 +351,7 @@ def synthetic (args : List String) : IO UInt32 := do
     -- highest-scored writing when none passes (Owners.suiteKeep), its table stating the bar unmet
     let best := only.contains "best"
     let names := only.filter (· != "best")
-    let all : List (String × Nat) := [("salon", 20261120), ("tailor", 20261121), ("bakery", 20261122)]
+    let all := SpecTools.Owners.suiteTests
     let tests := if names.isEmpty then all else all.filter (names.contains ·.1)
     if tests.length != names.length && !names.isEmpty then
       IO.eprintln s!"owners-suite: tests are salon, tailor and bakery, got {names}"; return 2
@@ -343,9 +374,22 @@ def synthetic (args : List String) : IO UInt32 := do
     -- Every test's task is started before any is waited on, so the tests write at once.
     let writing ← tests.mapM fun (t, seed) => IO.asTask (writeTest t seed)
     let written ← writing.mapM fun task => do IO.ofExcept (← IO.wait task)
-    let kept := (tests.zip written).filterMap fun ((t, seed), d) => d.map (t, seed, ·)
+    let kept₀ := (tests.zip written).filterMap fun ((t, seed), d) => d.map (t, seed, ·)
     for ((t, _), d) in tests.zip written do
       IO.println s!"{t}: {match d with | some d => s!"kept {d}" | none => "no text Tells reads as a human's"}"
+    -- A kept text owners-write didn't write (no writing.json beside it) gets the fidelity check
+    -- here, in one call for all such texts; a test whose text is not read faithfully gets no table.
+    let reused ← kept₀.filterM fun (_, _, d) => do return !(← (d / "writing.json").pathExists)
+    if !reused.isEmpty then
+      let _ ← spec (#["owners-fidelity"] ++ (reused.map (·.2.2.toString)).toArray) (out / "fidelity.log") 1800
+      IO.println (← IO.FS.readFile (out / "fidelity.log"))
+    let kept ← kept₀.filterM fun (t, _, d) => do
+      let f := d / "fidelity.json"
+      if !(← f.pathExists) then return true
+      let faithful := ((Lean.Json.parse (← IO.FS.readFile f)).toOption.bind
+        fun j => (j.getObjValAs? Bool "faithful").toOption).getD false
+      unless faithful do IO.println s!"{t}: its text is not read faithfully, see {f}; no table"
+      return faithful
     -- A row whose results file is complete (Owners.rowDone over the 12 variants) is not run again.
     let done (d : System.FilePath) (row : String) : IO Bool := do
       let f := d / s!"results-{row}.jsonl"
