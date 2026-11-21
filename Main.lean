@@ -303,32 +303,40 @@ def synthetic (args : List String) : IO UInt32 := do
       return o.exitCode
     let tellsRun (args : Array String) : IO IO.Process.Output :=
       IO.Process.output { cmd := (tells / ".lake" / "build" / "bin" / "tells").toString, args, cwd := tells }
-    let verdict (d : System.FilePath) : IO Bool := do
-      unless ← (d / "text.md").pathExists do return false
+    -- Tells' verdict on a writing and its score in hundredths; a text judged before (by name) is
+    -- not judged again, since `tells judge` skips it.
+    let verdict (d : System.FilePath) : IO (Bool × Option Nat) := do
+      unless ← (d / "text.md").pathExists do return (false, none)
       let name := s!"{tag}-{d.fileName.getD ""}-0"
       let input := staging / s!"{name}.json"
       IO.FS.writeFile input (Lean.Json.mkObj [("text", Lean.Json.str (← IO.FS.readFile (d / "text.md")))]).compress
       let j ← tellsRun #["judge", "prompts/joint.txt", "generated/judge", input.toString]
       let v ← tellsRun #["verdicts", "generated/judge", "posts/sets", name]
       IO.FS.writeFile (d.withExtension "verdict.txt") (j.stdout ++ j.stderr ++ v.stdout ++ v.stderr)
-      return ((v.stdout.splitOn "\n").findSome? SpecTools.Owners.parseVerdict).any (·.2)
-    -- TEST ... after TELLS-DIR names the tests to run, all three without
+      match (v.stdout.splitOn "\n").findSome? SpecTools.Owners.parseScored with
+      | some (_, h, s) => return (h, some s)
+      | none => return (false, none)
+    -- TEST ... after TELLS-DIR names the tests to run, all three without; `best` keeps each test's
+    -- highest-scored writing when none passes (Owners.suiteKeep), its table stating the bar unmet
+    let best := only.contains "best"
+    let names := only.filter (· != "best")
     let all : List (String × Nat) := [("salon", 20261120), ("tailor", 20261121), ("bakery", 20261122)]
-    let tests := if only.isEmpty then all else all.filter (only.contains ·.1)
-    if tests.length != only.length && !only.isEmpty then
-      IO.eprintln s!"owners-suite: tests are salon, tailor and bakery, got {only}"; return 2
+    let tests := if names.isEmpty then all else all.filter (names.contains ·.1)
+    if tests.length != names.length && !names.isEmpty then
+      IO.eprintln s!"owners-suite: tests are salon, tailor and bakery, got {names}"; return 2
     let writeTest (t : String) (seed : Nat) : IO (Option System.FilePath) := do
-      let mut vs : List Bool := []
+      let mut vs : List (Bool × Option Nat) := []
       for k in ["a", "b", "c"] do
-        if SpecTools.Owners.suiteNext vs == .write then
+        if SpecTools.Owners.suiteNext (vs.map (·.1)) == .write then
           let d := out / s!"{t}-{k}"
           unless ← (d / "text.md").pathExists do
             let _ ← spec #["owners-write", d.toString, toString seed, "prose", "", "claude-opus-5-5",
               s!"vocab={t}"] (out / s!"{t}-{k}.log") 5400
           vs := vs ++ [← verdict d]
-      match SpecTools.Owners.suiteNext vs with
-      | .keep i => return some (out / s!"{t}-{["a", "b", "c"].getD i ""}")
-      | _ => return none
+      IO.println s!"{t}: Tells' verdicts (human, hundredths) {vs}"
+      match SpecTools.Owners.suiteKeep best vs with
+      | some i => return some (out / s!"{t}-{["a", "b", "c"].getD i ""}")
+      | none => return none
     -- Every test's task is started before any is waited on, so the tests write at once.
     let writing ← tests.mapM fun (t, seed) => IO.asTask (writeTest t seed)
     let written ← writing.mapM fun task => do IO.ofExcept (← IO.wait task)
@@ -348,7 +356,12 @@ def synthetic (args : List String) : IO UInt32 := do
         let e ← spec #["run", d.toString, "claude-opus-5-5", "claude-opus-5-5", arm] (out / s!"{t}-{arm}.log") 7200
         IO.println s!"{t} {arm}: exit {e}"
       let o ← IO.Process.output { cmd := self.toString, args := #["synthetic", "owners-table", d.toString] }
-      IO.FS.writeFile (out / s!"{t}-table.md") o.stdout
+      -- The table opens with Tells' verdict on its text, so a table on a text below the bar says so.
+      let vf := d.withExtension "verdict.txt"
+      let verdictText ← if ← vf.pathExists then IO.FS.readFile vf else pure ""
+      let verdictLine := (verdictText.splitOn "\n").find? (fun l => (SpecTools.Owners.parseVerdict l).isSome)
+      IO.FS.writeFile (out / s!"{t}-table.md")
+        (s!"Tells' verdict on this test's text: {verdictLine.getD "none"}\n\n" ++ o.stdout)
       IO.println s!"{t}: table in {out}/{t}-table.md"
     return if kept.length == tests.length then 0 else 1
   | "owners-best" :: outDir :: dirs =>

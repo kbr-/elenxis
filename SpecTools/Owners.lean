@@ -555,6 +555,49 @@ theorem parseVerdict_reads :
     parseVerdict "o12-x-0: not judged" = none ∧
     parseVerdict "threshold (second lowest of 93 calibration scores) 0.920000" = none := by native_decide
 
+/-- A decimal score as `tells verdicts` prints it ("0.700000"), in hundredths, rounded down. -/
+def hundredths (s : String) : Option Nat :=
+  match s.splitOn "." with
+  | [w, f] => do
+    let w ← w.toNat?
+    let f ← (String.ofList ((f.toList ++ ['0', '0']).take 2)).toNat?
+    return w * 100 + f
+  | [w] => (· * 100) <$> w.toNat?
+  | _ => none
+
+/-- A line of `tells verdicts` with its score: the name, whether Tells read it as a human's, and
+the score in hundredths. -/
+def parseScored (line : String) : Option (String × Bool × Nat) := do
+  let (n, h) ← parseVerdict line
+  let rest ← (line.splitOn ": score ")[1]?
+  let s ← hundredths ((rest.splitOn ", ").headD "")
+  return (n, h, s)
+
+theorem parseScored_reads :
+    parseScored "o12-salon-a-0: score 0.700000, model" = some ("o12-salon-a-0", false, 70) ∧
+    parseScored "o12-salon-b-0: score 0.920000, human" = some ("o12-salon-b-0", true, 92) ∧
+    parseScored "o12-x-0: not judged" = none := by native_decide
+
+/-- The writing a test of `owners-suite` keeps: the one `suiteNext` keeps, or, with `best` and
+none passing, the highest-scored; a writing with no score is never kept. -/
+def suiteKeep (best : Bool) (vs : List (Bool × Option Nat)) : Option Nat :=
+  match suiteNext (vs.map (·.1)) with
+  | .keep i => some i
+  | _ => if best then bestIndex (vs.map (·.2)) else none
+
+theorem suiteKeep_strict_keeps_human (vs : List (Bool × Option Nat)) (i : Nat)
+    (h : suiteKeep false vs = some i) : (vs.map (·.1))[i]? = some true := by
+  unfold suiteKeep at h
+  cases hs : suiteNext (vs.map (·.1)) with
+  | keep j => rw [hs] at h; cases h; exact suiteNext_keeps_human _ i hs
+  | write => rw [hs] at h; simp at h
+  | none => rw [hs] at h; simp at h
+
+theorem suiteKeep_best_highest :
+    suiteKeep true [(false, some 70), (false, some 40), (false, some 55)] = some 0 ∧
+    suiteKeep true [(false, some 40), (true, some 92)] = some 1 ∧
+    suiteKeep false [(false, some 70), (false, some 40), (false, some 55)] = none := by native_decide
+
 /-- The mean of the samples, rounded down; none for no sample. -/
 def meanOf (xs : List Nat) : Option Nat :=
   if xs.isEmpty then none else some (xs.sum / xs.length)
