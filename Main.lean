@@ -445,15 +445,13 @@ def synthetic (args : List String) : IO UInt32 := do
         -- The variant's `gaps` call records its usage here; a rerun starts it afresh.
         let usagePath := dir / "gaps-usage.jsonl"
         if ← usagePath.pathExists then IO.FS.removeFile usagePath
-        -- The variables go as `env` arguments: outside a launcher job the lake proxy runs lake
-        -- through compute.sh, whose job inherits no caller environment (COMPUTATION_RULES.md).
+        -- Through the one path every lake run takes (SyntheticRun.leanOn, then viaArgs, which moves
+        -- the variables into the arguments the launcher keeps).
         let passed ← ["SPEC_TOOLS_HOST", "SPEC_TOOLS_BACKEND"].filterMapM fun k => do
           return (← IO.getEnv k).map (s!"{k}=" ++ ·)
-        let vars := [s!"SPEC_TOOLS_GAPS={model}", s!"SPEC_TOOLS_DIR={dir}",
-          s!"SPEC_TOOLS_USAGE={usagePath}"] ++ passed
-        let out ← IO.Process.output {
-          cmd := "lake", args := #["env", "env"] ++ vars.toArray ++ #["lean", (dir / "Loans.lean").toString],
-          cwd := some root.toString }
+        let inv := (SpecTools.SyntheticRun.leanOn root.toString dir.toString #[("SPEC_TOOLS_GAPS", some model),
+          ("SPEC_TOOLS_DIR", some dir.toString), ("SPEC_TOOLS_USAGE", some usagePath.toString)]).viaArgs passed
+        let out ← IO.Process.output { cmd := inv.cmd, args := inv.args, cwd := some inv.cwd, env := inv.env }
         IO.FS.writeFile (dir / "gaps.txt") (out.stdout ++ out.stderr)
         return (k, i, out, ← SpecTools.Usage.readRecorded usagePath)
       for t in tasks do
