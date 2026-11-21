@@ -284,6 +284,67 @@ def synthetic (args : List String) : IO UInt32 := do
     IO.FS.writeFile (dir / "key.jsonl") ("\n".intercalate key ++ "\n")
     IO.println s!"{count} variants of {rs.length} rules ({flaws.length} flawed) in {dir}, the key in {dir}/key.jsonl"
     return 0
+  | ["owners-suite", outDir, tellsDir] =>
+    -- The three prose tests in one invocation (the task's theory, "How does the next writing
+    -- run"): each test writes T-a, T-b, T-c in turn under OUT-DIR, a writing holding text.md
+    -- reused, Tells (its build in TELLS-DIR) reading each kept text, until Owners.suiteNext keeps
+    -- one; then the kept writings' variants and gapsrun, the agents' arms one test at a time, and
+    -- each table, written as T-table.md. A writing kept by no fidelity check counts as a model's.
+    let self ← IO.appPath
+    let out := System.FilePath.mk outDir
+    let tells := System.FilePath.mk tellsDir
+    let tag := out.fileName.getD "owners"
+    let staging := tells / "staging" / tag
+    IO.FS.createDirAll out
+    IO.FS.createDirAll staging
+    let spec (args : Array String) (log : System.FilePath) (limit : Nat) : IO UInt32 := do
+      let o ← IO.Process.output { cmd := "timeout", args := #[toString limit, self.toString, "synthetic"] ++ args }
+      IO.FS.writeFile log (o.stdout ++ o.stderr)
+      return o.exitCode
+    let tellsRun (args : Array String) : IO IO.Process.Output :=
+      IO.Process.output { cmd := (tells / ".lake" / "build" / "bin" / "tells").toString, args, cwd := tells }
+    let verdict (d : System.FilePath) : IO Bool := do
+      unless ← (d / "text.md").pathExists do return false
+      let name := s!"{tag}-{d.fileName.getD ""}-0"
+      let input := staging / s!"{name}.json"
+      IO.FS.writeFile input (Lean.Json.mkObj [("text", Lean.Json.str (← IO.FS.readFile (d / "text.md")))]).compress
+      let j ← tellsRun #["judge", "prompts/joint.txt", "generated/judge", input.toString]
+      let v ← tellsRun #["verdicts", "generated/judge", "posts/sets", name]
+      IO.FS.writeFile (d.withExtension "verdict.txt") (j.stdout ++ j.stderr ++ v.stdout ++ v.stderr)
+      return ((v.stdout.splitOn "\n").findSome? SpecTools.Owners.parseVerdict).any (·.2)
+    let tests : List (String × Nat) := [("salon", 20261120), ("tailor", 20261121), ("bakery", 20261122)]
+    let writeTest (t : String) (seed : Nat) : IO (Option System.FilePath) := do
+      let mut vs : List Bool := []
+      for k in ["a", "b", "c"] do
+        if SpecTools.Owners.suiteNext vs == .write then
+          let d := out / s!"{t}-{k}"
+          unless ← (d / "text.md").pathExists do
+            let _ ← spec #["owners-write", d.toString, toString seed, "prose", "", "claude-opus-5-5",
+              s!"vocab={t}"] (out / s!"{t}-{k}.log") 5400
+          vs := vs ++ [← verdict d]
+      match SpecTools.Owners.suiteNext vs with
+      | .keep i => return some (out / s!"{t}-{["a", "b", "c"].getD i ""}")
+      | _ => return none
+    let written ← (tests.map fun (t, seed) => IO.asTask (writeTest t seed)).mapM fun task => do
+      IO.ofExcept (← IO.wait (← task))
+    let kept := (tests.zip written).filterMap fun ((t, seed), d) => d.map (t, seed, ·)
+    for ((t, _), d) in tests.zip written do
+      IO.println s!"{t}: {match d with | some d => s!"kept {d}" | none => "no text Tells reads as a human's"}"
+    let prepared ← (kept.map fun (t, seed, d) => IO.asTask do
+        let v ← spec #["owners-variants", d.toString, toString seed, "12", "2", s!"vocab={t}"]
+          (out / s!"{t}-variants.log") 600
+        if v != 0 then return false
+        let _ ← spec #["gapsrun", toString seed, "5", d.toString, "claude-opus-5-5"] (out / s!"{t}-gaps.log") 3600
+        return true).mapM fun task => do IO.ofExcept (← IO.wait (← task))
+    for ((t, _, d), ok) in kept.zip prepared do
+      unless ok do IO.println s!"{t}: variants failed, see {out}/{t}-variants.log"; continue
+      for arm in ["baseline", "ledger", "tools"] do
+        let e ← spec #["run", d.toString, "claude-opus-5-5", "claude-opus-5-5", arm] (out / s!"{t}-{arm}.log") 7200
+        IO.println s!"{t} {arm}: exit {e}"
+      let o ← IO.Process.output { cmd := self.toString, args := #["synthetic", "owners-table", d.toString] }
+      IO.FS.writeFile (out / s!"{t}-table.md") o.stdout
+      IO.println s!"{t}: table in {out}/{t}-table.md"
+    return if kept.length == tests.length then 0 else 1
   | "owners-best" :: outDir :: dirs =>
     -- Of a test's writings in DIRS (each written by owners-write), the one the development judge
     -- scored highest (Owners.bestIndex) is copied to OUT-DIR, to go on to its variants.

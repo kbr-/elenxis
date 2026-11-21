@@ -192,12 +192,17 @@ def writerPrompt (v : Vocab) (form : Form) (rs : List Rule) (flaws : List Imperf
   let shape := match form with
     | .prose => "Write, in English, the job post or message you send a freelance developer asking \
         for this website. You are not technical and you type it quickly between customers, \
-        maybe on your phone: typos you don't go back to fix, a lowercase \"i\", missing \
-        apostrophes, run-on lines and fragments, numbers as digits. Most of what you write is \
-        about the site itself: what pages it has, your photos, how people order or book, paying, \
-        what you have now (a Facebook page, a domain someone set up, a free theme you don't \
-        like), when you want it by. Only some of it is about when it should say no: give each \
-        of those in a line or two, bluntly, in your own shorthand, not as a story. You may half \
+        maybe on your phone: real misspellings you don't go back to fix (a few words spelled \
+        wrong, a wrong \"there\" or \"your\", a doubled or missing letter), a lowercase \"i\", \
+        missing apostrophes, run-on lines and fragments, numbers as digits, and the sloppiness \
+        uneven, worse where you're in a hurry. Most of what you write is about the site itself: \
+        what pages it has, your photos, how people order or book, paying, what you have now (a \
+        Facebook page, a domain someone set up, a free theme you don't like), when you want it \
+        by. Only some of it is about when it should say no: jot those together in one rough \
+        list, the way you'd scribble them down, each a line, bluntly, using the same few words \
+        each time as you would (\"no X if\", \"cant have\"), not a new phrasing per line and \
+        not as a story. Give a limit as the number you keep in mind, never followed by the \
+        first number that's refused (not \"5 is the max, 6 no\"). You may half \
         fill it in like a form (a few labels with your answers after them) or just write it in \
         one go, whichever you would. Where you aren't sure of something, leave it, or ask the \
         developer to tell you. No software or maths words (never \"threshold\", \"parameter\", \
@@ -468,6 +473,88 @@ text or no score), the index of the first with the highest score; none when no w
 def bestIndex (scores : List (Option Nat)) : Option Nat := do
   let m ← (scores.filterMap id).max?
   scores.findIdx? (· == some m)
+
+/-- The index of the first writing Tells read as a human's. -/
+def firstHuman : List Bool → Option Nat
+  | [] => none
+  | true :: _ => some 0
+  | false :: vs => (firstHuman vs).map (· + 1)
+
+theorem firstHuman_reads_human : ∀ (vs : List Bool) (i : Nat), firstHuman vs = some i → vs[i]? = some true
+  | [], _, h => by simp [firstHuman] at h
+  | true :: _, i, h => by simp [firstHuman] at h; subst h; rfl
+  | false :: vs, i, h => by
+    simp only [firstHuman, Option.map_eq_some_iff] at h
+    obtain ⟨j, hj, rfl⟩ := h
+    simpa using firstHuman_reads_human vs j hj
+
+theorem firstHuman_none_all_model : ∀ (vs : List Bool), firstHuman vs = none → ∀ b ∈ vs, b = false
+  | [], _ => by simp
+  | true :: _, h => by simp [firstHuman] at h
+  | false :: vs, h => by
+    simp only [firstHuman, Option.map_eq_none_iff] at h
+    intro b hb
+    simp only [List.mem_cons] at hb
+    rcases hb with rfl | hb
+    · rfl
+    · exact firstHuman_none_all_model vs h b hb
+
+/-- The writings a suite's test makes at most. -/
+def suiteWritings : Nat := 3
+
+/-- What a test of `owners-suite` does next, from Tells' verdicts on its writings so far. -/
+inductive SuiteStep where
+  | write
+  | keep (index : Nat)
+  | none
+  deriving DecidableEq, Repr
+
+/-- Keep the first writing Tells reads as a human's; else write another, up to `suiteWritings`. -/
+def suiteNext (vs : List Bool) : SuiteStep :=
+  match firstHuman vs with
+  | some i => .keep i
+  | none => if vs.length < suiteWritings then .write else .none
+
+theorem suiteNext_keeps_human (vs : List Bool) (i : Nat) (h : suiteNext vs = .keep i) :
+    vs[i]? = some true := by
+  unfold suiteNext at h
+  cases hf : firstHuman vs with
+  | some j => rw [hf] at h; cases h; exact firstHuman_reads_human vs i hf
+  | none =>
+    rw [hf] at h
+    by_cases hl : vs.length < suiteWritings <;> simp [hl] at h
+
+theorem suiteNext_bounded (vs : List Bool) (h : suiteWritings ≤ vs.length) : suiteNext vs ≠ .write := by
+  unfold suiteNext
+  cases firstHuman vs with
+  | some _ => simp
+  | none =>
+    have hl : ¬ vs.length < suiteWritings := by omega
+    simp [hl]
+
+theorem suiteNext_writes_after_models (vs : List Bool) (hm : ∀ b ∈ vs, b = false)
+    (h : vs.length < suiteWritings) : suiteNext vs = .write := by
+  have : firstHuman vs = none := by
+    induction vs with
+    | nil => rfl
+    | cons b vs ih =>
+      have hb := hm b (by simp); subst hb
+      simp [firstHuman, ih (fun c hc => hm c (by simp [hc])) (by simp at h; omega)]
+  simp [suiteNext, this, h]
+
+/-- A line of `tells verdicts`: the text's name and whether Tells read it as a human's. -/
+def parseVerdict (line : String) : Option (String × Bool) :=
+  match line.splitOn ": score " with
+  | [n, rest] =>
+    if rest.endsWith ", human" then some (n, true)
+    else if rest.endsWith ", model" then some (n, false) else none
+  | _ => none
+
+theorem parseVerdict_reads :
+    parseVerdict "o12-salon-a-0: score 0.920000, human" = some ("o12-salon-a-0", true) ∧
+    parseVerdict "o12-tailor-b-0: score 0.400000, model" = some ("o12-tailor-b-0", false) ∧
+    parseVerdict "o12-x-0: not judged" = none ∧
+    parseVerdict "threshold (second lowest of 93 calibration scores) 0.920000" = none := by native_decide
 
 /-- The mean of the samples, rounded down; none for no sample. -/
 def meanOf (xs : List Nat) : Option Nat :=

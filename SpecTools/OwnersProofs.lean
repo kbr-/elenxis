@@ -277,6 +277,7 @@ example :
         has w (flawInstruction r (some i.flaw))) &&
       !["fires_", "wit_", "theorem", "r0-exempt", "ledger"].any (has w ·) &&
       has c "Developer:" && has c "proposes concrete" &&
+      has w "one rough list" && has w "first number that's refused" && has w "misspellings" &&
       !rs.any (fun r => has rv (ownerRuleText r)) && !has rv "# What you want" := by native_decide
 
 end SpecTools.Owners
