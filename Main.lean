@@ -343,16 +343,24 @@ def synthetic (args : List String) : IO UInt32 := do
     let kept := (tests.zip written).filterMap fun ((t, seed), d) => d.map (t, seed, ·)
     for ((t, _), d) in tests.zip written do
       IO.println s!"{t}: {match d with | some d => s!"kept {d}" | none => "no text Tells reads as a human's"}"
+    -- A row whose results file is complete (Owners.rowDone over the 12 variants) is not run again.
+    let done (d : System.FilePath) (row : String) : IO Bool := do
+      let f := d / s!"results-{row}.jsonl"
+      if !(← f.pathExists) then return false
+      return SpecTools.Owners.rowDone 12 ((← IO.FS.readFile f).splitOn "\n")
     let preparing ← kept.mapM fun (t, seed, d) => IO.asTask do
-        let v ← spec #["owners-variants", d.toString, toString seed, "12", "2", s!"vocab={t}"]
-          (out / s!"{t}-variants.log") 600
-        if v != 0 then return false
-        let _ ← spec #["gapsrun", toString seed, "5", d.toString, "claude-opus-5-5"] (out / s!"{t}-gaps.log") 3600
+        unless ← (d / "key.jsonl").pathExists do
+          let v ← spec #["owners-variants", d.toString, toString seed, "12", "2", s!"vocab={t}"]
+            (out / s!"{t}-variants.log") 600
+          if v != 0 then return false
+        unless ← done d "gaps" do
+          let _ ← spec #["gapsrun", toString seed, "5", d.toString, "claude-opus-5-5"] (out / s!"{t}-gaps.log") 3600
         return true
     let prepared ← preparing.mapM fun task => do IO.ofExcept (← IO.wait task)
     for ((t, _, d), ok) in kept.zip prepared do
       unless ok do IO.println s!"{t}: variants failed, see {out}/{t}-variants.log"; continue
       for arm in ["baseline", "ledger", "tools"] do
+        if ← done d arm then IO.println s!"{t} {arm}: results complete, not run again"; continue
         let e ← spec #["run", d.toString, "claude-opus-5-5", "claude-opus-5-5", arm] (out / s!"{t}-{arm}.log") 7200
         IO.println s!"{t} {arm}: exit {e}"
       let o ← IO.Process.output { cmd := self.toString, args := #["synthetic", "owners-table", d.toString] }
@@ -435,11 +443,15 @@ def synthetic (args : List String) : IO UInt32 := do
         -- The variant's `gaps` call records its usage here; a rerun starts it afresh.
         let usagePath := dir / "gaps-usage.jsonl"
         if ← usagePath.pathExists then IO.FS.removeFile usagePath
+        -- The variables go as `env` arguments: outside a launcher job the lake proxy runs lake
+        -- through compute.sh, whose job inherits no caller environment (COMPUTATION_RULES.md).
+        let passed ← ["SPEC_TOOLS_HOST", "SPEC_TOOLS_BACKEND"].filterMapM fun k => do
+          return (← IO.getEnv k).map (s!"{k}=" ++ ·)
+        let vars := [s!"SPEC_TOOLS_GAPS={model}", s!"SPEC_TOOLS_DIR={dir}",
+          s!"SPEC_TOOLS_USAGE={usagePath}"] ++ passed
         let out ← IO.Process.output {
-          cmd := "lake", args := #["env", "lean", (dir / "Loans.lean").toString],
-          cwd := some root.toString,
-          env := #[("SPEC_TOOLS_GAPS", some model), ("SPEC_TOOLS_DIR", some dir.toString),
-            ("SPEC_TOOLS_USAGE", some usagePath.toString)] }
+          cmd := "lake", args := #["env", "env"] ++ vars.toArray ++ #["lean", (dir / "Loans.lean").toString],
+          cwd := some root.toString }
         IO.FS.writeFile (dir / "gaps.txt") (out.stdout ++ out.stderr)
         return (k, i, out, ← SpecTools.Usage.readRecorded usagePath)
       for t in tasks do
