@@ -325,17 +325,19 @@ def synthetic (args : List String) : IO UInt32 := do
       match SpecTools.Owners.suiteNext vs with
       | .keep i => return some (out / s!"{t}-{["a", "b", "c"].getD i ""}")
       | _ => return none
-    let written ← (tests.map fun (t, seed) => IO.asTask (writeTest t seed)).mapM fun task => do
-      IO.ofExcept (← IO.wait (← task))
+    -- Every test's task is started before any is waited on, so the tests write at once.
+    let writing ← tests.mapM fun (t, seed) => IO.asTask (writeTest t seed)
+    let written ← writing.mapM fun task => do IO.ofExcept (← IO.wait task)
     let kept := (tests.zip written).filterMap fun ((t, seed), d) => d.map (t, seed, ·)
     for ((t, _), d) in tests.zip written do
       IO.println s!"{t}: {match d with | some d => s!"kept {d}" | none => "no text Tells reads as a human's"}"
-    let prepared ← (kept.map fun (t, seed, d) => IO.asTask do
+    let preparing ← kept.mapM fun (t, seed, d) => IO.asTask do
         let v ← spec #["owners-variants", d.toString, toString seed, "12", "2", s!"vocab={t}"]
           (out / s!"{t}-variants.log") 600
         if v != 0 then return false
         let _ ← spec #["gapsrun", toString seed, "5", d.toString, "claude-opus-5-5"] (out / s!"{t}-gaps.log") 3600
-        return true).mapM fun task => do IO.ofExcept (← IO.wait (← task))
+        return true
+    let prepared ← preparing.mapM fun task => do IO.ofExcept (← IO.wait task)
     for ((t, _, d), ok) in kept.zip prepared do
       unless ok do IO.println s!"{t}: variants failed, see {out}/{t}-variants.log"; continue
       for arm in ["baseline", "ledger", "tools"] do
