@@ -205,7 +205,7 @@ prose requirements
   ▼
 approved contract (the draft a person accepted)
   │  Gaps.checkDraftContracts    the specification's names are exactly the draft's
-  │  Audit.checkApprovedContracts  their types and bodies are the approved ones
+  │  Audit.checkApprovedContracts  definitions' types/bodies or theorems' propositions agree
   ▼
 Lean specification and its ledger
   │  Audit.run                   proved, vacuous, conditional or unstated, row by row
@@ -216,8 +216,9 @@ Lean implementation and proofs of its obligations
 
 The checks above the line "approved contract" compare the formalization with the prose; those below
 it compare the Lean with the approved formalization. Agreement with the approved formalization is
-checked by Lean (names, types and bodies compared, theorems proved); agreement with the human intent
-is only reviewed, by a model's reading and a person's decision.
+checked by Lean (names and elaborated definitions or theorem propositions compared; proofs checked
+separately); agreement with the human intent is only reviewed, by a model's reading and a person's
+decision.
 
 ## The tools
 

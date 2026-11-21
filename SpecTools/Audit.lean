@@ -92,30 +92,45 @@ structure ApprovedContract where
   declaration : Name
   baseline : Name
 
+/-- Property (approved theorem contracts): an actual theorem's elaborated proposition matches a
+separate safe nullary Prop baseline; definitions retain their type-and-body comparison. -/
 def contractIssue (contract : ApprovedContract) : CommandElabM (Option String) := do
   let actual := contract.declaration
   let expected := contract.baseline
   if actual == expected then return some s!"{actual}: baseline must be a separate declaration"
   let env ← getEnv
-  let some (.defnInfo actualInfo) := env.find? actual
-    | return some s!"{actual}: missing requirement definition"
   let some (.defnInfo expectedInfo) := env.find? expected
     | return some s!"{expected}: missing approved baseline definition"
-  let some actualFact ← factOf actual true
-    | return some s!"{actual}: cannot inspect requirement"
   let some expectedFact ← factOf expected true
     | return some s!"{expected}: cannot inspect approved baseline"
-  if actualFact.kind != .requirement || expectedFact.kind != .requirement then
-    return some s!"{actual}: both definitions must state safe requirements"
-  if actualInfo.levelParams.length != expectedInfo.levelParams.length then
-    return some s!"{actual}: universe parameters differ from {expected}"
-  let levels := expectedInfo.levelParams.map Level.param
-  let actualType := actualInfo.type.instantiateLevelParams actualInfo.levelParams levels
-  let actualBody := actualInfo.value.instantiateLevelParams actualInfo.levelParams levels
-  let agrees ← liftTermElabM do
-    if ← isDefEq actualType expectedInfo.type then isDefEq actualBody expectedInfo.value
-    else pure false
-  return if agrees then none else some s!"{actual}: differs from approved contract {expected}"
+  if expectedFact.kind != .requirement then
+    return some s!"{expected}: baseline must state a safe requirement"
+  match env.find? actual with
+  | some (.defnInfo actualInfo) =>
+    let some actualFact ← factOf actual true
+      | return some s!"{actual}: cannot inspect requirement"
+    if actualFact.kind != .requirement then
+      return some s!"{actual}: both definitions must state safe requirements"
+    if actualInfo.levelParams.length != expectedInfo.levelParams.length then
+      return some s!"{actual}: universe parameters differ from {expected}"
+    let levels := expectedInfo.levelParams.map Level.param
+    let actualType := actualInfo.type.instantiateLevelParams actualInfo.levelParams levels
+    let actualBody := actualInfo.value.instantiateLevelParams actualInfo.levelParams levels
+    let agrees ← liftTermElabM do
+      if ← isDefEq actualType expectedInfo.type then isDefEq actualBody expectedInfo.value
+      else pure false
+    return if agrees then none else some s!"{actual}: differs from approved contract {expected}"
+  | some (.thmInfo actualInfo) =>
+    let baselineIsProp ← liftTermElabM <| isDefEq expectedInfo.type (mkSort levelZero)
+    unless baselineIsProp do
+      return some s!"{expected}: theorem baseline must be a nullary Prop definition"
+    if actualInfo.levelParams.length != expectedInfo.levelParams.length then
+      return some s!"{actual}: universe parameters differ from {expected}"
+    let levels := expectedInfo.levelParams.map Level.param
+    let actualType := actualInfo.type.instantiateLevelParams actualInfo.levelParams levels
+    let agrees ← liftTermElabM <| isDefEq actualType expectedInfo.value
+    return if agrees then none else some s!"{actual}: differs from approved contract {expected}"
+  | _ => return some s!"{actual}: missing requirement definition or theorem"
 
 def checkApprovedContracts (contracts : List ApprovedContract) : CommandElabM Unit := do
   if contracts.isEmpty then throwError "The approved contract list is empty."

@@ -354,8 +354,26 @@ def testApprovedContracts : IO Unit := do
   ensure (bindingCode != 0 && has binding "Missing final contract binding: Spec.stereo" &&
     has binding "Duplicate final contract binding: Spec.mono" &&
     has binding "Unreviewed final contract binding: Spec.extra") binding
+  let theoremDraft := "open SpecTools.Gaps\n" ++
+    "def reviewedTheorem : List DraftRow := [⟨⟨\"theorem\", \"one law\"⟩, " ++
+    ".contract `Spec.law \"one law\"⟩]\n"
+  let theoremBaseline := "def Approved.law : Prop := ∀ n : Nat, n = n\n"
+  let theoremActual := "theorem Spec.law (n : Nat) : n = n := rfl\n"
+  let theoremCheck := "#eval checkDraftContracts reviewedTheorem [⟨`Spec.law, `Approved.law⟩]\n"
+  let (theoremCode, theoremOutput) ← auditCase dir "TheoremMatch"
+    (theoremDraft ++ theoremBaseline ++ theoremActual ++ theoremCheck)
+  ensure (theoremCode == 0 && has theoremOutput "1 specification declarations match") theoremOutput
+  let (theoremChangedCode, theoremChanged) ← auditCase dir "TheoremChanged"
+    (theoremDraft ++ "def Approved.law : Prop := ∀ n : Nat, n = 0\n" ++
+      theoremActual ++ theoremCheck)
+  ensure (theoremChangedCode != 0 && has theoremChanged "differs from approved contract") theoremChanged
+  let (theoremParameterCode, theoremParameter) ← auditCase dir "TheoremParameter"
+    (theoremDraft ++ "def Approved.law (n : Nat) : Prop := n = n\n" ++
+      theoremActual ++ theoremCheck)
+  ensure (theoremParameterCode != 0 && has theoremParameter "theorem baseline must be a nullary Prop")
+    theoremParameter
   IO.FS.removeDirAll dir
-  IO.println "PASS: approved contracts (bodies, complete bindings, missing, duplicate, extra)"
+  IO.println "PASS: approved contracts (definitions, theorem statements, changed and parameterized baselines)"
 
 /-- The audit reads the environment: missing names, unclaimed theorems, axioms, hypotheses without
 witnesses, and the digests that skip unchanged rows. -/

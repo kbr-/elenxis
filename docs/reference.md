@@ -138,7 +138,9 @@ elaborating them as Lean definitions.
 After writing the specification, `SpecTools.Gaps.checkDraftContracts` checks that the supplied
 bindings cover the approved draft's contract names exactly. It then calls
 `SpecTools.Audit.checkApprovedContracts` to compare actual definitions with separately elaborated
-baselines by type and proposition body. The caller supplies the baselines from the approved draft.
+baselines by type and proposition body. For an actual theorem, its elaborated proposition is
+compared with the body of a separate safe, nullary `Prop` baseline. The caller supplies baselines
+from the approved draft; proof axioms remain a separate ledger check.
 
 `SpecTools.OwnerApproval` adds an owner decision bound to the subject, revision, prose, coverage and
 elaborated baseline. `capture` makes the packet from a trusted Lean environment. The project's
