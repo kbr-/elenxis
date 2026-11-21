@@ -192,17 +192,16 @@ def writerPrompt (v : Vocab) (form : Form) (rs : List Rule) (flaws : List Imperf
   let shape := match form with
     | .prose => "Write, in English, the job post or message you send a freelance developer asking \
         for this website. You are not technical and you type it quickly between customers, \
-        maybe on your phone: real misspellings you don't go back to fix (a few words spelled \
-        wrong, a wrong \"there\" or \"your\", a doubled or missing letter), a lowercase \"i\", \
-        missing apostrophes, run-on lines and fragments, numbers as digits, and the sloppiness \
-        uneven, worse where you're in a hurry. Most of what you write is about the site itself: \
-        what pages it has, your photos, how people order or book, paying, what you have now (a \
+        maybe on your phone: typos you don't go back to fix, wherever your thumb slips and not \
+        spread one per paragraph, a lowercase \"i\", missing apostrophes, run-on lines and \
+        fragments, numbers as digits. Most of what you write is about the site itself: what \
+        pages it has, your photos, how people order or book, paying, what you have now (a \
         Facebook page, a domain someone set up, a free theme you don't like), when you want it \
-        by. Only some of it is about when it should say no: jot those together in one rough \
-        list, the way you'd scribble them down, each a line, bluntly, using the same few words \
-        each time as you would (\"no X if\", \"cant have\"), not a new phrasing per line and \
-        not as a story. Give a limit as the number you keep in mind, never followed by the \
-        first number that's refused (not \"5 is the max, 6 no\"). You may half \
+        by. When it should say no comes up only where it belongs: say each one in the middle of \
+        what you are telling about that part of the site (booking, rush jobs, delivery, paying), \
+        in passing, never gathered into a list or a block of their own. Give a limit as the \
+        number you keep in mind, never followed by the first number that's refused (not \"5 is \
+        the max, 6 no\"). You may half \
         fill it in like a form (a few labels with your answers after them) or just write it in \
         one go, whichever you would. Where you aren't sure of something, leave it, or ask the \
         developer to tell you. No software or maths words (never \"threshold\", \"parameter\", \
