@@ -355,6 +355,8 @@ def synthetic (args : List String) : IO UInt32 := do
           if v != 0 then return false
         unless ← done d "gaps" do
           let _ ← spec #["gapsrun", toString seed, "5", d.toString, "claude-opus-5-5"] (out / s!"{t}-gaps.log") 3600
+          unless ← done d "gaps" do
+            IO.println s!"{t}: the gaps row is incomplete (a variant failed or is missing), see {out}/{t}-gaps.log"
         return true
     let prepared ← preparing.mapM fun task => do IO.ofExcept (← IO.wait task)
     for ((t, _, d), ok) in kept.zip prepared do
@@ -362,7 +364,7 @@ def synthetic (args : List String) : IO UInt32 := do
       for arm in ["baseline", "ledger", "tools"] do
         if ← done d arm then IO.println s!"{t} {arm}: results complete, not run again"; continue
         let e ← spec #["run", d.toString, "claude-opus-5-5", "claude-opus-5-5", arm] (out / s!"{t}-{arm}.log") 7200
-        IO.println s!"{t} {arm}: exit {e}"
+        IO.println s!"{t} {arm}: exit {e}{if ← done d arm then "" else ", the row incomplete (a variant failed or is missing)"}"
       let o ← IO.Process.output { cmd := self.toString, args := #["synthetic", "owners-table", d.toString] }
       -- The table opens with Tells' verdict on its text, so a table on a text below the bar says so.
       let vf := d.withExtension "verdict.txt"
