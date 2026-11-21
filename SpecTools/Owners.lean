@@ -226,7 +226,13 @@ def writerPrompt (v : Vocab) (form : Form) (rs : List Rule) (flaws : List Imperf
   s!"{persona v}\n\n{shape} Everything below must come across exactly as it says, the mistakes \
     included; add no other rule that turns customers away.\n\n# What you want\n\n" ++
     "\n".intercalate items ++
-    (if notes.isEmpty then "" else s!"\n\n# How real first calls go (notes from real ones)\n\n{notes}") ++
+    (if notes.isEmpty then "" else match form with
+      | .conversation => s!"\n\n# How real first calls go (notes from real ones)\n\n{notes}"
+      | .prose => "\n\n# The message you start from\n\nA real owner of a business like yours once \
+          sent this to a developer. Start from it: keep its words, its mistakes, its layout and \
+          about its length, and change only what you must so that it is about your business and \
+          says what you want above, each rule put the way this owner puts things. Drop what is \
+          about their business and not yours.\n\n" ++ notes) ++
     "\n\nGive the whole text as `document`."
 
 /-- The reviewer's prompt: the persona and the text, never the rules. -/

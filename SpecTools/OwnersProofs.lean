@@ -279,6 +279,9 @@ example :
       has c "Developer:" && has c "proposes concrete" &&
       has w "never gathered into a list" && has w "first number that's refused" &&
       has w "not spread one per paragraph" &&
+      has (writerPrompt v .prose rs fl "BASE TEXT") "# The message you start from" &&
+      has (writerPrompt v .prose rs fl "BASE TEXT") "BASE TEXT" &&
+      !has w "# The message you start from" &&
       !rs.any (fun r => has rv (ownerRuleText r)) && !has rv "# What you want" := by native_decide
 
 end SpecTools.Owners

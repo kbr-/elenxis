@@ -330,7 +330,10 @@ def synthetic (args : List String) : IO UInt32 := do
         if SpecTools.Owners.suiteNext (vs.map (·.1)) == .write then
           let d := out / s!"{t}-{k}"
           unless ← (d / "text.md").pathExists do
-            let _ ← spec #["owners-write", d.toString, toString seed, "prose", "", "claude-opus-5-5",
+            -- OUT-DIR/T-base.txt, a real owner's message, when present: the writing starts from it.
+            let base := out / s!"{t}-base.txt"
+            let basePath := if ← base.pathExists then base.toString else ""
+            let _ ← spec #["owners-write", d.toString, toString seed, "prose", basePath, "claude-opus-5-5",
               s!"vocab={t}"] (out / s!"{t}-{k}.log") 5400
           vs := vs ++ [← verdict d]
       IO.println s!"{t}: Tells' verdicts (human, hundredths) {vs}"
