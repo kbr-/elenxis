@@ -218,10 +218,12 @@ number given without saying whether that number itself is refused.
   the owner's text as their prose, the first EMPTY without plants, the others three shared blind
   spots on rules with no flaw; the key names the blind spots and the flaws by row, so a finding on a
   flaw's row counts as an imperfection found and no false alarm.
-- `spec-tools synthetic owners-table DIR [COUNT]` prints the five rows from the saved results:
-  `gaps` alone on the variants with blind spots, `gaps` on those without, and the baseline, ledger
-  and tools arms. With a positive `COUNT`, require a successful score from each variant in every arm
-  and ignore earlier failed attempts for variants that succeeded on retry.
+- `spec-tools synthetic owners-table DIR [COUNT [codex-input]]` prints the five rows from the saved
+  results: `gaps` alone on the variants with blind spots, `gaps` on those without, and the baseline,
+  ledger and tools arms. With a positive `COUNT`, require a successful score from each variant in
+  every arm and ignore earlier failed attempts for variants that succeeded on retry. Use
+  `codex-input` when the agent and all checks used Codex. Codex's reported input already includes
+  cached input.
 
 The hand-written loans fixture is in `fixtures/loans`.
 

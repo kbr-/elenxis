@@ -809,11 +809,17 @@ structure RunResult where
   outputTokens : Nat
   deriving Repr, Inhabited
 
-def tokensOf (u : Usage.Usage) : Nat :=
-  u.input.known + u.cacheWrite.known + u.cacheRead.known + u.output.known
+def tokensOf (u : Usage.Usage) (codexInput : Bool := false) : Nat :=
+  u.input.known + u.output.known +
+    (if codexInput then 0 else u.cacheWrite.known + u.cacheRead.known)
+
+example :
+    let usage : Usage.Usage :=
+      { input := .of (some 100), cacheRead := .of (some 70), output := .of (some 10) }
+    tokensOf usage true = 110 ∧ tokensOf usage = 180 := by decide
 
 /-- A saved result line, or none for a failed run's. -/
-def runResult (j : Json) : Option RunResult := do
+def runResult (j : Json) (codexInput : Bool := false) : Option RunResult := do
   let found ← (j.getObjValAs? (List String) "found_kinds").toOption
   let missed ← (j.getObjValAs? (List String) "missed_kinds").toOption
   let alarms ← (j.getObjValAs? Nat "false_alarms").toOption
@@ -823,7 +829,7 @@ def runResult (j : Json) : Option RunResult := do
   let flaws (l : List String) := (l.filter isFlawKind).length
   return { blindPlanted := blind found + blind missed, blindFound := blind found,
            flawsPlanted := flaws found + flaws missed, flawsFound := flaws found, alarms,
-           millis := usage.millis, tokens := tokensOf usage + tokensOf tools,
+           millis := usage.millis, tokens := tokensOf usage codexInput + tokensOf tools codexInput,
            outputTokens := usage.output.known + tools.output.known }
 
 /-- A completed arm has one scorable success per variant. Earlier errors remain in the journal
@@ -880,8 +886,8 @@ def tableHeader : String :=
 
 /-- The five rows: `gaps` alone on the variants with blind spots, `gaps` on those with none (the
 control), and the three agents' arms on every variant. Each list holds a row's saved lines. -/
-def table (gaps baseline ledger tools : List Json) : String :=
-  let results (ls : List Json) := ls.filterMap runResult
+def table (gaps baseline ledger tools : List Json) (codexInput : Bool := false) : String :=
+  let results (ls : List Json) := ls.filterMap (runResult · codexInput)
   let failed (ls : List Json) := ls.length - (results ls).length
   let gr := results gaps
   "\n".intercalate [tableHeader,

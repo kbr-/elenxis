@@ -425,8 +425,10 @@ def synthetic (args : List String) : IO UInt32 := do
         if ← done d arm then IO.println s!"{t} {arm}: results complete, not run again"; continue
         let e ← spec #["run", d.toString, model, model, arm] (out / s!"{t}-{arm}.log") 7200
         IO.println s!"{t} {arm}: exit {e}{if ← done d arm then "" else ", the row incomplete (a variant failed or is missing)"}"
+      let backend ← SpecTools.Model.configuredBackend
+      let tokenArgs := if backend.harness == .codex then #["codex-input"] else #[]
       let o ← IO.Process.output {
-        cmd := self.toString, args := #["synthetic", "owners-table", d.toString, "12"] }
+        cmd := self.toString, args := #["synthetic", "owners-table", d.toString, "12"] ++ tokenArgs }
       if o.exitCode != 0 then
         IO.eprintln s!"{t}: no complete table: {o.stderr.trimAscii}"
         continue
@@ -463,7 +465,8 @@ def synthetic (args : List String) : IO UInt32 := do
     for line in SpecTools.Power.thresholdTable do IO.println line
     return 0
   | ["owners-table", outDir]
-  | ["owners-table", outDir, _] =>
+  | ["owners-table", outDir, _]
+  | ["owners-table", outDir, _, "codex-input"] =>
     -- The five rows of the test in OUT-DIR from its saved results (Owners.table).
     let dir := System.FilePath.mk outDir
     let expected := (args[2]?).bind String.toNat?
@@ -481,7 +484,7 @@ def synthetic (args : List String) : IO UInt32 := do
         return complete
       return (rows.filter (· ≠ "")).filterMap fun l => (Lean.Json.parse l).toOption
     IO.println (SpecTools.Owners.table (← lines "gaps")
-      (← lines "baseline") (← lines "ledger") (← lines "tools"))
+      (← lines "baseline") (← lines "ledger") (← lines "tools") (args[3]?.isSome))
     return 0
   | ["gapsrun", seed, n, outDir, model] =>
     -- `gaps` itself on each variant of a batch written by gvariants SEED N, three at a time, scored
