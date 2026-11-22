@@ -230,14 +230,33 @@ def keyPlants (keyText : String) : List (List Plant) :=
                clause := ← (p.getObjValAs? String "clause").toOption, edits := [],
                row := (p.getObjValAs? String "row").toOption }
 
-/-- The command an agent runs the spec tools with, the executable in `root`. -/
-def checkCommand (root : String) : String := root ++ "/.lake/build/bin/spec-tools check"
+/-- The executable for checks of a synthetic variant. -/
+def checkExecutable (root : String) : String := root ++ "/.lake/build/bin/spec-tools"
+
+/-- The command an agent runs the spec tools with. -/
+def checkCommand (root : String) : String := checkExecutable root ++ " check"
 
 /-- The tools of an arm: reading and the tests for all, `spec-tools check` for the ledger's and the
 tools arm. -/
 def armTools (arm : Arm) (root : String) : List String :=
   ["Read", "Glob", "Grep", "Bash(python3 -m pytest *)"] ++
     (if arm == .ledger || arm == .tools then [s!"Bash({checkCommand root} *)"] else [])
+
+/-- Run the three preparatory checks. A failed invocation ends preparation with its diagnostic. -/
+def prepareReports (executable : String) (work : System.FilePath) : ExceptT String IO String := do
+  let run (check : String) : ExceptT String IO String := do
+    let result ← liftM <| (IO.Process.output
+      { cmd := executable, args := #["check", check], cwd := some work }).toBaseIO
+    let output ← match result with
+      | .ok output => pure output
+      | .error error => throw s!"preparing {check} with {executable}: {error}"
+    if output.exitCode != 0 then
+      throw s!"preparing {check}: exit {output.exitCode}\n{output.stdout}{output.stderr}"
+    return output.stdout
+  let audit ← run "audit"
+  let tests ← run "tests"
+  let gaps ← run "gaps"
+  return s!"## audit\n{auditDigest audit}\n\n## tests\n{tests}\n\n## gaps\n{gaps}"
 
 /-- One arm's run on one variant: its findings and the `check` commands it ran, or why there are
 none; what its agent used; and what its tools used (the tools arm's reports and every `check` the
@@ -254,29 +273,27 @@ def runArm (backend : Backend) (variantDir : System.FilePath) (arm : Arm) (root 
     IO.FS.writeFile (work / toolBackendFile) (backendConfigJson toolBackend).compress
   -- The tools arm's reports, run before the agent starts; check.log then records only the
   -- agent's own reruns.
-  let reports ← if arm == .tools then do
-      let run (c : String) := IO.Process.output
-        { cmd := root ++ "/.lake/build/bin/spec-tools", args := #["check", c], cwd := some work.toString }
-      let audit ← run "audit"
-      let tests ← run "tests"
-      let gaps ← run "gaps"
-      if ← (work / "check.log").pathExists then IO.FS.removeFile (work / "check.log")
-      pure s!"## audit\n{auditDigest audit.stdout}\n\n## tests\n{tests.stdout}\n\n## gaps\n{gaps.stdout}"
-    else pure ""
-  let question : Question :=
-    { prompt := arm.prompt (checkCommand root) reports, schema := findingsSchema, timeoutMs }
-  let inv := agentInvocation backend question (armTools arm root) work
-  let ran ← liveRunner inv (readBackFiles backend.harness) timeoutMs
-  let log := work / "check.log"
-  let logText ← if ← log.pathExists then IO.FS.readFile log else pure ""
-  let checks := (logText.splitOn "\n").filter (· ≠ "")
-  let agentUsage := usageOf backend timeoutMs ran
-  let toolsUsage ← Usage.readRecorded (usageFile work.toString)
-  let result := match finish backend question ran with
-    | .error f => .error (repr f).pretty
-    | .ok o => match findingsOf o.answer with
-      | some fs => .ok (fs, checks)
-      | none => .error "the answer has no findings list"
-  return (result, agentUsage, toolsUsage)
+  let reports ← if arm == .tools then (prepareReports (checkExecutable root) work).run
+    else pure (.ok "")
+  match reports with
+  | .error why => return (.error why, {}, ← Usage.readRecorded (usageFile work.toString))
+  | .ok reports =>
+    if arm == .tools && (← (work / "check.log").pathExists) then
+      IO.FS.removeFile (work / "check.log")
+    let question : Question :=
+      { prompt := arm.prompt (checkCommand root) reports, schema := findingsSchema, timeoutMs }
+    let inv := agentInvocation backend question (armTools arm root) work
+    let ran ← liveRunner inv (readBackFiles backend.harness) timeoutMs
+    let log := work / "check.log"
+    let logText ← if ← log.pathExists then IO.FS.readFile log else pure ""
+    let checks := (logText.splitOn "\n").filter (· ≠ "")
+    let agentUsage := usageOf backend timeoutMs ran
+    let toolsUsage ← Usage.readRecorded (usageFile work.toString)
+    let result := match finish backend question ran with
+      | .error f => .error (repr f).pretty
+      | .ok o => match findingsOf o.answer with
+        | some fs => .ok (fs, checks)
+        | none => .error "the answer has no findings list"
+    return (result, agentUsage, toolsUsage)
 
 end SpecTools.SyntheticRun

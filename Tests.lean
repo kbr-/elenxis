@@ -540,6 +540,46 @@ def testOwners : IO Unit := do
     s!"four failed checks didn't start again, or two failed starts kept a text: {calls} calls"
   IO.println "PASS: owners (five rounds, kept, sent back for a rule and for a flaw, started again, failed)"
 
+/-- A failing preparation supplies its diagnostic and never runs the checks that follow it. -/
+def testPrepareReports : IO Unit := do
+  let dir ← scratch "prepare-reports"
+  let executable := dir / "check-fixture"
+  let journal := dir / "attempts"
+  let failure := dir / "failure"
+  try
+    IO.FS.writeFile executable "#!/bin/sh\n\
+      printf '%s\\n' \"$2\" >> attempts\n\
+      printf 'report for %s\\n' \"$2\"\n\
+      if test -f failure && test \"$2\" = \"$(cat failure)\"; then\n\
+        printf 'diagnostic for %s\\n' \"$2\" >&2\n\
+        exit 42\n\
+      fi\n"
+    let mode ← IO.Process.output { cmd := "chmod", args := #["+x", executable.toString] }
+    ensure (mode.exitCode == 0) mode.stderr
+    let run := (SpecTools.SyntheticRun.prepareReports executable.toString dir).run
+    let valid ← run
+    ensure (match valid with
+      | .ok report => ["audit", "tests", "gaps"].all fun name =>
+          (report.splitOn s!"report for {name}").length == 2
+      | .error _ => false) "successful checks did not supply all three reports"
+    ensure ((← IO.FS.readFile journal) == "audit\ntests\ngaps\n") "wrong preparation order"
+    for (name, attempted) in
+      [("audit", "audit\n"), ("tests", "audit\ntests\n"), ("gaps", "audit\ntests\ngaps\n")] do
+      IO.FS.writeFile failure name
+      IO.FS.writeFile journal ""
+      let failed ← run
+      ensure (match failed with
+        | .error error => error == s!"preparing {name}: exit 42\nreport for {name}\ndiagnostic for {name}\n"
+        | .ok _ => false) s!"the failed {name} preparation did not preserve its output"
+      ensure ((← IO.FS.readFile journal) == attempted) s!"preparation continued past {name}"
+    let absent ← (SpecTools.SyntheticRun.prepareReports (dir / "missing").toString dir).run
+    ensure (match absent with
+      | .error error => error.startsWith "preparing audit"
+      | .ok _ => false) "a failed process start did not identify the attempted check"
+  finally
+    IO.FS.removeDirAll dir.parent.get!
+  IO.println "PASS: tool preparation stops on a failed check"
+
 /-- Run `act` as a task, printing its wall time when it ends, so a slow group is named. -/
 def timed (name : String) (act : IO Unit) : IO (Task (Except IO.Error Unit)) := IO.asTask do
   let start ← IO.monoMsNow
@@ -551,7 +591,7 @@ def main : IO Unit := do
   -- processes' environments its own), so they run at once; the live runner's prohibition below is
   -- the one global, set after all of them end.
   let groups ← [("command adapter", testCommandAdapter), ("usage", testUsage), ("prose", testProse),
-      ("owners", testOwners),
+      ("owners", testOwners), ("tool preparation", testPrepareReports),
       ("requirement audits", testRequirementAudits), ("finished process", testFinishedProcess),
       ("overrun", testOverrun), ("full codex prompt", testFullCodexPrompt),
       ("draft review", testDraftReview), ("approved contracts", testApprovedContracts),

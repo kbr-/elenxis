@@ -634,6 +634,11 @@ def synthetic (args : List String) : IO UInt32 := do
     let keys := SpecTools.SyntheticRun.keyPlants keyText
     let shownAll := SpecTools.SyntheticRun.keyPresentations keyText
     let root ← IO.currentDir
+    if arms == [.tools] then
+      let executable := SpecTools.SyntheticRun.checkExecutable root.toString
+      unless ← (System.FilePath.mk executable).pathExists do
+        IO.eprintln s!"synthetic run tools: missing preparatory executable {executable}; run from the Elenxis project directory"
+        return 2
     let backend ← SpecTools.Model.selectedBackend "configured" agentModel
     let toolBackend ← SpecTools.Model.selectedBackend "configured" toolModel
     -- The tools arm starts each run's audit, tests and gaps at once: three controls together peaked
