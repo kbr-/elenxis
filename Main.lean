@@ -390,11 +390,11 @@ def synthetic (args : List String) : IO UInt32 := do
         fun j => (j.getObjValAs? Bool "faithful").toOption).getD false
       unless faithful do IO.println s!"{t}: its text is not read faithfully, see {f}; no table"
       return faithful
-    -- A row whose results file is complete (Owners.rowDone over the 12 variants) is not run again.
+    -- Reuse the same completed rows that strict table assembly accepts.
     let done (d : System.FilePath) (row : String) : IO Bool := do
       let f := d / s!"results-{row}.jsonl"
       if !(← f.pathExists) then return false
-      return SpecTools.Owners.rowDone 12 ((← IO.FS.readFile f).splitOn "\n")
+      return (SpecTools.Owners.completedRow row 12 ((← IO.FS.readFile f).splitOn "\n")).isSome
     let preparing ← kept.mapM fun (t, seed, d) => IO.asTask do
         unless ← (d / "key.jsonl").pathExists do
           let v ← spec #["owners-variants", d.toString, toString seed, "12", "2", s!"vocab={t}"]
@@ -406,13 +406,18 @@ def synthetic (args : List String) : IO UInt32 := do
             IO.println s!"{t}: the gaps row is incomplete (a variant failed or is missing), see {out}/{t}-gaps.log"
         return true
     let prepared ← preparing.mapM fun task => do IO.ofExcept (← IO.wait task)
+    let mut tables := 0
     for ((t, _, d), ok) in kept.zip prepared do
       unless ok do IO.println s!"{t}: variants failed, see {out}/{t}-variants.log"; continue
       for arm in ["baseline", "ledger", "tools"] do
         if ← done d arm then IO.println s!"{t} {arm}: results complete, not run again"; continue
         let e ← spec #["run", d.toString, "claude-opus-5-5", "claude-opus-5-5", arm] (out / s!"{t}-{arm}.log") 7200
         IO.println s!"{t} {arm}: exit {e}{if ← done d arm then "" else ", the row incomplete (a variant failed or is missing)"}"
-      let o ← IO.Process.output { cmd := self.toString, args := #["synthetic", "owners-table", d.toString] }
+      let o ← IO.Process.output {
+        cmd := self.toString, args := #["synthetic", "owners-table", d.toString, "12"] }
+      if o.exitCode != 0 then
+        IO.eprintln s!"{t}: no complete table: {o.stderr.trimAscii}"
+        continue
       -- The table opens with Tells' verdict on its text, so a table on a text below the bar says so.
       let vf := d.withExtension "verdict.txt"
       let verdictText ← if ← vf.pathExists then IO.FS.readFile vf else pure ""
@@ -420,7 +425,8 @@ def synthetic (args : List String) : IO UInt32 := do
       IO.FS.writeFile (out / s!"{t}-table.md")
         (s!"Tells' verdict on this test's text: {verdictLine.getD "none"}\n\n" ++ o.stdout)
       IO.println s!"{t}: table in {out}/{t}-table.md"
-    return if kept.length == tests.length then 0 else 1
+      tables := tables + 1
+    return if tables == tests.length then 0 else 1
   | "owners-best" :: outDir :: dirs =>
     -- Of a test's writings in DIRS (each written by owners-write), the one the development judge
     -- scored highest (Owners.bestIndex) is copied to OUT-DIR, to go on to its variants.
@@ -444,16 +450,26 @@ def synthetic (args : List String) : IO UInt32 := do
   | ["power-threshold"] =>
     for line in SpecTools.Power.thresholdTable do IO.println line
     return 0
-  | ["owners-table", outDir] =>
+  | ["owners-table", outDir]
+  | ["owners-table", outDir, _] =>
     -- The five rows of the test in OUT-DIR from its saved results (Owners.table).
     let dir := System.FilePath.mk outDir
-    let lines (f : String) : IO (List Lean.Json) := do
-      if ← (dir / f).pathExists then
-        return ((← IO.FS.readFile (dir / f)).splitOn "\n").filter (· ≠ "") |>.filterMap
-          fun l => (Lean.Json.parse l).toOption
-      else return []
-    IO.println (SpecTools.Owners.table (← lines "results-gaps.jsonl")
-      (← lines "results-baseline.jsonl") (← lines "results-ledger.jsonl") (← lines "results-tools.jsonl"))
+    let expected := (args[2]?).bind String.toNat?
+    if args[2]?.isSome && expected.getD 0 == 0 then
+      IO.eprintln "owners-table: expected variant count must be positive"
+      return 2
+    let lines (arm : String) : IO (List Lean.Json) := do
+      let f := dir / s!"results-{arm}.jsonl"
+      let rows ← if ← f.pathExists then
+        pure ((← IO.FS.readFile f).splitOn "\n")
+        else pure []
+      if let some n := expected then
+        let some complete := SpecTools.Owners.completedRow arm n rows
+          | throw (IO.userError s!"{f}: expected a successful score for each of {n} variants")
+        return complete
+      return (rows.filter (· ≠ "")).filterMap fun l => (Lean.Json.parse l).toOption
+    IO.println (SpecTools.Owners.table (← lines "gaps")
+      (← lines "baseline") (← lines "ledger") (← lines "tools"))
     return 0
   | ["gapsrun", seed, n, outDir, model] =>
     -- `gaps` itself on each variant of a batch written by gvariants SEED N, three at a time, scored

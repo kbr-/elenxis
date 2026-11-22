@@ -202,9 +202,10 @@ number given without saying whether that number itself is refused.
   the owner's text as their prose, the first EMPTY without plants, the others three shared blind
   spots on rules with no flaw; the key names the blind spots and the flaws by row, so a finding on a
   flaw's row counts as an imperfection found and no false alarm.
-- `spec-tools synthetic owners-table DIR` prints the five rows from the saved results: `gaps` alone
-  on the variants with blind spots, `gaps` on those without, and the baseline, ledger and tools
-  arms.
+- `spec-tools synthetic owners-table DIR [COUNT]` prints the five rows from the saved results:
+  `gaps` alone on the variants with blind spots, `gaps` on those without, and the baseline, ledger
+  and tools arms. With a positive `COUNT`, require a successful score from each variant in every arm
+  and ignore earlier failed attempts for variants that succeeded on retry.
 
 The hand-written loans fixture is in `fixtures/loans`.
 
@@ -219,7 +220,7 @@ lake test
 `lake build` builds the library and `spec-tools`; `lake env lean` checks a specification and runs
 its `#eval` lines (the audit, and `gaps` when the specification asks for it); `lake test` runs the
 tests, which call no model. `spec-tools` with no arguments lists its commands. The toolchain is
-`leanprover/lean4:v4.36.0-rc2`, with no dependencies.
+`leanprover/lean4:v4.36.0`, with no dependencies.
 
 ## What is proved
 

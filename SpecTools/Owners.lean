@@ -561,18 +561,6 @@ theorem parseVerdict_reads :
     parseVerdict "o12-x-0: not judged" = none ∧
     parseVerdict "threshold (second lowest of 93 calibration scores) 0.920000" = none := by native_decide
 
-/-- Whether a row's results file (one JSON line per variant) is complete: a line for each of
-`variants` variants and none recording an error, so `owners-suite` need not run the row again. -/
-def rowDone (variants : Nat) (lines : List String) : Bool :=
-  let ls := lines.filter (· ≠ "")
-  ls.length == variants && !ls.any (fun l => (l.splitOn "\"error\"").length > 1)
-
-theorem rowDone_reads :
-    rowDone 2 ["{\"variant\": 0}", "{\"variant\": 1}", ""] = true ∧
-    rowDone 2 ["{\"variant\": 0}"] = false ∧
-    rowDone 2 ["{\"variant\": 0}", "{\"variant\": 1, \"error\": \"exit 0\"}"] = false ∧
-    rowDone 0 [] = true := by native_decide
-
 /-- A decimal score as `tells verdicts` prints it ("0.700000"), in hundredths, rounded down. -/
 def hundredths (s : String) : Option Nat :=
   match s.splitOn "." with
@@ -830,6 +818,44 @@ def runResult (j : Json) : Option RunResult := do
            flawsPlanted := flaws found + flaws missed, flawsFound := flaws found, alarms,
            millis := usage.millis, tokens := tokensOf usage + tokensOf tools,
            outputTokens := usage.output.known + tools.output.known }
+
+/-- A completed arm has one scorable success per variant. Earlier errors remain in the journal
+and do not supply a score. -/
+def completedRow (arm : String) (variants : Nat) (lines : List String) : Option (List Json) := do
+  let entries ← (lines.filter (fun l => !l.trimAscii.isEmpty)).mapM fun line => do
+    let j ← (Json.parse line).toOption
+    let i ← (j.getObjValAs? Nat "variant").toOption
+    let recordedArm ← (j.getObjValAs? String "arm").toOption
+    guard (i < variants && recordedArm == arm)
+    if (j.getObjVal? "error").isOk then
+      let _ ← (j.getObjValAs? String "error").toOption
+      return none
+    let _ ← runResult j
+    return some (i, j)
+  let scores := entries.filterMap id
+  guard ((scores.map Prod.fst).mergeSort == List.range variants)
+  return scores.map Prod.snd
+
+private def successfulLine (arm : String) (variant : Nat) : String :=
+  (Json.mkObj [("variant", toJson variant), ("arm", .str arm), ("found_kinds", .arr #[]),
+    ("missed_kinds", .arr #[]), ("false_alarms", toJson (0 : Nat))]).compress
+
+theorem completedRow_exact_coverage :
+    (completedRow "tools" 2 [successfulLine "tools" 1, successfulLine "tools" 0, " "]).isSome = true ∧
+    (completedRow "tools" 2 [successfulLine "tools" 0, successfulLine "tools" 0]).isNone = true ∧
+    (completedRow "tools" 2 [successfulLine "tools" 0]).isNone = true ∧
+    (completedRow "tools" 2 [successfulLine "tools" 0, successfulLine "ledger" 1]).isNone = true ∧
+    (completedRow "tools" 2 [successfulLine "tools" 0, successfulLine "tools" 2]).isNone = true := by
+  native_decide
+
+theorem completedRow_allows_successful_retry :
+    ((completedRow "gaps" 1
+      ["{\"arm\":\"gaps\",\"variant\":0,\"error\":\"exit 1\"}", successfulLine "gaps" 0]).map
+      List.length) = some 1 ∧
+    (completedRow "gaps" 1 ["{\"arm\":\"gaps\",\"variant\":0,\"error\":\"exit 1\"}"]).isNone = true ∧
+    (completedRow "gaps" 1 ["{\"arm\":\"gaps\",\"variant\":0}"]).isNone = true ∧
+    (completedRow "gaps" 1 ["unparseable", successfulLine "gaps" 0]).isNone = true := by
+  native_decide
 
 /-- A row of the table: runs, blind spots found of those planted, imperfections found of those
 planted, false alarms, and time and tokens per run (totals divided by the runs, rounded down);
