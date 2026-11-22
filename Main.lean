@@ -377,19 +377,25 @@ def synthetic (args : List String) : IO UInt32 := do
     let kept₀ := (tests.zip written).filterMap fun ((t, seed), d) => d.map (t, seed, ·)
     for ((t, _), d) in tests.zip written do
       IO.println s!"{t}: {match d with | some d => s!"kept {d}" | none => "no text Tells reads as a human's"}"
-    -- A kept text owners-write didn't write (no writing.json beside it) gets the fidelity check
-    -- here, in one call for all such texts; a test whose text is not read faithfully gets no table.
-    let reused ← kept₀.filterM fun (_, _, d) => do return !(← (d / "writing.json").pathExists)
-    if !reused.isEmpty then
-      let _ ← spec (#["owners-fidelity"] ++ (reused.map (·.2.2.toString)).toArray) (out / "fidelity.log") 1800
-      IO.println (← IO.FS.readFile (out / "fidelity.log"))
-    let kept ← kept₀.filterM fun (t, _, d) => do
+    -- Imported texts need their own successful fidelity check before scoring.
+    let auditing ← kept₀.mapM fun (t, seed, d) => IO.asTask do
+      let imported := !(← (d / "writing.json").pathExists)
+      if imported then
+        let log := out / s!"{t}-fidelity.log"
+        let exit ← spec #["owners-fidelity", d.toString] log 1800
+        IO.println (← IO.FS.readFile log)
+        if exit != 0 then
+          IO.eprintln s!"{t}: fidelity check failed (exit {exit}), see {log}; no table"
+          return none
       let f := d / "fidelity.json"
-      if !(← f.pathExists) then return true
-      let faithful := ((Lean.Json.parse (← IO.FS.readFile f)).toOption.bind
-        fun j => (j.getObjValAs? Bool "faithful").toOption).getD false
+      let faithful ← if ← f.pathExists then
+        pure (((Lean.Json.parse (← IO.FS.readFile f)).toOption.bind
+          fun j => (j.getObjValAs? Bool "faithful").toOption).getD false)
+        else pure !imported
       unless faithful do IO.println s!"{t}: its text is not read faithfully, see {f}; no table"
-      return faithful
+      return if faithful then some (t, seed, d) else none
+    let audited ← auditing.mapM fun task => do IO.ofExcept (← IO.wait task)
+    let kept := audited.filterMap id
     -- Reuse the same completed rows that strict table assembly accepts.
     let done (d : System.FilePath) (row : String) : IO Bool := do
       let f := d / s!"results-{row}.jsonl"
