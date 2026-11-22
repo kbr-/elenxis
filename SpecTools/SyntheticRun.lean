@@ -1,6 +1,8 @@
 import SpecTools.UsageReport
 import SpecTools.Score
 import SpecTools.BackendConfig
+import SpecTools.OwnerCheck
+import SpecTools.CheckMcp
 
 /-!
 The synthetic test's agent runs: each variant given, in a fresh copy, to a fresh agent with the
@@ -121,22 +123,28 @@ def usageFile (dir : String) : String := dir ++ "/usage.jsonl"
 where a tool asks one; none for a command it doesn't know. A tool that asks a model records its
 usage in `usageFile dir`. -/
 def checkInvocation (root dir model sub : String) : Option Invocation :=
-  if sub = "audit" then some (leanOn root dir #[])
-  else if sub = "tests" then some (leanOn root dir #[("SPEC_TOOLS_GUARD_WORKERS", some "3"),
+  match OwnerCheck.decode sub none with
+  | some .audit => some (leanOn root dir #[])
+  | some .tests => some (leanOn root dir #[("SPEC_TOOLS_GUARD_WORKERS", some "3"),
     ("SPEC_TOOLS_TESTS", some "1"), ("SPEC_TOOLS_DIR", some dir),
     ("SPEC_TOOLS_ADAPTER", some (root ++ "/adapters/python_guards.py"))])
-  else if sub = "gaps" then some (leanOn root dir #[("SPEC_TOOLS_GAPS", some model),
+  | some .gaps => some (leanOn root dir #[("SPEC_TOOLS_GAPS", some model),
     ("SPEC_TOOLS_DIR", some dir), ("SPEC_TOOLS_USAGE", some (usageFile dir))])
-  else if sub = "clauses" then
+  | some .clauses =>
     some ⟨root ++ "/.lake/build/bin/spec-tools", #["clauses", "configured", model, dir ++ "/loans.md"],
       #[("SPEC_TOOLS_USAGE", some (usageFile dir))], root⟩
-  else none
+  | none => none
 
 theorem check_unknown_refused (root dir model sub : String)
     (h : sub ≠ "audit" ∧ sub ≠ "tests" ∧ sub ≠ "gaps" ∧ sub ≠ "clauses") :
     checkInvocation root dir model sub = none := by
   obtain ⟨a, t, g, c⟩ := h
-  simp [checkInvocation, a, t, g, c]
+  unfold checkInvocation
+  cases accepted : OwnerCheck.decode sub none with
+  | none => rfl
+  | some check =>
+    have name := ((OwnerCheck.decode_iff sub none check).mp accepted).2
+    cases check <;> simp_all [OwnerCheck.Check.name]
 
 /-- Only `gaps` and `clauses` ask a model; each asks the configured one and records its usage in
 the variant's usage file. -/
@@ -147,7 +155,9 @@ theorem check_model_is_configured (root dir model : String) :
     (checkInvocation root dir model "clauses").map (fun i => (i.args, i.env)) =
       some (#["clauses", "configured", model, dir ++ "/loans.md"],
         #[("SPEC_TOOLS_USAGE", some (usageFile dir))]) := by
-  simp [checkInvocation, leanOn]
+  have gaps : OwnerCheck.decode "gaps" none = some .gaps := rfl
+  have clauses : OwnerCheck.decode "clauses" none = some .clauses := rfl
+  simp [checkInvocation, gaps, clauses, leanOn]
 
 /-- The variant directory's configuration, written by `runArm`: the tools' root and the model their
 questions go to, so the agent running `check` chooses neither. -/
@@ -233,6 +243,84 @@ def keyPlants (keyText : String) : List (List Plant) :=
 /-- The executable for checks of a synthetic variant. -/
 def checkExecutable (root : String) : String := root ++ "/.lake/build/bin/spec-tools"
 
+/-- Called under the fixture lock by the protected launcher. Record the attempt before starting
+the CLI and retain its actual status and both output streams. -/
+def runLockedCheck (sub : String) (receipt : System.FilePath) : IO UInt32 := do
+  let some check := OwnerCheck.decode sub none | return 2
+  let work ← IO.currentDir
+  let json ← IO.ofExcept (Json.parse (← IO.FS.readFile (work / configFile)))
+  let root ← IO.ofExcept (json.getObjValAs? String "root")
+  let journal ← IO.FS.Handle.mk (work / "check-events.jsonl") .append
+  let event (phase : String) (fields : List (String × Json)) := do
+    journal.putStrLn (Json.mkObj ([("check", toJson check.name), ("phase", toJson phase)] ++ fields)).compress
+    journal.flush
+  event "attempt" []
+  let result ← (IO.Process.output {
+    cmd := checkExecutable root
+    args := #["check", check.name]
+    cwd := some work }).toBaseIO
+  let (ok, report) ← match result with
+    | .error error => do
+      event "failed_to_start" [("error", toJson (toString error))]
+      pure (false, toString error)
+    | .ok response => do
+      event "exit" [("status", toJson response.exitCode.toNat)]
+      pure (response.exitCode == 0,
+        s!"{check.name}: exit {response.exitCode}\n{response.stdout}{response.stderr}")
+  IO.FS.writeFile receipt (Json.mkObj [("ok", toJson ok), ("report", toJson report)]).compress
+  return 0
+
+/-- Serve fixture checks on the machine holding the original variant and the Lean build. -/
+def serveChecks (launcher executable : String) : IO UInt32 := do
+  let work ← IO.currentDir
+  let env ← backendEnvironment.filterMapM fun key => do
+    return (← IO.getEnv key).map (s!"{key}=" ++ ·)
+  CheckMcp.serve fun check => do
+    let scratch ← IO.FS.createTempDir
+    let receipt := scratch / "receipt.json"
+    let job ← (IO.Process.output {
+      cmd := launcher
+      args := #["--category", "formal_verification", "--expect", "60", "env"] ++ env.toArray ++
+        #["/usr/bin/flock", (work / "check.lock").toString, executable, "fixture-check",
+          check.name, receipt.toString]
+      cwd := some work }).toBaseIO
+    let result ← match job with
+      | .error error => pure (false, s!"Could not launch {check.name}: {error}")
+      | .ok job =>
+        if job.exitCode == 0 && (← receipt.pathExists) then
+          let json ← IO.ofExcept (Json.parse (← IO.FS.readFile receipt))
+          pure (← IO.ofExcept (json.getObjValAs? Bool "ok"),
+            ← IO.ofExcept (json.getObjValAs? String "report"))
+        else pure (false, s!"Check launcher exited {job.exitCode}\n{job.stdout}{job.stderr}")
+    IO.FS.removeDirAll scratch
+    return result
+  return 0
+
+private def remoteLedger (backend : Backend) (arm : Arm) : IO Bool := do
+  return backend.harness == .codex && arm == .ledger && (← IO.getEnv "SPEC_TOOLS_HOST").isSome
+
+private def fixtureToolArgs (work : System.FilePath) (root : String) (timeoutMs : Nat) :
+    IO (Except String (Array String)) := do
+  let host := (← IO.getEnv "SPEC_TOOLS_CHECK_HOST").getD ""
+  let launcher := (← IO.getEnv "SPEC_TOOLS_CHECK_LAUNCHER").getD ""
+  unless !host.isEmpty && !host.startsWith "-" && !host.contains ':' &&
+      (System.FilePath.mk launcher).isAbsolute do
+    return .error "Remote Codex ledger requires SPEC_TOOLS_CHECK_HOST and an absolute SPEC_TOOLS_CHECK_LAUNCHER"
+  let env ← backendEnvironment.filterMapM fun key => do
+    return (← IO.getEnv key).map (s!"{key}=" ++ ·)
+  let seconds := (timeoutMs + 999) / 1000
+  let executable := checkExecutable root
+  let command := s!"cd {shellQuote work.toString} && exec " ++ " ".intercalate
+    ((["timeout", toString seconds, "env"] ++ env ++
+      [executable, "fixture-mcp", launcher, executable]).map shellQuote)
+  let args := toJson #["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "--", host, command]
+  let approvals := OwnerCheck.Check.all.toArray.flatMap fun check =>
+    #["-c", s!"mcp_servers.elenxis.tools.{check.name}.approval_mode=\"approve\""]
+  return .ok (#["-c", "mcp_servers.elenxis.command=\"/usr/bin/ssh\"",
+    "-c", "mcp_servers.elenxis.args=" ++ args.compress, "-c", "mcp_servers.elenxis.required=true",
+    "-c", "mcp_servers.elenxis.startup_timeout_sec=10",
+    "-c", s!"mcp_servers.elenxis.tool_timeout_sec={seconds}"] ++ approvals)
+
 /-- The command an agent runs the spec tools with. -/
 def checkCommand (root : String) : String := checkExecutable root ++ " check"
 
@@ -263,8 +351,11 @@ none; what its agent used; and what its tools used (the tools arm's reports and 
 agent ran). -/
 def runArm (backend : Backend) (variantDir : System.FilePath) (arm : Arm) (root : String)
     (toolBackend : Backend) (timeoutMs : Nat) :
-    IO (Except String (List Finding × List String) × Usage.Usage × Usage.Usage) := do
+    IO (Except String (List Finding × List String) × Usage.Usage × Usage.Usage × Array Json) := do
   let work := (← IO.FS.createTempDir) / "variant"
+  let bound ← remoteLedger backend arm
+  let transport ← if bound then fixtureToolArgs work root timeoutMs else pure (.ok #[])
+  let .ok toolArgs := transport | return (transport.map (fun _ => ([], [])), {}, {}, #[])
   IO.FS.createDirAll work
   for f in files do IO.FS.writeFile (work / f) (← IO.FS.readFile (variantDir / f))
   if arm == .ledger || arm == .tools then
@@ -276,13 +367,18 @@ def runArm (backend : Backend) (variantDir : System.FilePath) (arm : Arm) (root 
   let reports ← if arm == .tools then (prepareReports (checkExecutable root) work).run
     else pure (.ok "")
   match reports with
-  | .error why => return (.error why, {}, ← Usage.readRecorded (usageFile work.toString))
+  | .error why => return (.error why, {}, ← Usage.readRecorded (usageFile work.toString), #[])
   | .ok reports =>
     if arm == .tools && (← (work / "check.log").pathExists) then
       IO.FS.removeFile (work / "check.log")
-    let question : Question :=
-      { prompt := arm.prompt (checkCommand root) reports, schema := findingsSchema, timeoutMs }
+    let prompt := if bound then task ++ "\n\n" ++
+      "Use the Elenxis MCP tools on the fixture. Audit checks proof status, tests checks the named \
+      tests, gaps compares prose to the ledger and clauses extracts the prose's claims. Select \
+      checks as needed. Verify each finding against the files.\n\n" ++ answerFormat
+      else arm.prompt (checkCommand root) reports
+    let question : Question := { prompt, schema := findingsSchema, timeoutMs }
     let inv := agentInvocation backend question (armTools arm root) work
+    let inv := { inv with args := (inv.args.extract 0 1) ++ toolArgs ++ inv.args.extract 1 inv.args.size }
     let ran ← liveRunner inv (readBackFiles backend.harness) timeoutMs
     let log := work / "check.log"
     let logText ← if ← log.pathExists then IO.FS.readFile log else pure ""
@@ -294,6 +390,11 @@ def runArm (backend : Backend) (variantDir : System.FilePath) (arm : Arm) (root 
       | .ok o => match findingsOf o.answer with
         | some fs => .ok (fs, checks)
         | none => .error "the answer has no findings list"
-    return (result, agentUsage, toolsUsage)
+    let eventPath := work / "check-events.jsonl"
+    let events ← if ← eventPath.pathExists then
+      pure <| ((← IO.FS.readFile eventPath).splitOn "\n").toArray.filterMap
+        (fun line => (Json.parse line).toOption)
+      else pure #[]
+    return (result, agentUsage, toolsUsage, events)
 
 end SpecTools.SyntheticRun

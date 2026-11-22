@@ -158,6 +158,14 @@ also transfer the variant's working files. Set `CODEX_HOME` to the existing Code
 the model host when that login lives outside the default directory. Pass these variables through the
 launcher as part of the command's environment. Claude calls retain their existing transport.
 
+For a remote Codex `synthetic run` with the `ledger` arm, set `SPEC_TOOLS_CHECK_HOST` to the SSH
+name of the machine holding the original variant and `SPEC_TOOLS_CHECK_LAUNCHER` to the absolute
+path of that machine's protected launcher. The model host must be able to connect to this host over
+SSH. The agent can request `audit`, `tests`, `gaps` or `clauses` through the Elenxis MCP server with
+empty arguments. Each request runs on the original variant, whose lock serializes requests from
+independent connections. The result's `check_events` records attempts and terminal statuses. An
+agent can skip a check or submit findings after a failed check.
+
 ## The synthetic evaluation
 
 `SpecTools.Synthetic`, `SpecTools.Generated`, `SpecTools.Score` and `spec-tools synthetic` generate

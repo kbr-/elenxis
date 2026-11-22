@@ -708,14 +708,16 @@ def synthetic (args : List String) : IO UInt32 := do
         if ← IO.hasFinished t then ended := ended.push t else still := still.push t
       running := still
       for t in ended do
-        let (k, i, a, (r, agentUsage, toolsUsage)) ← IO.ofExcept t.get
+        let (k, i, a, (r, agentUsage, toolsUsage, events)) ← IO.ofExcept t.get
         let arm := a.name
-        let usages := s!"\"usage\": {(SpecTools.Usage.asJson agentUsage).compress}, \"tools_usage\": {(SpecTools.Usage.asJson toolsUsage).compress}"
+        let usageAndChecks := s!"\"usage\": {(SpecTools.Usage.asJson agentUsage).compress}, \
+          \"tools_usage\": {(SpecTools.Usage.asJson toolsUsage).compress}, \
+          \"check_events\": {(Lean.Json.arr events).compress}"
         used := (a, agentUsage, toolsUsage) :: used
         match r with
         | .error e =>
           IO.println s!"v{i} {arm}: failed: {e}"
-          out.putStrLn s!"\{\"variant\": {i}, \"arm\": \"{arm}\", \"error\": {e.quote}, {usages}}"
+          out.putStrLn s!"\{\"variant\": {i}, \"arm\": \"{arm}\", \"error\": {e.quote}, {usageAndChecks}}"
           out.flush
           stdout.flush
         | .ok (fs, checks) =>
@@ -726,7 +728,7 @@ def synthetic (args : List String) : IO UInt32 := do
           IO.println s!"v{i} {arm}: found {s.found} missed {s.missed} false alarms {s.falseAlarms} ({ms} ms; check ran {checks})"
           unless ((shownAll.lookup i).getD []).isEmpty do
             IO.println s!"v{i} {arm} by presentation (planted, found, false alarms): {bp}"
-          out.putStrLn s!"\{\"variant\": {i}, \"arm\": \"{arm}\", \"found\": {s.found.length}, \"missed\": {s.missed.length}, \"false_alarms\": {s.falseAlarms}, \"ms\": {ms}, {usages}, \"checks\": {(checks.map (·.quote)).toString}, \"found_kinds\": {(s.found.map (·.quote)).toString}, \"missed_kinds\": {(s.missed.map (·.quote)).toString}, \"findings\": {(Lean.Json.arr (fs.map SpecTools.SyntheticRun.savedFinding).toArray).compress}}"
+          out.putStrLn s!"\{\"variant\": {i}, \"arm\": \"{arm}\", \"found\": {s.found.length}, \"missed\": {s.missed.length}, \"false_alarms\": {s.falseAlarms}, \"ms\": {ms}, {usageAndChecks}, \"checks\": {(checks.map (·.quote)).toString}, \"found_kinds\": {(s.found.map (·.quote)).toString}, \"missed_kinds\": {(s.missed.map (·.quote)).toString}, \"findings\": {(Lean.Json.arr (fs.map SpecTools.SyntheticRun.savedFinding).toArray).compress}}"
           out.flush
           stdout.flush
           totals := (a, s.found.length, s.missed.length, s.falseAlarms) :: totals
@@ -894,5 +896,7 @@ def main (args : List String) : IO UInt32 := do
   | "draft-review" :: rest => reviewCoverageDraft rest
   | "synthetic" :: rest => synthetic rest
   | ["check", sub] => SpecTools.SyntheticRun.runCheck sub
+  | ["fixture-mcp", launcher, executable] => SpecTools.SyntheticRun.serveChecks launcher executable
+  | ["fixture-check", sub, receipt] => SpecTools.SyntheticRun.runLockedCheck sub receipt
   | [] => IO.eprintln usage; return 2
   | command :: _ => IO.eprintln s!"unknown command `{command}`\n{usage}"; return 2
