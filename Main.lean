@@ -289,7 +289,7 @@ def synthetic (args : List String) : IO UInt32 := do
     -- test T of Owners.suiteTests, its rules and flaws from T's seed: every check started before
     -- any is waited on; DIR/fidelity.json holds the faults; exit 1 when a text is not read
     -- faithfully. For a text written outside owners-write, which owners-suite reuses.
-    let backend ← SpecTools.Model.selectedBackend "configured" "claude-opus-5-5"
+    let backend ← SpecTools.Model.configuredBackend
     let jobs ← dirs.mapM fun d => do
       let dir := System.FilePath.mk d
       let test := ((dir.fileName.getD "").splitOn "-").headD ""
@@ -355,6 +355,7 @@ def synthetic (args : List String) : IO UInt32 := do
     let tests := if names.isEmpty then all else all.filter (names.contains ·.1)
     if tests.length != names.length && !names.isEmpty then
       IO.eprintln s!"owners-suite: tests are salon, tailor and bakery, got {names}"; return 2
+    let model := "default"
     let writeTest (t : String) (seed : Nat) : IO (Option System.FilePath) := do
       let mut vs : List (Bool × Option Nat) := []
       for k in ["a", "b", "c"] do
@@ -364,7 +365,7 @@ def synthetic (args : List String) : IO UInt32 := do
             -- OUT-DIR/T-base.txt, a real owner's message, when present: the writing starts from it.
             let base := out / s!"{t}-base.txt"
             let basePath := if ← base.pathExists then base.toString else ""
-            let _ ← spec #["owners-write", d.toString, toString seed, "prose", basePath, "claude-opus-5-5",
+            let _ ← spec #["owners-write", d.toString, toString seed, "prose", basePath, model,
               s!"vocab={t}"] (out / s!"{t}-{k}.log") 5400
           vs := vs ++ [← verdict d]
       IO.println s!"{t}: Tells' verdicts (human, hundredths) {vs}"
@@ -407,7 +408,7 @@ def synthetic (args : List String) : IO UInt32 := do
             (out / s!"{t}-variants.log") 600
           if v != 0 then return false
         unless ← done d "gaps" do
-          let _ ← spec #["gapsrun", toString seed, "5", d.toString, "claude-opus-5-5"] (out / s!"{t}-gaps.log") 3600
+          let _ ← spec #["gapsrun", toString seed, "5", d.toString, model] (out / s!"{t}-gaps.log") 3600
           unless ← done d "gaps" do
             IO.println s!"{t}: the gaps row is incomplete (a variant failed or is missing), see {out}/{t}-gaps.log"
         return true
@@ -417,7 +418,7 @@ def synthetic (args : List String) : IO UInt32 := do
       unless ok do IO.println s!"{t}: variants failed, see {out}/{t}-variants.log"; continue
       for arm in ["baseline", "ledger", "tools"] do
         if ← done d arm then IO.println s!"{t} {arm}: results complete, not run again"; continue
-        let e ← spec #["run", d.toString, "claude-opus-5-5", "claude-opus-5-5", arm] (out / s!"{t}-{arm}.log") 7200
+        let e ← spec #["run", d.toString, model, model, arm] (out / s!"{t}-{arm}.log") 7200
         IO.println s!"{t} {arm}: exit {e}{if ← done d arm then "" else ", the row incomplete (a variant failed or is missing)"}"
       let o ← IO.Process.output {
         cmd := self.toString, args := #["synthetic", "owners-table", d.toString, "12"] }
@@ -516,7 +517,7 @@ def synthetic (args : List String) : IO UInt32 := do
         if ← usagePath.pathExists then IO.FS.removeFile usagePath
         -- Through the one path every lake run takes (SyntheticRun.leanOn, then viaArgs, which moves
         -- the variables into the arguments the launcher keeps).
-        let passed ← ["SPEC_TOOLS_HOST", "SPEC_TOOLS_BACKEND"].filterMapM fun k => do
+        let passed ← SpecTools.Model.backendEnvironment.filterMapM fun k => do
           return (← IO.getEnv k).map (s!"{k}=" ++ ·)
         let inv := (SpecTools.SyntheticRun.leanOn root.toString dir.toString #[("SPEC_TOOLS_GAPS", some model),
           ("SPEC_TOOLS_DIR", some dir.toString), ("SPEC_TOOLS_USAGE", some usagePath.toString)]).viaArgs passed
@@ -634,6 +635,7 @@ def synthetic (args : List String) : IO UInt32 := do
     let shownAll := SpecTools.SyntheticRun.keyPresentations keyText
     let root ← IO.currentDir
     let backend ← SpecTools.Model.selectedBackend "configured" agentModel
+    let toolBackend ← SpecTools.Model.selectedBackend "configured" toolModel
     -- The tools arm starts each run's audit, tests and gaps at once: three controls together peaked
     -- at 2.037 GiB, so ten of its runs with their agents near the 10 GiB budget; five at a time.
     -- On SPEC_TOOLS_HOST the agents run on that shared machine: one Claude question peaked at
@@ -681,7 +683,7 @@ def synthetic (args : List String) : IO UInt32 := do
     let start (job : List Plant × Nat × SpecTools.SyntheticRun.Arm) := IO.asTask do
       let (k, i, a) := job
       let r ← SpecTools.SyntheticRun.runArm backend (System.FilePath.mk outDir / s!"v{i}") a
-        root.toString toolModel 600000
+        root.toString toolBackend 600000
       return (k, i, a, r)
     let mut pending := jobs
     let mut running := #[]
@@ -735,7 +737,7 @@ def synthetic (args : List String) : IO UInt32 := do
       let us := used.filter (·.1 == arm)
       unless us.isEmpty do
         IO.println s!"{arm.name} agents' {SpecTools.Usage.line (SpecTools.Usage.total (us.map (·.2.1))) (SpecTools.Usage.brief backend)}"
-        IO.println s!"{arm.name} tools' {SpecTools.Usage.line (SpecTools.Usage.total (us.map (·.2.2))) s!"tools model {toolModel}"}"
+        IO.println s!"{arm.name} tools' {SpecTools.Usage.line (SpecTools.Usage.total (us.map (·.2.2))) (SpecTools.Usage.brief toolBackend)}"
     -- The bar (the theory's entry on how a tool is judged), when both arms ran on the variants.
     let arm (a : SpecTools.SyntheticRun.Arm) := totals.filter (·.1 == a)
     let led := arm .ledger

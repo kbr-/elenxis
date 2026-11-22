@@ -43,17 +43,50 @@ theorem backendOfJson_model {json : Json} {backend : Backend}
   repeat' first | split at result | cases result
   all_goals simp_all
 
-/-- Read the explicitly selected configuration; absence never silently chooses a remote backend. -/
+/-- The selected backend as an explicit configuration for a variant's tool calls. -/
+def backendConfigJson (backend : Backend) : Json :=
+  Json.mkObj ([
+    ("adapter", toJson (match backend.harness with
+      | .command .. => "command"
+      | harness => harness.name)),
+    ("model", toJson backend.model), ("dataGoesTo", toJson backend.dataGoesTo)] ++
+    (backend.effort.toList.map fun effort => ("effort", toJson effort)) ++
+    (match backend.harness with
+      | .command command args => [("command", toJson command), ("args", toJson args)]
+      | _ => []))
+
+theorem codexConfigRoundTrip :
+    let b : Backend := ⟨.codex, "gpt-6.2-sol", "existing Codex account", some "medium"⟩
+    (backendOfJson (backendConfigJson b)).toOption = some b := by native_decide
+
+def callerBackend (inCodex : Bool) : Except String Backend :=
+  if inCodex then
+    .ok ⟨.codex, "gpt-6.2-sol", "OpenAI, through the calling Codex login", some "medium"⟩
+  else .error "set SPEC_TOOLS_BACKEND to a backend JSON configuration file"
+
+theorem codexCallerUsesSolMedium :
+    (callerBackend true).toOption.map (fun b => (b.harness, b.model, b.effort)) =
+      some (.codex, "gpt-6.2-sol", some "medium") ∧
+    (callerBackend false).toOption.isNone = true := by native_decide
+
+/-- Configuration forwarded when a variant check starts a protected Lean subprocess. -/
+def backendEnvironment : List String :=
+  ["SPEC_TOOLS_HOST", "SPEC_TOOLS_BACKEND", "CODEX_THREAD_ID", "CODEX_HOME"]
+
+/-- An explicit file takes precedence over a default derived from the calling harness. -/
 def configuredBackend : IO Backend := do
-  let some path ← IO.getEnv "SPEC_TOOLS_BACKEND"
-    | throw (IO.userError "set SPEC_TOOLS_BACKEND to a backend JSON configuration file")
-  let json ← IO.ofExcept (Json.parse (← IO.FS.readFile path))
-  IO.ofExcept (backendOfJson json)
+  if let some path ← IO.getEnv "SPEC_TOOLS_BACKEND" then
+    let json ← IO.ofExcept (Json.parse (← IO.FS.readFile path))
+    return ← IO.ofExcept (backendOfJson json)
+  let inCodex := (← IO.getEnv "CODEX_THREAD_ID").any (!·.trimAscii.isEmpty)
+  IO.ofExcept (callerBackend inCodex)
 
 /-- The CLI's model argument remains authoritative when selecting a configured adapter. -/
 def selectedBackend (adapter model : String) : IO Backend := do
   IO.ofExcept (validateModel model)
-  if adapter == "configured" then return { (← configuredBackend) with model }
+  if adapter == "configured" then
+    let backend ← configuredBackend
+    return if model == "default" then backend else { backend with model }
   IO.ofExcept (backendOfJson (Json.mkObj [("adapter", toJson adapter),
     ("model", toJson model), ("dataGoesTo", toJson s!"{adapter}'s configured destination")]))
 

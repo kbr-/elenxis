@@ -312,14 +312,63 @@ def onHost (host : String) (inv : Invocation) (readBack : List String) : Except 
       is in {inv.cwd}"
   else .ok { inv with cmd := "ssh", args := #["-o", "BatchMode=yes", host, questionCommand inv] }
 
+private def codexCallbackArgs (inv : Invocation) : Array String :=
+  let flags := #["exec", "--ignore-user-config", "--disable", "apps"]
+  let questionFlags := if inv.input.isSome then
+    #["--disable", "shell_tool", "-c", "developer_instructions=" ++
+      (toJson ("You are Elenxis's stateless text callback. Use no tools. " ++
+        "Answer the supplied question according to its output schema.")).compress]
+    else #[]
+  flags ++ questionFlags ++ inv.args.extract 1 inv.args.size
+
+private def temporaryCodexPath (path : String) : Bool :=
+  path.startsWith "/tmp/" && ((path.splitOn "/").drop 2).all
+    (fun component => component != "" && component != "." && component != "..")
+
+/-- Send the schema or the agent's working copy, preserving stdout for usage and collecting only
+the structured answer. The remote directory is owned only after successful creation. -/
+def codexOnHost (host : String) (home : Option String) (inv : Invocation)
+    (timeoutMs : Nat) : Except String Invocation := do
+  let dir := inv.cwd.toString
+  unless temporaryCodexPath dir && !host.isEmpty && !host.startsWith "-" && !host.contains ':' do
+    throw "remote Codex requires an SSH host and an isolated directory under /tmp"
+  let ssh (cmd : String) :=
+    s!"ssh -o BatchMode=yes -o ConnectTimeout=5 -- {shellQuote host} {shellQuote cmd}"
+  let parent := (inv.cwd.parent.getD "/tmp").toString
+  let remote := host ++ ":" ++ dir ++ "/"
+  let source := if inv.input.isSome then dir ++ "/schema.json" else dir ++ "/"
+  let envArgs := (home.toArray.map ("CODEX_HOME=" ++ ·))
+  let launch := remoteCommand { inv with
+    cmd := "timeout"
+    args := #[toString ((timeoutMs + 999) / 1000), "env"] ++ envArgs ++ #["codex"] ++ inv.args }
+  let transfer := "rsync -rs -e 'ssh -o BatchMode=yes -o ConnectTimeout=5' --"
+  let create := ssh s!"mkdir -p -- {shellQuote parent} && mkdir -m 700 -- {shellQuote dir}"
+  let clean := ssh s!"rm -rf -- {shellQuote dir}; rmdir --ignore-fail-on-non-empty -- {shellQuote parent}"
+  let upload := s!"{transfer} {shellQuote source} {shellQuote remote}"
+  let download := s!"{transfer} {shellQuote (remote ++ "answer.json")} {shellQuote dir}"
+  let script := s!"{create} </dev/null || exit $?; trap {shellQuote (clean ++ " </dev/null")} EXIT; \
+    {upload} </dev/null && {ssh launch} && {download} </dev/null"
+  return { inv with cmd := "sh", args := #["-c", script] }
+
+theorem codexOnHost_refuses_parentTraversal :
+    (codexOnHost "model-host" none { cmd := "codex", args := #[], cwd := "/tmp/a/../b" } 1000).toOption.isNone =
+      true := by native_decide
+
 /-- The runner that starts real processes. It refuses while the test driver runs, sends a question
 to `SPEC_TOOLS_HOST` when set (`onHost`), writes the invocation's files, waits at most
 `timeoutMs`, kills an overrun and reads back the named files. -/
 def liveRunner : Runner := fun inv readBack timeoutMs => do
   if ← liveCallsForbidden.get then
     throw (IO.userError s!"a live call to `{inv.cmd}` during the tests")
+  let inv := if inv.cmd == "codex" && inv.args[0]? == some "exec" then
+    { inv with args := codexCallbackArgs inv }
+    else inv
   let inv ← match ← IO.getEnv "SPEC_TOOLS_HOST" with
-    | some host => IO.ofExcept ((onHost host inv readBack).mapError IO.userError)
+    | some host =>
+      let route ← if inv.cmd == "codex" && readBack == ["answer.json"] then
+        pure (codexOnHost host (← IO.getEnv "CODEX_HOME") inv timeoutMs)
+      else pure (onHost host inv readBack)
+      IO.ofExcept (route.mapError IO.userError)
     | none => pure inv
   IO.FS.createDirAll inv.cwd
   for (name, text) in inv.files do

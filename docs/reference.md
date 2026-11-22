@@ -147,9 +147,16 @@ specification, record more:
   backend, prompt, schema, raw answer or failure, and usage. Unset, nothing is written, since a
   prompt carries the target's text; a directory that can't be written fails before the call.
 
-`SPEC_TOOLS_HOST=HOST` runs each question on HOST through ssh, in a directory at the same path, so
-the harness runs under HOST's login while Lean runs here. Only a question, which answers on standard
-output, goes there; an agent run, or a call that exchanges files (Codex's answer file), is refused.
+An explicit `SPEC_TOOLS_BACKEND` configuration selects the adapter, model and effort. When no file
+is selected, a nonempty `CODEX_THREAD_ID` selects the calling Codex account with GPT-6.2 Sol at
+medium effort. Use `configured default` where a command takes both a harness and a model.
+`owners-suite` and `owners-fidelity` use this selection for their model calls.
+
+`SPEC_TOOLS_HOST=HOST` runs the harness over SSH while Lean runs on the calling machine. Codex
+transfers its schema and structured answer through an isolated directory under `/tmp`. Agent runs
+also transfer the variant's working files. Set `CODEX_HOME` to the existing Codex auth directory on
+the model host when that login lives outside the default directory. Pass these variables through the
+launcher as part of the command's environment. Claude calls retain their existing transport.
 
 ## The synthetic evaluation
 

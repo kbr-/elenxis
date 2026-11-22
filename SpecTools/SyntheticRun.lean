@@ -1,5 +1,6 @@
 import SpecTools.UsageReport
 import SpecTools.Score
+import SpecTools.BackendConfig
 
 /-!
 The synthetic test's agent runs: each variant given, in a fresh copy, to a fresh agent with the
@@ -151,6 +152,7 @@ theorem check_model_is_configured (root dir model : String) :
 /-- The variant directory's configuration, written by `runArm`: the tools' root and the model their
 questions go to, so the agent running `check` chooses neither. -/
 def configFile : String := "spec-tools.json"
+private def toolBackendFile : String := "tool-backend.json"
 
 /-- `spec-tools check SUB`, run in a variant's directory: records SUB in `check.log`, then runs the
 tool, its output passed through. -/
@@ -169,8 +171,13 @@ def runCheck (sub : String) : IO UInt32 := do
     | IO.eprintln "usage: spec-tools check audit|tests|gaps|clauses"; return 2
   let log ← IO.FS.Handle.mk (dir / "check.log") .append
   log.putStrLn sub
-  let passed ← ["SPEC_TOOLS_HOST", "SPEC_TOOLS_BACKEND"].filterMapM fun k => do
+  let toolConfig := dir / toolBackendFile
+  let savedBackend ← toolConfig.pathExists
+  let passed ← (backendEnvironment.filter (fun k => !savedBackend || k != "SPEC_TOOLS_BACKEND")).filterMapM fun k => do
     return (← IO.getEnv k).map (s!"{k}=" ++ ·)
+  let inv := if savedBackend then
+    { inv with env := inv.env.push ("SPEC_TOOLS_BACKEND", some toolConfig.toString) }
+    else inv
   let inv := inv.viaArgs passed
   let child ← IO.Process.spawn { cmd := inv.cmd, args := inv.args, env := inv.env, cwd := some inv.cwd }
   child.wait
@@ -236,14 +243,15 @@ def armTools (arm : Arm) (root : String) : List String :=
 none; what its agent used; and what its tools used (the tools arm's reports and every `check` the
 agent ran). -/
 def runArm (backend : Backend) (variantDir : System.FilePath) (arm : Arm) (root : String)
-    (toolModel : String) (timeoutMs : Nat) :
+    (toolBackend : Backend) (timeoutMs : Nat) :
     IO (Except String (List Finding × List String) × Usage.Usage × Usage.Usage) := do
   let work := (← IO.FS.createTempDir) / "variant"
   IO.FS.createDirAll work
   for f in files do IO.FS.writeFile (work / f) (← IO.FS.readFile (variantDir / f))
   if arm == .ledger || arm == .tools then
     IO.FS.writeFile (work / configFile)
-      (Json.mkObj [("root", Json.str root), ("model", Json.str toolModel)]).compress
+      (Json.mkObj [("root", Json.str root), ("model", Json.str toolBackend.model)]).compress
+    IO.FS.writeFile (work / toolBackendFile) (backendConfigJson toolBackend).compress
   -- The tools arm's reports, run before the agent starts; check.log then records only the
   -- agent's own reruns.
   let reports ← if arm == .tools then do
