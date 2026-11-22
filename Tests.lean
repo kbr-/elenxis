@@ -457,6 +457,7 @@ def testOwners : IO Unit := do
     s!"tell {k}")), ("could_be_real", Lean.toJson (n == 2))]).compress
   let backend : Backend := ⟨.codex, "test-model", "test", none⟩
   let run (readings : List String) (judges : List String := []) (rounds : Nat := 3)
+      (startingText : Option String := none)
       : IO (SpecTools.Owners.Writing × Nat × List String) := do
     let r ← IO.mkRef readings
     let js ← IO.mkRef judges
@@ -488,7 +489,7 @@ def testOwners : IO Unit := do
         { exitCode := 0, stdout := "", stderr := "", readBack := [("answer.json", a)], millis := 1 }
     let dir ← IO.FS.createTempDir
     let w ← SpecTools.Owners.writeOwner runner [backend] backend v .prose rules flaws "" dir 10000
-      (judgeRounds := rounds)
+      (judgeRounds := rounds) (startingText := startingText)
     IO.FS.removeDirAll dir
     return (w, ← calls.get, ← reviewerPrompts.get)
   let (kept, calls, rprompts) ← run [exact, exact]
@@ -538,6 +539,17 @@ def testOwners : IO Unit := do
   ensure (failed.text.isNone && failed.faults.length == 8 && calls == 46 &&
     (failed.steps.filter fun s => s.what.startsWith "start 2").length > 0)
     s!"four failed checks didn't start again, or two failed starts kept a text: {calls} calls"
+  let draft := "The supplied transcript has its own opening."
+  let (imported, calls, reviewerPrompts) ← run [exact, exact] [] 0 (some draft)
+  ensure (imported.text.isSome && calls == 18 && imported.steps.length == 6 &&
+    (imported.steps.head?.map (·.text)) == some draft &&
+    ((reviewerPrompts.headD "").splitOn draft).length == 2)
+    "a supplied draft did not go straight into the five review rounds"
+  let (importFailed, calls, _) ← run (List.replicate 16 ruleWrong) [] 0 (some draft)
+  ensure (importFailed.text.isNone && calls == 21 &&
+    importFailed.faults.length == SpecTools.Owners.fidelityRounds + 1 &&
+    !(importFailed.steps.any fun s => s.what.startsWith "start 2"))
+    s!"a supplied draft that exhausted fidelity made {calls} calls; steps: {importFailed.steps.map (·.what)}"
   IO.println "PASS: owners (five rounds, kept, sent back for a rule and for a flaw, started again, failed)"
 
 /-- A failing preparation supplies its diagnostic and never runs the checks that follow it. -/

@@ -206,13 +206,14 @@ describe the program they want. The owner gets two rules of each kind wrong: a l
 a limit given twice with two numbers, an exception the business has but the owner forgets, and a
 number given without saying whether that number itself is refused.
 
-- `spec-tools synthetic owners-write DIR SEED prose|conversation [NOTES-FILE [MODEL]] vocab=NAME`
-  writes the owner's text from the 15 rules of SEED: a message to a developer, or a first call with
-  one (NOTES-FILE, notes on how real calls go, given to the writer). The text goes through five
-  rounds of a reviewer who sees only the persona and the text and lists what gives away that no such
-  person wrote it, then through two blind readings, which must give each rule as the owner was told
-  to state it, its flaw included. Every step's text and reader's list go to `steps.jsonl`, the kept
-  text to `text.md`.
+- `spec-tools synthetic owners-write DIR SEED prose|conversation` writes the owner's text as a
+  message to a developer or a first call. The optional positional arguments are `NOTES-FILE`,
+  `MODEL` and `DRAFT-FILE`. Add `vocab=NAME` to select a domain. The text goes through five rounds
+  of a reviewer who sees only the persona and the text and lists what gives away that no such person
+  wrote it, then through two blind readings, which must give each rule as the owner was told to
+  state it, its flaw included. Every step's text and reader's list go to `steps.jsonl`, the kept
+  text to `text.md`. An optional `DRAFT-FILE` supplies the first text for one start of the same
+  review and fidelity process. Pass an empty string for `NOTES-FILE` to use the draft without notes.
 - `spec-tools synthetic owners-variants DIR SEED COUNT EMPTY vocab=NAME` writes COUNT variants with
   the owner's text as their prose, the first EMPTY without plants, the others three shared blind
   spots on rules with no flaw; the key names the blind spots and the flaws by row, so a finding on a

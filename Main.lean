@@ -186,7 +186,8 @@ def synthetic (args : List String) : IO UInt32 := do
     return if leftOut.isEmpty then 0 else 1
   | ["owners-write", outDir, seed, form]
   | ["owners-write", outDir, seed, form, _]
-  | ["owners-write", outDir, seed, form, _, _] =>
+  | ["owners-write", outDir, seed, form, _, _]
+  | ["owners-write", outDir, seed, form, _, _, _] =>
     -- An owner's text for the test in OUT-DIR (SpecTools.Owners): `ruleCount` rules of the vocab= domain
     -- from SEED, their flaws, written as `prose` or a `conversation`, five review rounds, the
     -- fidelity check; with NOTES-FILE, notes on real first calls for a conversation, and MODEL the
@@ -202,6 +203,10 @@ def synthetic (args : List String) : IO UInt32 := do
     let backend ← match (args[5]? : Option String) with
       | some model => SpecTools.Model.selectedBackend "configured" model
       | none => SpecTools.Model.configuredBackend
+    let startingText ← (args[6]? : Option String).mapM fun path => do
+      let text ← IO.FS.readFile path
+      if text.trimAscii.isEmpty then throw (IO.userError s!"the supplied draft in {path} is empty")
+      return text
     let rs := SpecTools.Generated.ownerRules seed SpecTools.Owners.ruleCount vocab
     let flaws := SpecTools.Owners.imperfections seed rs vocab.flawKinds
     let dir := System.FilePath.mk outDir
@@ -211,7 +216,7 @@ def synthetic (args : List String) : IO UInt32 := do
     -- Their records are copied into the test's directory after.
     let scratch ← IO.FS.createTempDir
     let w ← SpecTools.Owners.writeOwner SpecTools.Model.liveRunner [backend] backend vocab form rs
-      flaws notes scratch 900000
+      flaws notes scratch 900000 (startingText := startingText)
     let copied ← IO.Process.output { cmd := "cp", args := #["-a", scratch.toString, (dir / "calls").toString] }
     if copied.exitCode != 0 then IO.eprintln s!"the calls' records were not copied: {copied.stderr}"
     else IO.FS.removeDirAll scratch

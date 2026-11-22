@@ -698,7 +698,8 @@ review the text so kept once more, for the record, the verdict and tells the res
 failing, start again, up to `maxStarts` starts. A failed call fails the start it is in. -/
 def writeOwner (runner : Runner) (allowed : List Backend) (backend : Backend) (v : Vocab)
     (form : Form) (rs : List Rule) (flaws : List Imperfection) (notes : String)
-    (scratch : System.FilePath) (timeoutMs : Nat) (judgeRounds : Nat := judgeRounds) :
+    (scratch : System.FilePath) (timeoutMs : Nat) (judgeRounds : Nat := judgeRounds)
+    (startingText : Option String := none) :
     IO Writing := do
   let brief := writerPrompt v form rs flaws notes
   let used ← IO.mkRef ({} : Usage.Usage)
@@ -714,13 +715,19 @@ def writeOwner (runner : Runner) (allowed : List Backend) (backend : Backend) (v
   let mut faultLog : List (List String) := []
   let mut lastTells : List String := []
   let mut lastVerdict : Option Bool := none
-  for start in List.range maxStarts do
+  let starts := if startingText.isSome then 1 else maxStarts
+  for start in List.range starts do
     let label := s!"start {start + 1}"
-    let first ← ask "owner-writer" brief Prose.documentSchema
-    let mut text ← match documentOf first with
-      | .ok d => pure d
-      | .error e => steps := steps ++ [⟨s!"{label}: writing failed", "", [e]⟩]; continue
-    steps := steps ++ [⟨s!"{label}: written", text, []⟩]
+    let mut text ← match startingText with
+      | some draft => pure draft
+      | none =>
+        match documentOf (← ask "owner-writer" brief Prose.documentSchema) with
+        | .ok d => pure d
+        | .error e =>
+          steps := steps ++ [⟨s!"{label}: writing failed", "", [e]⟩]
+          continue
+    let action := if startingText.isSome then "supplied draft" else "written"
+    steps := steps ++ [⟨s!"{label}: {action}", text, []⟩]
     let mut broken := false
     for round in List.range reviewRounds do
       match tellsOf (← ask "owner-reviewer" (reviewerPrompt v form text) tellsSchema) with
