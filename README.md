@@ -178,6 +178,18 @@ The third line calls Claude Code with its own login; [docs/backends.md](docs/bac
 Codex or any other harness, provider or local model instead. A `command` adapter runs an executable
 you name: it is trusted code, and the launcher is no sandbox.
 
+To generate and check a standalone synthetic Lean fixture, run these commands from the Elenxis
+checkout:
+
+```bash
+lake exe spec-tools synthetic generate 42 8 /tmp/elenxis-demo
+lake -d /tmp/elenxis-demo/s42-n8 build
+```
+
+The generated project includes requirements, a specification, executable Lean code, proof
+obligations and an audit ledger. It uses the local Elenxis checkout as a Lake dependency. See [the
+optional Python export](docs/reference.md#optional-cross-language-target).
+
 For your own specification, write a ledger beside it, one row per clause of the prose, naming the
 theorems that state the clause and the witnesses showing their hypotheses can hold, and run
 `SpecTools.Audit.run` and `SpecTools.Gaps.runConfigured` from it

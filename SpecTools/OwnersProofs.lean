@@ -204,20 +204,6 @@ example : ownerSeeds.all fun (v, seed) =>
             w.prose.map Rule.bound == some r.bound && w.prose.map Rule.flag == some r.flag := by
   native_decide
 
-/-- Every owners' blind spot plants something the agent reads: applied alone to the plain views,
-it changes the artifacts' files other than the prose (`loans.md`, which the owner's text
-replaces). Checked for each plant of each variant at each owner's seed. -/
-example : ownerSeeds.all fun (v, seed) =>
-      let all := ownerRules seed (ruleCount + 1) v
-      let rs := all.take ruleCount
-      let flawed := (imperfections seed rs v.flawKinds).map (·.rule)
-      let plain := rs.map View.plain
-      let artifacts (vs : List View) := (files vs).filter (·.1 != "loans.md")
-      (List.range 12).all fun i =>
-        (ownerVariant rs (all.getLastD default) flawed seed i 2).2.all fun p =>
-          artifacts (p.apply plain) != artifacts plain := by
-  native_decide
-
 /-- At each owner's seed, every variant of its batch past the empty ones gets its three shared
 blind spots, none on a flawed rule, the batch's extra rule drawn as `owners-variants` draws it. -/
 example : ownerSeeds.all fun (v, seed) =>

@@ -225,10 +225,17 @@ The output is a versioned JSON object. Its `findings` preserve the original evid
 explanations and proposed reviews. A saved object can be read again as the findings input, with the
 same key, Lean environment and independent review file to recheck all observations.
 
-`SpecTools.Synthetic`, `SpecTools.Generated`, `SpecTools.Score` and `spec-tools synthetic` generate
-a requirement of N rules from a seed with its four artifacts (prose, Lean model and ledger, Python
-and its tests) agreeing by construction, plant gaps in one artifact with the key kept apart, and
-score a run's findings against the key: how many planted gaps are found, and the false alarms.
+`spec-tools synthetic generate SEEDS NS DIR` creates a Lean project under `DIR/sSEED-nN` for every
+seed and rule count. Run it from the Elenxis checkout so the generated Lake project can refer to the
+local library. `requirements.md` states the rules. `Spec.lean` defines the refusal condition,
+`Implementation.lean` implements the decision, `ProofObligations.lean` proves their agreement and
+`Ledger.lean` audits the clauses. Run `lake -d DIR/sSEED-nN build` to compile and audit the project.
+
+### Optional cross-language target
+
+Append `--target python` to `synthetic generate` to export the original cross-language fixture,
+including `Loans.lean`, `loans.py` and its property tests. This target uses the legacy layout. The
+historical planted experiments below use that layout.
 
 - `spec-tools synthetic gvariants SEED N COUNT EMPTY DIR [blind [hard]]` writes a batch of COUNT
   variants of N rules, the first EMPTY with no plant; `blind` gives each three *shared blind spots*:

@@ -2,6 +2,7 @@ import SpecTools
 import SpecTools.DraftHook
 import SpecTools.OwnerInterview
 import SpecTools.PairedScore
+import SpecTools.Targets.Python
 
 /-- The commands, each with what it does. -/
 def commands : List (String × String) := [
@@ -12,8 +13,8 @@ def commands : List (String × String) := [
   ("draft-hook", "check a hook payload and task roots from stdin: draft-hook PYTHON INVENTORY-BRIDGE"),
   ("draft-hook-json", "structured hook verdict: draft-hook-json PYTHON INVENTORY-BRIDGE"),
   ("draft-review", "review a complete coverage draft: draft-review HARNESS MODEL PROSE INVENTORY DRAFT"),
-  ("synthetic", "write a batch of variants of the loans fixture with planted gaps, the key apart: \
-    synthetic SEED COUNT EMPTY FIXTURE-DIR OUT-DIR"),
+  ("synthetic", "generate a synthetic Lean project: \
+    synthetic generate SEEDS NS OUT-DIR [--target lean|python]"),
   ("score-observations", "score a versioned key and findings file: score-observations KEY FINDINGS"),
   ("check", "run one spec tool on the synthetic variant in the current directory, with the root and \
     model its spec-tools.json names: check audit|tests|gaps|clauses")
@@ -50,17 +51,27 @@ def synthetic (args : List String) : IO UInt32 := do
     | .ok r => pure r
     | .error e => IO.eprintln e; return 2
   match args with
-  | ["generate", seeds, ns, outDir] =>
+  | ["generate", seeds, ns, outDir]
+  | ["generate", seeds, ns, outDir, "--target", _] =>
     -- The complete generated fixture of N rules from SEED, for each seed and N of the comma-separated
     -- lists, in OUT-DIR/sSEED-nN: the controls generated variants are made from.
     let some seeds := (seeds.splitOn ",").mapM String.toNat? | IO.eprintln "SEEDS are numbers"; return 2
     let some ns := (ns.splitOn ",").mapM String.toNat? | IO.eprintln "NS are numbers"; return 2
+    let target := args[5]?.getD "lean"
+    unless target == "lean" || target == "python" do
+      IO.eprintln s!"unknown synthetic target {target}; use lean or python"
+      return 2
+    let root ← IO.currentDir
+    let toolchain ← if target == "lean" then IO.FS.readFile (root / "lean-toolchain") else pure ""
     for seed in seeds do
       for n in ns do
         let rs := SpecTools.Generated.rulesOf seed n vocab
         let dir := System.FilePath.mk outDir / s!"s{seed}-n{n}"
         IO.FS.createDirAll dir
-        for (f, text) in SpecTools.Generated.files (rs.map SpecTools.Generated.View.plain) do
+        let files := if target == "python" then
+            SpecTools.Targets.Python.files (rs.map SpecTools.Generated.View.plain)
+          else SpecTools.Generated.leanFiles rs root.toString toolchain
+        for (f, text) in files do
           IO.FS.writeFile (dir / f) text
         let flagged := (rs.filter (·.flag.isSome)).length
         let sums := (rs.filter (·.measures.length > 1)).length
@@ -82,12 +93,12 @@ def synthetic (args : List String) : IO UInt32 := do
       let p := cs[SpecTools.Synthetic.draw (SpecTools.Synthetic.next (seed + i)) cs.length]!
       let dir := System.FilePath.mk outDir / s!"p{i}"
       IO.FS.createDirAll dir
-      for (f, text) in SpecTools.Generated.files (p.apply plain) do IO.FS.writeFile (dir / f) text
+      for (f, text) in SpecTools.Targets.Python.files (p.apply plain) do IO.FS.writeFile (dir / f) text
       key := key ++ [s!"\{\"variant\": {i}, \"shape\": {shape.quote}, \"plants\": [\{\"kind\": {p.kind.quote}, \"clause\": {p.clause.quote}}]}"]
     let dir := System.FilePath.mk outDir / "omitted"
     IO.FS.createDirAll dir
     let r := rs.headD default
-    for (f, text) in SpecTools.Generated.files (SpecTools.Generated.onRule r.id
+    for (f, text) in SpecTools.Targets.Python.files (SpecTools.Generated.onRule r.id
         (fun v => { v with omitTheorem := true }) plain) do
       IO.FS.writeFile (dir / f) text
     IO.FS.writeFile (System.FilePath.mk outDir / "key.jsonl") ("\n".intercalate key ++ "\n")
@@ -119,7 +130,7 @@ def synthetic (args : List String) : IO UInt32 := do
         else SpecTools.Generated.gvariant rs (all.getLastD default) seed i empty
       let dir := System.FilePath.mk outDir / s!"v{i}"
       IO.FS.createDirAll dir
-      for (f, text) in SpecTools.Generated.files vs do IO.FS.writeFile (dir / f) text
+      for (f, text) in SpecTools.Targets.Python.files vs do IO.FS.writeFile (dir / f) text
       IO.FS.writeFile (dir / "prose-rules.json")
         (Lean.Json.arr ((vs.filterMap (·.prose)).map SpecTools.Prose.ruleJson).toArray).compress
       let plants := ps.map fun p =>
@@ -308,7 +319,7 @@ def synthetic (args : List String) : IO UInt32 := do
         seed i empty
       let vdir := dir / s!"v{i}"
       IO.FS.createDirAll vdir
-      for (f, t) in SpecTools.Generated.files vs do IO.FS.writeFile (vdir / f) t
+      for (f, t) in SpecTools.Targets.Python.files vs do IO.FS.writeFile (vdir / f) t
       IO.FS.writeFile (vdir / "loans.template.md") (← IO.FS.readFile (vdir / "loans.md"))
       IO.FS.writeFile (vdir / "loans.md") text
       let plants := ps.map fun p =>

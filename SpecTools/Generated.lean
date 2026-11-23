@@ -304,12 +304,9 @@ def leanRows (vs : List View) : String :=
     | _, _ => [base]
   ",\n".intercalate (vs.flatMap row)
 
-def leanFile (vs : List View) : String :=
+/-- The common Lean declarations used by both fixture layouts. -/
+def leanModel (rules : List Rule) : String :=
   "\n".intercalate [
-    "import SpecTools.Audit", "import SpecTools.GapsRun", "import SpecTools.Tests", "",
-    "/-! The generated synthetic fixture's Lean model: the rules as data, a request refused when one",
-    "fires, a theorem per clause with a witness that its hypotheses hold, and the ledger. -/", "",
-    "namespace Loans", "open SpecTools.Ledger", "",
     "structure Req where", "  kind : String", "  vals : List (String × Nat)", "",
     "def Req.get (q : Req) (k : String) : Nat := (q.vals.lookup k).getD 0", "",
     "structure Rule where", "  kind : String", "  measures : List String", "  bound : Nat",
@@ -317,75 +314,40 @@ def leanFile (vs : List View) : String :=
     "def fires (r : Rule) (q : Req) : Bool :=",
     "  q.kind == r.kind && decide (r.bound ≤ (r.measures.map q.get).sum) &&",
     "    (match r.flag with | some f => q.get f == 0 | none => true)", ""] ++ "\n" ++
-  "\n".intercalate (vs.map fun v => leanRule v.model) ++ "\n\n" ++
-  s!"def rules : List Rule := [{", ".intercalate (vs.map fun v => s!"r{v.model.id}")}]\n\n" ++
+  "\n".intercalate (rules.map leanRule) ++ "\n\n" ++
+  s!"def rules : List Rule := [{", ".intercalate (rules.map fun r => s!"r{r.id}")}]\n\n"
+
+def leanImplementation : String :=
   "def refused (q : Req) : Bool := rules.any (fires · q)\n\n" ++
   "theorem refused_of (r : Rule) (q : Req) (h : r ∈ rules) (hf : fires r q = true) :\n" ++
-  "    refused q = true := List.any_eq_true.mpr ⟨r, h, hf⟩\n\n" ++
-  "\n\n".intercalate (vs.map leanTheorems) ++ "\n\n" ++
-  "def pythonTest (id : String) : List String := [\"test_\" ++ id.replace \"-\" \"_\"]\n\n" ++
-  s!"def rows : List Row := [\n{leanRows vs}\n]\n\n" ++
-  "def ledger : List Row := rows.map fun r => { r with tests := pythonTest r.id }\n\n" ++
-  "end Loans\n\n#eval SpecTools.Audit.run Loans.ledger `Loans\n\n" ++
-  "def fixtureDir : IO String := return (← IO.getEnv \"SPEC_TOOLS_DIR\").getD \"fixtures/loans\"\n" ++
-  "def adapterPath : IO String :=\n  return (← IO.getEnv \"SPEC_TOOLS_ADAPTER\").getD \"../../adapters/python_guards.py\"\n\n" ++
-  "#eval show IO Unit from do\n  if (← IO.getEnv \"SPEC_TOOLS_TESTS\").isSome then\n" ++
-  "    SpecTools.Tests.run Loans.ledger (← adapterPath) \"loans.py\" \"test_loans.py\"\n      (cwd := some (← fixtureDir))\n\n" ++
-  "#eval show Lean.Elab.Command.CommandElabM Unit from do\n  if let some model ← IO.getEnv \"SPEC_TOOLS_GAPS\" then\n" ++
-  "    SpecTools.Gaps.run Loans.ledger (← IO.FS.readFile (System.FilePath.mk (← fixtureDir) / \"loans.md\"))\n" ++
-  "      (← SpecTools.Model.selectedBackend \"configured\" model)\n"
+  "    refused q = true := List.any_eq_true.mpr ⟨r, h, hf⟩\n\n"
 
-/-! The Python: an `if` per rule, so each rule is a guard the adapter can remove. -/
-
-def pyCond (r : Rule) : String :=
-  let sum := " + ".intercalate (r.measures.map fun m => s!"req.get(\"{m}\")")
-  let flag := match r.flag with | some f => s!" and not req.get(\"{f}\")" | none => ""
-  s!"req.kind == \"{r.kind}\" and {sum} >= {r.bound}{flag}"
-
-def pythonFile (vs : List View) : String :=
-  "\"\"\"The generated synthetic fixture's Python: a request is refused (None) when a rule fires.\"\"\"\n\n" ++
-  "from __future__ import annotations\n\nfrom dataclasses import dataclass, field\n\n\n" ++
-  "@dataclass(frozen=True)\nclass Req:\n    kind: str\n    vals: dict[str, int] = field(default_factory=dict)\n\n" ++
-  "    def get(self, k: str) -> int:\n        return self.vals.get(k, 0)\n\n\n" ++
-  "def handle(req: Req) -> Req | None:\n" ++
-  String.join (vs.map fun v => s!"    if {pyCond v.python}:\n        return None\n") ++
-  "    return req\n"
-
-/-! The tests: per rule, its case refused at and over the bound, accepted below it; per flag, the
-flagged case accepted. Each sets only its rule's measures, which no other rule of its kind uses. -/
-
-def pyTests (vs : List View) : String :=
-  let one (v : View) : String := match v.test with
-    | none => ""
-    | some r =>
-      let name := if v.testRenamed then s!"test_r{r.id}_case" else s!"test_r{r.id}"
-      let vals (x : String) := "{" ++ ", ".intercalate (r.measures.zipIdx.map fun (m, i) =>
-        s!"\"{m}\": {if i == 0 then x else "0"}") ++ "}"
-      let reach := if v.testBelow then s!"st.integers(0, {r.bound - 1})" else s!"st.integers({r.bound}, {r.bound + 40})"
-      let assertion := if v.testBelow then "is not None" else "is None"
-      -- A sum's bound split across its two measures, at it and one below it, so a test reaches
-      -- every term: with either term dropped the split at the bound falls below it.
-      let split (total : Nat) : String := match r.measures with
-        | [m1, m2] => s!"\{\"{m1}\": {total - total / 2}, \"{m2}\": {total / 2}}"
-        | _ => ""
-      let splitCases := match r.measures with
-        | [_, _] =>
-          let atBound := if v.testBelow then "is not None" else "is None"
-          s!"    assert handle(Req(\"{r.kind}\", {split (if v.testBelow then r.bound - 1 else r.bound)})) {atBound}\n    assert handle(Req(\"{r.kind}\", {split (r.bound - 1)})) is not None\n"
-        | _ => ""
-      let base := s!"@given({reach})\ndef {name}(v):  # r{r.id}\n    assert handle(Req(\"{r.kind}\", {vals "v"})) {assertion}\n    assert handle(Req(\"{r.kind}\", {vals (toString (r.bound - 1))})) is not None\n{splitCases}"
-      let exempt := match r.flag with
-        | some f => s!"\n\n@given(st.integers({r.bound}, {r.bound + 40}))\ndef test_r{r.id}_exempt(v):  # r{r.id}-exempt\n    vals = {vals "v"}\n    vals[\"{f}\"] = 1\n    assert handle(Req(\"{r.kind}\", vals)) is not None\n"
-        | none => ""
-      base ++ exempt
-  "\"\"\"Property tests of the generated fixture, one per clause, named by its ledger row.\"\"\"\n\n" ++
-  "from hypothesis import given, settings, strategies as st\n\nfrom loans import Req, handle\n\n" ++
-  "settings.register_profile(\"fixture\", database=None, max_examples=20)\nsettings.load_profile(\"fixture\")\n\n\n" ++
-  "\n\n".intercalate ((vs.map one).filter (· ≠ "")) ++ "\n"
-
-def files (vs : List View) : List (String × String) :=
-  [("loans.md", prose vs), ("Loans.lean", leanFile vs), ("loans.py", pythonFile vs),
-   ("test_loans.py", pyTests vs)]
+/-- A generated project uses the local Elenxis library without a network dependency. -/
+def leanFiles (rules : List Rule) (root toolchain : String) : List (String × String) :=
+  let views := rules.map View.plain
+  let config := "name = \"GeneratedLoans\"\ndefaultTargets = [\"Ledger\"]\n\n" ++
+    s!"[[require]]\nname = \"Elenxis\"\npath = {root.quote}\n\n" ++
+    String.join (["Spec", "Implementation", "ProofObligations", "Ledger"].map fun name =>
+      s!"[[lean_lib]]\nname = {name.quote}\n\n")
+  [("requirements.md", prose views),
+   ("Spec.lean", "namespace Loans\n\n" ++ leanModel rules ++
+     "def requiresRefusal (q : Req) : Prop := ∃ r, r ∈ rules ∧ fires r q = true\n\nend Loans\n"),
+   ("Implementation.lean", "import Spec\n\nnamespace Loans\n\n" ++
+     "def refused (q : Req) : Bool := rules.any (fires · q)\n\nend Loans\n"),
+   ("ProofObligations.lean", "import Implementation\n\nnamespace Loans\n\n" ++
+     "theorem refused_iff (q : Req) : refused q = true ↔ requiresRefusal q :=\n" ++
+     "  List.any_eq_true\n\n" ++
+     "theorem refused_of (r : Rule) (q : Req) (h : r ∈ rules) (hf : fires r q = true) :\n" ++
+     "    refused q = true := (refused_iff q).mpr ⟨r, h, hf⟩\n\n" ++
+     "\n\n".intercalate (views.map leanTheorems) ++ "\n\nend Loans\n"),
+   ("Ledger.lean", "import SpecTools.Audit\nimport ProofObligations\n\n" ++
+     "namespace Loans\nopen SpecTools.Ledger\n\n" ++
+     s!"def ledger : List Row := [\n{leanRows views}\n] ++\n" ++
+     "  [{ id := \"implementation\", clause := \"Executable refusal agrees with the Lean specification\",\n" ++
+     "     theorems := [``refused_iff] }]\n\nend Loans\n\n" ++
+     "#eval SpecTools.Audit.run Loans.ledger `ProofObligations\n"),
+   ("lakefile.toml", config),
+   ("lean-toolchain", toolchain)]
 
 /-! Plants: each changes the views of one rule (the plant entry of the theory), and names in its
 key the prose clause a finder must name. -/
