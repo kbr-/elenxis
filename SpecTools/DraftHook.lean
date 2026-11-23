@@ -41,11 +41,14 @@ def pathAt (cwd path : String) : String :=
 def selected (cwd expected : String) (items : List Submission) : List Submission :=
   items.filter fun item => pathAt cwd item.path == expected
 
+theorem selected_iff (cwd expected : String) (items : List Submission) (item : Submission) :
+    item ∈ selected cwd expected items ↔ item ∈ items ∧ pathAt cwd item.path = expected := by
+  simp [selected]
+
 /-- Every selected submission names the exact task's draft path. -/
 theorem selected_exact (cwd expected : String) (items : List Submission) (item : Submission)
     (h : item ∈ selected cwd expected items) : pathAt cwd item.path = expected := by
-  simp only [selected, List.mem_filter, beq_iff_eq] at h
-  exact h.2
+  exact ((selected_iff cwd expected items item).mp h).2
 
 def inventory (clauses : List (String × String)) : List DraftSource :=
   clauses.zipIdx.map fun ((_, text), index) => ⟨toString (index + 1), text⟩
@@ -75,6 +78,11 @@ theorem no_task_identity (payload : Json) : identityIssue payload [] = none := b
 theorem supplied_identity (payload : Json) (tasks : List (String × String))
     (h : (field payload "session_id" != "") = true) : identityIssue payload tasks = none := by
   simp [identityIssue, h]
+
+theorem missing_task_identity (payload : Json) (task : String × String)
+    (others : List (String × String)) (missing : field payload "session_id" = "") :
+    (identityIssue payload (task :: others)).map Prod.fst = some "task_lock_gate:no session" := by
+  simp [identityIssue, missing]
 
 def check (python bridge : String) : IO (Option (String × String)) := do
   let raw ← (← IO.getStdin).readToEnd

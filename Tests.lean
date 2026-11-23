@@ -4,21 +4,8 @@ import SpecTools.AdversarialTests
 import SpecTools.DraftHook
 
 open SpecTools.DraftHook in
-#guard (identityIssue (Lean.Json.mkObj []) [("x", "/work")]).map Prod.fst ==
-  some "task_lock_gate:no session"
-
-open SpecTools.DraftHook in
-#guard identityIssue (Lean.Json.mkObj [("session_id", "test")]) [("x", "/work")] == none
-
-open SpecTools.DraftHook in
 #guard additions "*** Begin Patch\n*** Add File: tasks/t/spec/Coverage.draft.json\n+[]\n*** End Patch" ==
   [⟨"tasks/t/spec/Coverage.draft.json", "[]\n"⟩]
-
-open SpecTools.DraftHook in
-#guard selected "/work" "/work/tasks/t/spec/Coverage.draft.json"
-  [⟨"tasks/other/spec/Coverage.draft.json", "other"⟩,
-   ⟨"tasks/t/spec/Coverage.draft.json", "selected"⟩] ==
-  [⟨"tasks/t/spec/Coverage.draft.json", "selected"⟩]
 
 open SpecTools.DraftHook in
 #guard additions "*** Begin Patch\n*** Update File: tasks/t/spec/Coverage.draft.json\n+[]\n*** End Patch" == []
@@ -680,11 +667,9 @@ def main : IO Unit := do
       ("requirement audits", testRequirementAudits), ("finished process", testFinishedProcess),
       ("overrun", testOverrun), ("full codex prompt", testFullCodexPrompt),
       ("draft review", testDraftReview), ("approved contracts", testApprovedContracts),
-      ("audit", testAudit)].mapM fun (n, t) => do
-        let g ← timed n t
-        IO.ofExcept g.get
-        pure g
-  for g in groups do IO.ofExcept g.get
+      ("audit", testAudit)].mapM fun (name, action) => timed name action
+  let outcomes := groups.map (·.get)
+  for outcome in outcomes do IO.ofExcept outcome
   IO.println "PASS: audit (pass, unchanged, changed, missing, unclaimed, axiom, vacuous)"
   liveCallsForbidden.set true
   let blocked ← (liveRunner { cmd := "true", args := #[], cwd := "." } [] 1000).toBaseIO
