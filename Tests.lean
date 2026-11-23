@@ -495,7 +495,7 @@ def testProse : IO Unit := do
     s!"a failed writer call didn't count as a failed writing: {afterFailure.discarded}"
   IO.println "PASS: person prose adapter (kept, rewritten, left out, failed call)"
 
-/-- The owners' loop with a scripted runner (Path step 14.4 and 14.5): five review rounds each
+/-- The owners' loop through the command adapter: five review rounds each
 followed by a revision, a round whose review finds nothing among them, then one more review and
 the fidelity check; one clear rule read wrong, or a flaw read as stated, sends the text back; four
 failed checks start again, and two failed starts leave no text. -/
@@ -514,102 +514,45 @@ def testOwners : IO Unit := do
   let doc := (Lean.Json.mkObj [("document", Lean.Json.str "We do hair.")]).compress
   let tells (n : Nat) := (Lean.Json.mkObj [("tells", Lean.toJson ((List.range n).map fun k =>
     s!"tell {k}")), ("could_be_real", Lean.toJson (n == 2))]).compress
-  let backend : Backend := ⟨.codex, "test-model", "test", none⟩
   let run (readings : List String) (judges : List String := []) (rounds : Nat := 3)
       (startingText : Option String := none)
       (reviewPrefix : Option SpecTools.Owners.ReviewPrefix := none)
-      : IO (SpecTools.Owners.Writing × Nat × List String) := do
-    let r ← IO.mkRef readings
-    let js ← IO.mkRef judges
-    let reviews ← IO.mkRef (0 : Nat)
-    let calls ← IO.mkRef (0 : Nat)
-    let reviewerPrompts ← IO.mkRef ([] : List String)
-    let runner : Runner := fun invocation _ _ => do
-      calls.modify (· + 1)
-      let prompt := invocation.input.getD ""
-      let has (t : String) := (prompt.splitOn t).length > 1
-      let reply ← if has "# Text to judge" then do
-          reviewerPrompts.modify (· ++ [prompt])
-          -- The third review of each start finds nothing.
-          let n ← reviews.modifyGet fun n => (n, n + 1)
-          pure (some (tells (if n % 6 == 2 then 0 else 2)))
-        else if has "# Text\n" then r.modifyGet fun l => (l.head?, l.tail)
-        else if has "If you had to bet" then do
-          -- The development judge: the scripted probabilities first, then 92.
-          let p ← js.modifyGet fun l => ((l.head?.bind String.toNat?).getD 92, l.tail)
-          pure (some (Lean.Json.mkObj [("human_probability", Lean.toJson p),
-            ("why", Lean.Json.arr #["typos"])]).compress)
-        else if has "`human_probability`" then pure (some (Lean.Json.mkObj [
-          ("human_probability", Lean.toJson (92 : Nat)), ("why", Lean.Json.arr #["fragments"])]).compress)
-        else if has "# The message" then do
-          pure (some (Lean.Json.mkObj [("verdict", "owner"),
-            ("confidence", Lean.toJson (80 : Nat)), ("reasons", Lean.Json.arr #["typos"])]).compress)
-        else pure (some doc)
-      return reply.map fun a =>
-        { exitCode := 0, stdout := "", stderr := "", readBack := [("answer.json", a)], millis := 1 }
-    let dir ← IO.FS.createTempDir
-    let w ← SpecTools.Owners.writeOwner runner [backend] backend v .prose rules flaws "" dir 10000
-      (judgeRounds := rounds) (startingText := startingText) (reviewPrefix := reviewPrefix)
-    IO.FS.removeDirAll dir
-    return (w, ← calls.get, ← reviewerPrompts.get)
-  let (kept, calls, rprompts) ← run [exact, exact]
-  ensure (kept.text == some "We do hair." && calls == 20 && kept.steps.length == 6 &&
-    (kept.steps.filter (·.notes.isEmpty)).length == 2 && kept.faults == [[]] &&
-    kept.lastTells.length == 2 && kept.lastVerdict == some true && kept.usage.calls == 20 &&
-    kept.testSamples == [92, 92, 92] && kept.devJudge == some 92 &&
-    SpecTools.Owners.meanOf [90, 88, 88] == some 88 && SpecTools.Owners.meanOf [90, 92, 90] == some 90 &&
-    SpecTools.Owners.meanOf [] == none &&
-    kept.heldOut == some ("owner", 80) && kept.heldOutReasons == ["typos"] &&
-    kept.testJudge == some 92 && kept.testJudgeWhy == ["fragments"] &&
-    SpecTools.Owners.passesBar kept.testJudge && !SpecTools.Owners.passesBar (some 89) &&
-    SpecTools.Owners.passesBar (some 90) && !SpecTools.Owners.passesBar none &&
-    SpecTools.Owners.passesJudge .prose kept.heldOut &&
-    !SpecTools.Owners.passesJudge .conversation kept.heldOut &&
-    !SpecTools.Owners.passesJudge .prose (some ("ai", 70)) &&
-    !SpecTools.Owners.passesJudge .prose none)
-    s!"five rounds and a faithful reading didn't keep the text: {calls} calls, {kept.steps.length} steps"
-  ensure (rprompts.length == 6 && rprompts.all fun p =>
-      (p.splitOn "no shows").length == 1 && (p.splitOn "# What you want").length == 1)
-    "a reviewer's prompt holds the rules"
-  let (judgedBack, calls, _) ← run [exact, exact] ["70", "89"]
-  let judgeRevisions := judgedBack.steps.filter fun s => (s.what.splitOn "revised after judge").length > 1
-  ensure (judgedBack.text.isSome && judgeRevisions.length == 2 &&
-    judgeRevisions.all (·.notes == ["typos"]) &&
-    calls == 24) s!"two scores under the bar didn't bring two revisions against the judge's reasons: \
-      {judgeRevisions.length} revisions, {calls} calls"
-  let (judgeCapped, _, _) ← run [exact, exact] ["50", "50", "50", "50"]
-  let (judgeAtBar, _, _) ← run [exact, exact] ["90"]
-  ensure ((judgeAtBar.steps.filter fun s => (s.what.splitOn "revised after judge").length > 1).isEmpty)
-    "a score at the bar brought a revision"
-  ensure ((judgeCapped.steps.filter fun s => (s.what.splitOn "revised after judge").length > 1).length ==
-    3) "the judge's revisions didn't stop at the rounds given"
-  let (noRounds, calls, _) ← run [exact, exact] ["50", "50"] SpecTools.Owners.judgeRounds
-  ensure (SpecTools.Owners.judgeRounds == 0 && calls == 19 &&
-    (noRounds.steps.filter fun s => (s.what.splitOn "revised after judge").length > 1).isEmpty)
-    s!"the default revised against the development judge: {calls} calls"
-  let (sentBack, calls, _) ← run [ruleWrong, exact, exact, exact]
-  ensure (sentBack.text.isSome && sentBack.faults.length == 2 && sentBack.steps.length == 7 &&
-    calls == 23) s!"a clear rule read wrong didn't send the text back: {sentBack.faults}"
-  let (flawBack, _, _) ← run [flawStated, exact, exact, exact]
-  let firstFault := (flawBack.faults.headD []).headD ""
-  ensure (flawBack.text.isSome && flawBack.faults.length == 2 &&
-    (firstFault.splitOn "(stated)").length > 1)
-    s!"a flaw read as stated didn't send the text back: {flawBack.faults}"
-  let (failed, calls, _) ← run (List.replicate 16 ruleWrong)
-  ensure (failed.text.isNone && failed.faults.length == 8 && calls == 46 &&
-    (failed.steps.filter fun s => s.what.startsWith "start 2").length > 0)
-    s!"four failed checks didn't start again, or two failed starts kept a text: {calls} calls"
+      : IO (SpecTools.Owners.Writing × Nat × List String) :=
+    IO.FS.withTempDir fun dir => do
+      let fixture := dir / "responses"
+      let workspace := dir / "workspace"
+      IO.FS.createDirAll fixture
+      let write (name text : String) := IO.FS.writeFile (fixture / name) text
+      write "document.json" doc
+      write "review-empty.json" (tells 0)
+      write "review-notes.json" (tells 2)
+      let probability (score : Nat) (why : String) :=
+        (Lean.Json.mkObj [("human_probability", Lean.toJson score),
+          ("why", Lean.Json.arr #[Lean.Json.str why])]).compress
+      write "development-default.json" (probability 92 "typos")
+      write "score.json" (probability 92 "fragments")
+      write "held-out.json" ((Lean.Json.mkObj [("verdict", "owner"),
+        ("confidence", Lean.toJson (80 : Nat)), ("reasons", Lean.Json.arr #["typos"])]).compress)
+      for (judge, index) in judges.zipIdx do
+        write s!"development-{index}.json" (probability (judge.toNat?.getD 92) "typos")
+      let checks := SpecTools.Owners.fidelityRounds + 1
+      for (reading, index) in readings.zipIdx do
+        let pair := index / 2
+        let destination := fixture / s!"fidelity{pair / checks + 1}-{pair % checks + 1}"
+        IO.FS.createDirAll destination
+        IO.FS.writeFile (destination / s!"reading{index % 2 + 1}.json") reading
+      let script := (← IO.currentDir) / "integration" / "OwnerAdapter.sh"
+      let backend : Backend :=
+        ⟨.command "sh" [script.toString, fixture.toString], "local/owner", "local", none⟩
+      let result ← SpecTools.Owners.writeOwner liveRunner [backend] backend v .prose rules flaws
+        "" workspace 10000 (judgeRounds := rounds) (startingText := startingText)
+        (reviewPrefix := reviewPrefix)
+      let count ← IO.FS.readFile (fixture / "review.count")
+      let prompts ← (List.range (count.trimAscii.toString.toNat?.getD 0)).mapM fun index => do
+        let json ← IO.ofExcept (Lean.Json.parse (← IO.FS.readFile (fixture / s!"review-{index}.json")))
+        IO.ofExcept (json.getObjValAs? String "prompt")
+      return (result, (← IO.FS.lines (fixture / "calls")).size, prompts)
   let draft := "The supplied transcript has its own opening."
-  let (imported, calls, reviewerPrompts) ← run [exact, exact] [] 0 (some draft)
-  ensure (imported.text.isSome && calls == 18 && imported.steps.length == 6 &&
-    (imported.steps.head?.map (·.text)) == some draft &&
-    ((reviewerPrompts.headD "").splitOn draft).length == 2)
-    "a supplied draft did not go straight into the five review rounds"
-  let (importFailed, calls, _) ← run (List.replicate 16 ruleWrong) [] 0 (some draft)
-  ensure (importFailed.text.isNone && calls == 21 &&
-    importFailed.faults.length == SpecTools.Owners.fidelityRounds + 1 &&
-    !(importFailed.steps.any fun s => s.what.startsWith "start 2"))
-    s!"a supplied draft that exhausted fidelity made {calls} calls; steps: {importFailed.steps.map (·.what)}"
   let row (step text : String) := (Lean.Json.mkObj [("step", Lean.toJson step),
     ("text", Lean.toJson text), ("notes", Lean.Json.arr #[])]).compress
   let lastRevision := "The fourth completed review changed this line."
@@ -619,7 +562,74 @@ def testOwners : IO Unit := do
   let failureRow := row "start 1: review 5 failed" lastRevision
   let journal := "\n".intercalate (initial :: revisions ++ [failureRow])
   let saved ← IO.ofExcept (SpecTools.Owners.decodeReviewPrefix draft journal { calls := 9 })
-  let (resumed, calls, prompts) ← run [exact, exact] [] 0 (some draft) (some saved)
+  let jobs ← [("kept", run [exact, exact]),
+      ("judge revisions", run [exact, exact] ["70", "89"]),
+      ("judge cap", run [exact, exact] ["50", "50", "50", "50"]),
+      ("judge at bar", run [exact, exact] ["90"]),
+      ("default rounds", run [exact, exact] ["50", "50"] SpecTools.Owners.judgeRounds),
+      ("rule revision", run [ruleWrong, exact, exact, exact]),
+      ("flaw revision", run [flawStated, exact, exact, exact]),
+      ("exhausted", run (List.replicate 16 ruleWrong)),
+      ("imported", run [exact, exact] [] 0 (some draft)),
+      ("failed import", run (List.replicate 16 ruleWrong) [] 0 (some draft)),
+      ("resumed", run [exact, exact] [] 0 (some draft) (some saved))].mapM fun (name, action) => do
+    return (name, ← IO.asTask action)
+  let completed := jobs.map fun (name, job) => (name, job.get)
+  let result (name : String) := do
+    let some outcome := completed.lookup name | throw (IO.userError s!"Missing owner case: {name}")
+    IO.ofExcept outcome
+  let (kept, calls, rprompts) ← result "kept"
+  ensure (kept.text == some "We do hair." && calls == 20 && kept.steps.length == 6 &&
+    (kept.steps.filter (·.notes.isEmpty)).length == 2 && kept.faults == [[]] &&
+    kept.lastTells.length == 2 && kept.lastVerdict == some true && kept.usage.calls == 20 &&
+    kept.testSamples == [92, 92, 92] && kept.devJudge == some 92 &&
+    kept.heldOut == some ("owner", 80) && kept.heldOutReasons == ["typos"] &&
+    kept.testJudge == some 92 && kept.testJudgeWhy == ["fragments"] &&
+    SpecTools.Owners.passesBar kept.testJudge &&
+    SpecTools.Owners.passesJudge .prose kept.heldOut)
+    s!"five rounds and a faithful reading didn't keep the text: {calls} calls, {kept.steps.length} steps"
+  ensure (rprompts.length == 6 && rprompts.all fun p =>
+      (p.splitOn "no shows").length == 1 && (p.splitOn "# What you want").length == 1)
+    "a reviewer's prompt holds the rules"
+  let (judgedBack, calls, _) ← result "judge revisions"
+  let judgeRevisions := judgedBack.steps.filter fun s => (s.what.splitOn "revised after judge").length > 1
+  ensure (judgedBack.text.isSome && judgeRevisions.length == 2 &&
+    judgeRevisions.all (·.notes == ["typos"]) &&
+    calls == 24) s!"two scores under the bar didn't bring two revisions against the judge's reasons: \
+      {judgeRevisions.length} revisions, {calls} calls"
+  let (judgeCapped, _, _) ← result "judge cap"
+  let (judgeAtBar, _, _) ← result "judge at bar"
+  ensure ((judgeAtBar.steps.filter fun s => (s.what.splitOn "revised after judge").length > 1).isEmpty)
+    "a score at the bar brought a revision"
+  ensure ((judgeCapped.steps.filter fun s => (s.what.splitOn "revised after judge").length > 1).length ==
+    3) "the judge's revisions didn't stop at the rounds given"
+  let (noRounds, calls, _) ← result "default rounds"
+  ensure (SpecTools.Owners.judgeRounds == 0 && calls == 19 &&
+    (noRounds.steps.filter fun s => (s.what.splitOn "revised after judge").length > 1).isEmpty)
+    s!"the default revised against the development judge: {calls} calls"
+  let (sentBack, calls, _) ← result "rule revision"
+  ensure (sentBack.text.isSome && sentBack.faults.length == 2 && sentBack.steps.length == 7 &&
+    calls == 23) s!"a clear rule read wrong didn't send the text back: {sentBack.faults}"
+  let (flawBack, _, _) ← result "flaw revision"
+  let firstFault := (flawBack.faults.headD []).headD ""
+  ensure (flawBack.text.isSome && flawBack.faults.length == 2 &&
+    (firstFault.splitOn "(stated)").length > 1)
+    s!"a flaw read as stated didn't send the text back: {flawBack.faults}"
+  let (failed, calls, _) ← result "exhausted"
+  ensure (failed.text.isNone && failed.faults.length == 8 && calls == 46 &&
+    (failed.steps.filter fun s => s.what.startsWith "start 2").length > 0)
+    s!"four failed checks didn't start again, or two failed starts kept a text: {calls} calls"
+  let (imported, calls, reviewerPrompts) ← result "imported"
+  ensure (imported.text.isSome && calls == 18 && imported.steps.length == 6 &&
+    (imported.steps.head?.map (·.text)) == some draft &&
+    ((reviewerPrompts.headD "").splitOn draft).length == 2)
+    "a supplied draft did not go straight into the five review rounds"
+  let (importFailed, calls, _) ← result "failed import"
+  ensure (importFailed.text.isNone && calls == 21 &&
+    importFailed.faults.length == SpecTools.Owners.fidelityRounds + 1 &&
+    !(importFailed.steps.any fun s => s.what.startsWith "start 2"))
+    s!"a supplied draft that exhausted fidelity made {calls} calls; steps: {importFailed.steps.map (·.what)}"
+  let (resumed, calls, prompts) ← result "resumed"
   ensure (resumed.text.isSome && calls == 10 && resumed.usage.calls == 19 &&
     resumed.steps.length == 6 && ((prompts.headD "").splitOn lastRevision).length == 2)
     "resuming a four-round prefix did not start at review five"
@@ -627,7 +637,7 @@ def testOwners : IO Unit := do
   ensure (!(SpecTools.Owners.decodeReviewPrefix "Different draft" journal {}).isOk &&
     !(SpecTools.Owners.decodeReviewPrefix draft reordered {}).isOk)
     "a changed draft or out-of-order review journal was accepted"
-  IO.println "PASS: owners (five rounds, kept, sent back for a rule and for a flaw, started again, failed)"
+  IO.println "PASS: owner adapter (review, fidelity, retry limits, supplied draft, resume)"
 
 /-- A failing preparation supplies its diagnostic and never runs the checks that follow it. -/
 def testPrepareReports : IO Unit := do
@@ -684,8 +694,8 @@ def timed (name : String) (act : IO Unit) : IO (Task (Except IO.Error Unit)) := 
   IO.println s!"time: {name} {(← IO.monoMsNow) - start} ms"
 
 def main : IO Unit := do
-  -- The groups share no state (each makes its own directories, its scripted runners and its
-  -- processes' environments its own), so they run at once; the live runner's prohibition below is
+  -- The groups own their directories and child-process environments, so they run at once.
+  -- The live runner's prohibition below is
   -- the one global, set after all of them end.
   let groups ← [("command adapter", testCommandAdapter), ("usage", testUsage), ("prose", testProse),
       ("owners", testOwners), ("tool preparation", testPrepareReports),

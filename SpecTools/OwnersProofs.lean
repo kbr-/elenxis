@@ -132,6 +132,33 @@ theorem faithful_iff (exp got : List Read) :
   unfold faithful
   exact List.isPerm_iff
 
+theorem fidelityFaults_exact (exp : List Read) (first second : Except String (List Read)) :
+    fidelityFaults exp first second = [] ↔
+      (∃ reads, first = .ok reads ∧ (exp.map Read.norm).Perm (reads.map Read.norm)) ∧
+        (∃ reads, second = .ok reads ∧ (exp.map Read.norm).Perm (reads.map Read.norm)) := by
+  simp only [fidelityFaults_empty_iff, faithful_iff]
+
+theorem meanOf_none_iff (samples : List Nat) : meanOf samples = none ↔ samples = [] := by
+  cases samples <;> simp [meanOf]
+
+theorem meanOf_cons (first : Nat) (others : List Nat) :
+    meanOf (first :: others) = some ((first + others.sum) / (others.length + 1)) := by
+  simp [meanOf]
+
+theorem passesBar_iff (score : Option Nat) :
+    passesBar score = true ↔ ∃ value, score = some value ∧ testBar ≤ value := by
+  cases score <;> simp [passesBar]
+
+theorem passesJudge_iff (form : Form) (verdict : Option (String × Nat)) :
+    passesJudge form verdict = true ↔
+      ∃ confidence, verdict = some ((match form with | .prose => "owner" | .conversation => "real"),
+        confidence) := by
+  cases verdict with
+  | none => simp [passesJudge]
+  | some pair =>
+    rcases pair with ⟨verdict, confidence⟩
+    cases form <;> simp [passesJudge]
+
 /-- The owners' domains with their tests' seeds. -/
 def ownerSeeds : List (Vocab × Nat) :=
   [(Vocab.salon, 20261120), (Vocab.tailor, 20261121), (Vocab.bakery, 20261122)]

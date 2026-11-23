@@ -688,6 +688,41 @@ def tellsOf (r : Except Failure Outcome) : Except String (List String × Bool) :
     | some ts, some real => .ok (ts.toList, real)
     | _, _ => .error "no tells or no verdict"
 
+private def readingFault (exp : List Read) (name : String) :
+    Except String (List Read) → Option String
+  | .error reason => some s!"{name}: {reason}"
+  | .ok got =>
+    if faithful exp got then none
+    else
+      let (lacks, adds) := differences exp got
+      some s!"{name} misses [{"; ".intercalate (lacks.map (·.describe))}] \
+        and reads [{"; ".intercalate (adds.map (·.describe))}]"
+
+private theorem readingFault_none_iff (exp : List Read) (name : String)
+    (result : Except String (List Read)) :
+    readingFault exp name result = none ↔
+      ∃ reads, result = .ok reads ∧ faithful exp reads = true := by
+  cases result with
+  | error reason => simp [readingFault]
+  | ok got =>
+    by_cases agrees : faithful exp got = true <;> simp [readingFault, agrees]
+
+def fidelityFaults (exp : List Read) (first second : Except String (List Read)) : List String :=
+  (readingFault exp "reading 1" first).toList ++ (readingFault exp "reading 2" second).toList
+
+theorem fidelityFaults_empty_iff (exp : List Read) (first second : Except String (List Read)) :
+    fidelityFaults exp first second = [] ↔
+      (∃ reads, first = .ok reads ∧ faithful exp reads = true) ∧
+        (∃ reads, second = .ok reads ∧ faithful exp reads = true) := by
+  simp [fidelityFaults, readingFault_none_iff]
+
+private def decodedReading : Except Failure Outcome → Except String (List Read)
+  | .error failure => .error failure.describe
+  | .ok outcome =>
+    match readsOf outcome.answer with
+    | none => .error "no rule list"
+    | some reads => .ok reads
+
 /-- The fidelity check on a text however it was written (by `writeOwner`, or by hand from a real
 owner's post): two blind extractions, started together, each compared with the reads the rules and
 flaws require (`expected`); the faults, none when both read the text faithfully, and what the calls
@@ -703,21 +738,10 @@ def checkFidelity (runner : Runner) (allowed : List Backend) (backend : Backend)
       { prompt := readPrompt text, schema := readSchema v, timeoutMs } dir
   let t1 ← IO.asTask (read 1)
   let t2 ← IO.asTask (read 2)
-  let mut faults : List String := []
-  let mut used : Usage.Usage := {}
-  for (name, t) in [("reading 1", t1), ("reading 2", t2)] do
-    let (r, u) ← IO.ofExcept t.get
-    used := used + u
-    match r with
-    | .error f => faults := faults ++ [s!"{name}: {f.describe}"]
-    | .ok o => match readsOf o.answer with
-      | none => faults := faults ++ [s!"{name}: no rule list"]
-      | some got =>
-        unless faithful exp got do
-          let (lacks, adds) := differences exp got
-          faults := faults ++ [s!"{name} misses [{"; ".intercalate (lacks.map (·.describe))}] \
-            and reads [{"; ".intercalate (adds.map (·.describe))}]"]
-  return (faults, used)
+  let (first, firstUsage) ← IO.ofExcept t1.get
+  let (second, secondUsage) ← IO.ofExcept t2.get
+  return (fidelityFaults exp (decodedReading first) (decodedReading second),
+    ({} : Usage.Usage) + firstUsage + secondUsage)
 
 /-- The prose tests `owners-suite` runs, each with its seed; the test's name is its vocabulary's. -/
 def suiteTests : List (String × Nat) := [("salon", 20261120), ("tailor", 20261121), ("bakery", 20261122)]
