@@ -36,6 +36,25 @@ def gapsPrompt (prose : String) (rows : List Row) (facts : Facts) : String :=
   identifier; for a clause no row has, name the row nearest it. Report nothing when there is no \
   gap.\n\n# Prose\n\n" ++ prose ++ "\n\n# Ledger\n\n" ++ "\n".intercalate rowText
 
+def configuredReadingCount : IO Nat := do
+  let some raw ← IO.getEnv "SPEC_TOOLS_GAP_READINGS" | return 1
+  match raw.toNat? with
+  | some (n + 1) => return n + 1
+  | _ => throw (IO.userError "SPEC_TOOLS_GAP_READINGS must be a positive integer")
+
+private def readGaps (backend : Backend) (question : Question) :
+    IO (Except String (List Proposal) × Usage.Usage) := do
+  let scratch ← IO.FS.createTempDir
+  let (answer, used) ← try Usage.askRecorded "gaps" liveRunner [backend] backend question scratch
+    finally IO.FS.removeDirAll scratch
+  let proposals := match answer with
+    | .ok outcome =>
+      match proposalsOf outcome.answer with
+      | some ps => .ok ps
+      | none => .error "the model's answer is no list of gaps"
+    | .error failure => .error failure.describe
+  return (proposals, used)
+
 /-- Print the gaps of the ledger `rows` against `prose`, asking `backend` for what Lean can't decide. -/
 def run (rows : List Row) (prose : String) (backend : Backend) (timeoutMs : Nat := 300000)
     (requirements : Bool := false) :
@@ -47,17 +66,22 @@ def run (rows : List Row) (prose : String) (backend : Backend) (timeoutMs : Nat 
   let facts : Facts := fun n => table.lookup n
   IO.ofExcept (validateRequirements requirements facts rows)
   IO.println s!"Requirements check: {backend.describe}"
-  let scratch ← IO.FS.createTempDir
-  let (answer, used) ← Usage.askRecorded "gaps" liveRunner [backend] backend
-    { prompt := gapsPrompt prose rows facts, schema := proposalSchema, timeoutMs } scratch
-  IO.FS.removeDirAll scratch
-  let usageLine := Usage.line used (Usage.brief backend)
-  let proposals ← match answer with
-    | .ok o => match proposalsOf o.answer with
-      | some ps => pure ps
-      | none => IO.println usageLine; throwError "the model's answer is no list of gaps"
-    | .error f => IO.println usageLine; throwError f.describe
-  let report := gather facts rows proposals
+  let count ← configuredReadingCount
+  let question : Question := { prompt := gapsPrompt prose rows facts, schema := proposalSchema, timeoutMs }
+  let tasks ← (List.replicate count ()).mapM fun _ => IO.asTask (readGaps backend question)
+  let readings ← tasks.mapM fun task => IO.ofExcept task.get
+  let usageLine := Usage.line (Usage.total (readings.map (·.2))) (Usage.brief backend)
+  let proposals ← match readings.mapM (·.1) with
+    | .ok all => pure all
+    | .error why => IO.println usageLine; throwError why
+  let report ← if count = 1 then
+      pure (gather facts rows (proposals.headD []))
+    else
+      match mergeReadings rows count proposals with
+      | .ok confirmed =>
+        let gaps := decided facts rows ++ confirmed
+        pure { byKind := fun k => gaps.filter (·.kind == k), refused := [] }
+      | .error why => IO.println usageLine; throwError why
   let mut total := 0
   for k in kinds do
     for g in report.byKind k do

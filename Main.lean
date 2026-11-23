@@ -654,7 +654,8 @@ def synthetic (args : List String) : IO UInt32 := do
   | ["run", outDir, agentModel, toolModel, "baseline"]
   | ["run", outDir, agentModel, toolModel, "ledger"]
   | ["run", outDir, agentModel, toolModel, "workflow"]
-  | ["run", outDir, agentModel, toolModel, "tools"] =>
+  | ["run", outDir, agentModel, toolModel, "tools"]
+  | ["run", outDir, agentModel, toolModel, "confirmed"] =>
     -- Each variant to the ledger's and the baseline's arms, or to the one arm named (the scaling
     -- measure, its comparison, the prompt-only control, the tools run first), `width` runs at a
     -- time (a batch of 10 in two waves); the key is read only to score. One arm's results go to
@@ -664,6 +665,7 @@ def synthetic (args : List String) : IO UInt32 := do
       | some "ledger" => [.ledger]
       | some "workflow" => [.workflow]
       | some "tools" => [.tools]
+      | some "confirmed" => [.confirmed]
       | _ => [.ledger, .baseline]
     let resultsFile := if arms.length == 1 then s!"results-{(arms.headD .baseline).name}.jsonl"
       else "results.jsonl"
@@ -671,10 +673,11 @@ def synthetic (args : List String) : IO UInt32 := do
     let keys := SpecTools.SyntheticRun.keyPlants keyText
     let shownAll := SpecTools.SyntheticRun.keyPresentations keyText
     let root ← IO.currentDir
-    if arms == [.tools] then
+    let prepares := arms.any (!·.preparedChecks.isEmpty)
+    if prepares then
       let executable := SpecTools.SyntheticRun.checkExecutable root.toString
       unless ← (System.FilePath.mk executable).pathExists do
-        IO.eprintln s!"synthetic run tools: missing preparatory executable {executable}; run from the Elenxis project directory"
+        IO.eprintln s!"synthetic run {(arms.headD .tools).name}: missing preparatory executable {executable}; run from the Elenxis project directory"
         return 2
     let backend ← SpecTools.Model.selectedBackend "configured" agentModel
     let toolBackend ← SpecTools.Model.selectedBackend "configured" toolModel
@@ -683,7 +686,7 @@ def synthetic (args : List String) : IO UInt32 := do
     -- On SPEC_TOOLS_HOST the agents run on that shared machine: one Claude question peaked at
     -- 263060 kB there with 3 GiB available, so three agents at a time.
     let onHost := (← IO.getEnv "SPEC_TOOLS_HOST").isSome
-    let width := if onHost then 3 else if arms == [.tools] then 5 else 10
+    let width := if onHost then 3 else if prepares then 5 else 10
     -- Each result is appended to the results file as its run ends, so a run stopped part way keeps
     -- what finished; a later run on the same directory skips each variant and arm the file holds a
     -- result for (a failed run is tried again) and counts the saved results in its totals.

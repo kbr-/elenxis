@@ -67,6 +67,35 @@ structure Report where
 /-- The order kinds are printed in. -/
 def kinds : List Kind := [.uncovered, .tooWeak, .undecided, .extra]
 
+def Gap.key (g : Gap) : String × Kind := (g.row, g.kind)
+
+/-- The number of independent readings containing this finding, with one vote per reading. -/
+def votes (key : String × Kind) (readings : List (List Gap)) : Nat :=
+  (readings.filter fun gaps => gaps.any (fun g => g.key == key)).length
+
+def hasMajority (count : Nat) (key : String × Kind) (readings : List (List Gap)) : Bool :=
+  decide (count < 2 * votes key readings)
+
+theorem majority_iff (count : Nat) (key : String × Kind) (readings : List (List Gap)) :
+    hasMajority count key readings = true ↔ count < 2 * votes key readings := by
+  simp [hasMajority]
+
+theorem one_vote_per_reading (key : String × Kind) (reading : List Gap) (rest : List (List Gap))
+    (present : reading.any (fun g => g.key == key) = true) :
+    votes key (reading :: rest) = votes key rest + 1 := by
+  simp [votes, present]
+
+def mergeReadings (rows : List Row) (count : Nat) (readings : List (List Proposal)) :
+    Except String (List Gap) := do
+  if count = 0 || readings.length != count then
+    throw s!"expected {count} independent readings, received {readings.length}"
+  let parsed ← readings.mapM (List.mapM (accept rows))
+  let candidates := parsed.flatten
+  let keys := (candidates.map Gap.key).eraseDups
+  return keys.filterMap fun key =>
+    if hasMajority count key parsed then candidates.find? (fun g => g.key == key)
+    else none
+
 def gather (facts : Facts) (rows : List Row) (proposals : List Proposal) : Report :=
   let accepted := proposals.filterMap fun p => (accept rows p).toOption
   let refused := proposals.filterMap fun p => match accept rows p with

@@ -586,22 +586,30 @@ def testPrepareReports : IO Unit := do
       fi\n"
     let mode ← IO.Process.output { cmd := "chmod", args := #["+x", executable.toString] }
     ensure (mode.exitCode == 0) mode.stderr
-    let run := (SpecTools.SyntheticRun.prepareReports executable.toString dir).run
-    let valid ← run
-    ensure (match valid with
-      | .ok report => ["audit", "tests", "gaps"].all fun name =>
-          (report.splitOn s!"report for {name}").length == 2
-      | .error _ => false) "successful checks did not supply all three reports"
-    ensure ((← IO.FS.readFile journal) == "audit\ntests\ngaps\n") "wrong preparation order"
-    for (name, attempted) in
-      [("audit", "audit\n"), ("tests", "audit\ntests\n"), ("gaps", "audit\ntests\ngaps\n")] do
-      IO.FS.writeFile failure name
+    let modes : List (SpecTools.SyntheticRun.Arm × List String × Nat) :=
+      [(.tools, ["audit", "tests", "gaps"], 1),
+       (.confirmed, ["audit", "tests", "gaps", "clauses"], 3)]
+    for (arm, expected, readings) in modes do
+      let run := (SpecTools.SyntheticRun.prepareReports executable.toString dir
+        arm.preparedChecks readings).run
+      IO.FS.writeFile failure ""
       IO.FS.writeFile journal ""
-      let failed ← run
-      ensure (match failed with
-        | .error error => error == s!"preparing {name}: exit 42\nreport for {name}\ndiagnostic for {name}\n"
-        | .ok _ => false) s!"the failed {name} preparation did not preserve its output"
-      ensure ((← IO.FS.readFile journal) == attempted) s!"preparation continued past {name}"
+      let valid ← run
+      ensure (match valid with
+        | .ok report => expected.all fun name =>
+            ((arm.prompt "check" report).splitOn s!"report for {name}").length == 2
+        | .error _ => false) s!"the {arm.name} prompt did not contain the successful reports"
+      ensure ((← IO.FS.readFile journal) == "\n".intercalate expected ++ "\n")
+        "wrong preparation order"
+      for (name, index) in expected.zipIdx do
+        IO.FS.writeFile failure name
+        IO.FS.writeFile journal ""
+        let failed ← run
+        ensure (match failed with
+          | .error e => e == s!"preparing {name}: exit 42\nreport for {name}\ndiagnostic for {name}\n"
+          | .ok _ => false) s!"the failed {name} preparation did not preserve its output"
+        ensure ((← IO.FS.readFile journal) == "\n".intercalate (expected.take (index + 1)) ++ "\n")
+          s!"preparation continued past {name}"
     let absent ← (SpecTools.SyntheticRun.prepareReports (dir / "missing").toString dir).run
     ensure (match absent with
       | .error error => error.startsWith "preparing audit"

@@ -199,8 +199,10 @@ score a run's findings against the key: how many planted gaps are found, and the
   variant's prompt, discards and usage go to its `prose.json`.
 - `spec-tools synthetic run DIR AGENT-MODEL TOOL-MODEL [ARM]` gives each variant to an agent: the
   `baseline` arm with the files alone, the `ledger` arm offered the tools, the `workflow` arm with
-  the ledger arm's prompt and no tools, the `tools` arm with the tools' reports handed over before
-  it starts; both `ledger` and `baseline` when no arm is named.
+  the ledger arm's prompt alone, and the `tools` arm with the audit, tests and gaps reports supplied
+  before it starts. The `confirmed` arm supplies audit, tests, gaps and clauses before the agent
+  starts, with three independent readings for gaps. A failed preparatory check prevents that
+  variant's agent invocation. The default run includes `ledger` and `baseline`.
 - `spec-tools synthetic gapsrun SEED N DIR MODEL` runs `gaps` alone on each variant, scored by the
   row it names.
 - A finding names the ledger row of the rule it concerns, and a plant is found by a finding naming

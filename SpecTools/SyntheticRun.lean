@@ -61,11 +61,17 @@ def workflowOnly : String :=
 /-- The arms: the bare agent; the agent offered the ledger's tools with its workflow; the agent with
 the workflow alone; and the agent given the tools' reports, run before it starts. -/
 inductive Arm where
-  | baseline | ledger | workflow | tools
+  | baseline | ledger | workflow | tools | confirmed
   deriving DecidableEq, Repr
 
 def Arm.name : Arm → String
   | .baseline => "baseline" | .ledger => "ledger" | .workflow => "workflow" | .tools => "tools"
+  | .confirmed => "confirmed"
+
+def Arm.preparedChecks : Arm → List String
+  | .tools => ["audit", "tests", "gaps"]
+  | .confirmed => ["audit", "tests", "gaps", "clauses"]
+  | _ => []
 
 /-- What the tools arm is told of the reports it gets. -/
 def toolsIntro (check : String) : String :=
@@ -82,6 +88,9 @@ def Arm.prompt (arm : Arm) (check : String) (reports : String := "") : String :=
   | .ledger => task ++ "\n\n" ++ ledgerTools check ++ "\n\n" ++ answerFormat
   | .workflow => task ++ "\n\n" ++ workflowOnly ++ "\n\n" ++ answerFormat
   | .tools => task ++ "\n\n" ++ toolsIntro check ++ "\n\n" ++ reports ++ "\n\n" ++ answerFormat
+  | .confirmed => task ++ "\n\nAudit, tests, gaps and clauses completed before this run. " ++
+    "Use their reports to check what the prose requires and what the artifacts establish. " ++
+    "Verify each reported finding against the files.\n\n" ++ reports ++ "\n\n" ++ answerFormat
 
 /-- The audit's report without its proved rows and their statements, which the files hold. -/
 def auditDigest (out : String) : String :=
@@ -184,7 +193,9 @@ def runCheck (sub : String) : IO UInt32 := do
   log.putStrLn sub
   let toolConfig := dir / toolBackendFile
   let savedBackend ← toolConfig.pathExists
-  let passed ← (backendEnvironment.filter (fun k => !savedBackend || k != "SPEC_TOOLS_BACKEND")).filterMapM fun k => do
+  let names := if sub == "gaps" then backendEnvironment ++ ["SPEC_TOOLS_GAP_READINGS"]
+    else backendEnvironment
+  let passed ← (names.filter (fun k => !savedBackend || k != "SPEC_TOOLS_BACKEND")).filterMapM fun k => do
     return (← IO.getEnv k).map (s!"{k}=" ++ ·)
   let inv := if savedBackend then
     { inv with env := inv.env.push ("SPEC_TOOLS_BACKEND", some toolConfig.toString) }
@@ -329,23 +340,24 @@ def checkCommand (root : String) : String := checkExecutable root ++ " check"
 tools arm. -/
 def armTools (arm : Arm) (root : String) : List String :=
   ["Read", "Glob", "Grep", "Bash(python3 -m pytest *)"] ++
-    (if arm == .ledger || arm == .tools then [s!"Bash({checkCommand root} *)"] else [])
+    (if arm == .ledger || !arm.preparedChecks.isEmpty then [s!"Bash({checkCommand root} *)"] else [])
 
-/-- Run the three preparatory checks. A failed invocation ends preparation with its diagnostic. -/
-def prepareReports (executable : String) (work : System.FilePath) : ExceptT String IO String := do
+/-- Run the named preparatory checks. A failed invocation ends preparation with its diagnostic. -/
+def prepareReports (executable : String) (work : System.FilePath)
+    (checks : List String := Arm.tools.preparedChecks) (readings : Nat := 1) :
+    ExceptT String IO String := do
   let run (check : String) : ExceptT String IO String := do
     let result ← liftM <| (IO.Process.output
-      { cmd := executable, args := #["check", check], cwd := some work }).toBaseIO
+      { cmd := executable, args := #["check", check], cwd := some work,
+        env := #[("SPEC_TOOLS_GAP_READINGS", some (toString readings))] }).toBaseIO
     let output ← match result with
       | .ok output => pure output
       | .error error => throw s!"preparing {check} with {executable}: {error}"
     if output.exitCode != 0 then
       throw s!"preparing {check}: exit {output.exitCode}\n{output.stdout}{output.stderr}"
-    return output.stdout
-  let audit ← run "audit"
-  let tests ← run "tests"
-  let gaps ← run "gaps"
-  return s!"## audit\n{auditDigest audit}\n\n## tests\n{tests}\n\n## gaps\n{gaps}"
+    let report := if check == "audit" then auditDigest output.stdout else output.stdout
+    return s!"## {check}\n{report}"
+  return String.intercalate "\n\n" (← checks.mapM run)
 
 /-- One arm's run on one variant: its findings and the `check` commands it ran, or why there are
 none; what its agent used; and what its tools used (the tools arm's reports and every `check` the
@@ -359,18 +371,18 @@ def runArm (backend : Backend) (variantDir : System.FilePath) (arm : Arm) (root 
   let .ok toolArgs := transport | return (transport.map (fun _ => ([], [])), {}, {}, #[])
   IO.FS.createDirAll work
   for f in files do IO.FS.writeFile (work / f) (← IO.FS.readFile (variantDir / f))
-  if arm == .ledger || arm == .tools then
+  if arm == .ledger || !arm.preparedChecks.isEmpty then
     IO.FS.writeFile (work / configFile)
       (Json.mkObj [("root", Json.str root), ("model", Json.str toolBackend.model)]).compress
     IO.FS.writeFile (work / toolBackendFile) (backendConfigJson toolBackend).compress
   -- The tools arm's reports, run before the agent starts; check.log then records only the
   -- agent's own reruns.
-  let reports ← if arm == .tools then (prepareReports (checkExecutable root) work).run
-    else pure (.ok "")
+  let readings := if arm == .confirmed then 3 else 1
+  let reports ← (prepareReports (checkExecutable root) work arm.preparedChecks readings).run
   match reports with
   | .error why => return (.error why, {}, ← Usage.readRecorded (usageFile work.toString), #[])
   | .ok reports =>
-    if arm == .tools && (← (work / "check.log").pathExists) then
+    if !arm.preparedChecks.isEmpty && (← (work / "check.log").pathExists) then
       IO.FS.removeFile (work / "check.log")
     let prompt := if bound then task ++ "\n\n" ++
       "Use the Elenxis MCP tools on the fixture. Audit checks proof status, tests checks the named \

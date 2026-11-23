@@ -43,3 +43,21 @@ example : (verdict (fun n => if n == `t then some { statement := "", axioms := [
 example : ∀ r ∈ [({ id := "r", clause := "c" } : Row)], r.id ≠ "s" := by decide
 
 end SpecTools.Gaps
+
+section ConfirmationControls
+open SpecTools.Gaps SpecTools.Ledger
+
+private def readingRow : Row := { id := "limit", clause := "Refuse at the limit." }
+private def weakReading : Proposal := ⟨"too weak", "limit", "A boundary case is missing."⟩
+private def extraReading : Proposal := ⟨"extra", "limit", "An extra premise is required."⟩
+
+#guard (mergeReadings [readingRow] 3 [[weakReading, weakReading], [extraReading], []]).toOption ==
+  some []
+#guard ((mergeReadings [readingRow] 3 [[weakReading], [weakReading], []]).toOption.map
+  (List.map Gap.key)) == some [("limit", .tooWeak)]
+#guard (mergeReadings [readingRow] 5 [[weakReading], [weakReading], [], [], []]).toOption == some []
+#guard ((mergeReadings [readingRow] 5 [[weakReading], [weakReading], [weakReading], [], []]).toOption.map
+  (List.map Gap.key)) == some [("limit", .tooWeak)]
+#guard !(mergeReadings [readingRow] 3 [[weakReading], [weakReading]]).isOk
+
+end ConfirmationControls
