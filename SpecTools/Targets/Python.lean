@@ -14,7 +14,7 @@ def leanFile (vs : List View) : String :=
   "\n\n".intercalate (vs.map leanTheorems) ++ "\n\n" ++
   "def pythonTest (id : String) : List String := [\"test_\" ++ id.replace \"-\" \"_\"]\n\n" ++
   s!"def rows : List Row := [\n{leanRows vs}\n]\n\n" ++
-  "def ledger : List Row := rows.map fun r => { r with tests := pythonTest r.id }\n\n" ++
+  "def ledger : List Row := rows.map fun r => { r with externalChecks := pythonTest r.id }\n\n" ++
   "end Loans\n\n#eval SpecTools.Audit.run Loans.ledger `Loans\n\n" ++
   "def fixtureDir : IO String := return (← IO.getEnv \"SPEC_TOOLS_DIR\").getD \"fixtures/loans\"\n" ++
   "def adapterPath : IO String :=\n  return (← IO.getEnv \"SPEC_TOOLS_ADAPTER\").getD \"../../adapters/python_guards.py\"\n\n" ++

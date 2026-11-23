@@ -29,7 +29,7 @@ def Finding.describe : Finding → String
   | .weakTest l g => s!"weak test: no test fails with the guard `{g}` (line {l}) removed"
 
 def findings (rows : List Row) (defined : List String) (guards : List GuardResult) : List Finding :=
-  (rows.flatMap fun r => (r.tests.filter (!defined.contains ·)).map (.missingTest r.id)) ++
+  (rows.flatMap fun r => (r.externalCheckNames.filter (!defined.contains ·)).map (.missingTest r.id)) ++
     (guards.filter (·.failed.isEmpty)).map fun g => .weakTest g.line g.guard
 
 /-- The adapter's output: the tests defined, then each guard. -/
@@ -49,7 +49,7 @@ name. A disagreement or guard finding fails the check. -/
 def run (rows : List Row) (adapter module testFile : String) (cwd : Option String := none)
     (replay : IO Unit := pure ()) : IO Unit := do
   replay
-  let tests := (rows.flatMap (·.tests)).eraseDups
+  let tests := (rows.flatMap (·.externalCheckNames)).eraseDups
   let out ← IO.Process.output
     { cmd := "python3", args := #[adapter, module, testFile] ++ tests.toArray, cwd := cwd }
   if out.exitCode != 0 then throw <| IO.userError s!"the adapter failed:\n{out.stderr}"

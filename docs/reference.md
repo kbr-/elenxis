@@ -12,23 +12,24 @@ def ledger : List SpecTools.Ledger.Row := [
   { id := "prerelease", source := "DESIGN.md, Tiers",
     clause := "a base whose version carries a pre-release suffix ... admits no space",
     theorems := [``prerelease_admits_none],
-    evidence := [⟨``prerelease_admits_none, ``wit_prerelease, .inhabited⟩],
-    tests := ["test_prerelease_admits_none"] } ]
+    evidence := [⟨``prerelease_admits_none, ``wit_prerelease, .inhabited⟩] } ]
 
 #eval SpecTools.Audit.run ledger `Root
 ```
 
-A row names the theorems stating its clause, evidence about their premise domains, and the tests
-covering it in the implementation's language. An `evidence` binding names the subject theorem, the
-evidence theorem and its kind. For a statement `∀ n : Nat, n < 18 → P n`, an `.inhabited`
-certificate proves `∃ n : Nat, ∃ _h : n < 18, True`. An `.inconsistent` certificate proves the
-negation of that domain. Each certificate needs an accepted axiom inventory. Legacy `witnesses`
-entries still claim declarations for the audit's coverage check. Upgrade them by binding a
-certificate of the exact domain to each relevant theorem.
+A row names the theorems stating its clause and evidence about their premise domains. An `evidence`
+binding names the subject theorem, the evidence theorem and its kind. For a statement
+`∀ n : Nat, n < 18 → P n`, an `.inhabited` certificate proves `∃ n : Nat, ∃ _h : n < 18, True`. An
+`.inconsistent` certificate proves the negation of that domain. Each certificate needs an accepted
+axiom inventory. Legacy `witnesses` entries still claim declarations for the audit's coverage check.
+Upgrade them by binding a certificate of the exact domain to each relevant theorem.
 
 A row's `status` is `covered` (the default), `uncovered REASON`, `provisional DECISION` or
 `accepted DECISION`. A ledger kept as a Markdown table instead is read by `SpecTools.LedgerTable`;
-its header row is `| id | clause | source | theorems | witnesses | tests | status |`.
+its header row is `| id | clause | source | theorems | witnesses | externalChecks | status |`. The
+optional `externalChecks` field names checks for language integrations. The reader also accepts the
+historical `tests` column. An adapter reads names from both Lean fields and checks each distinct
+name once. The audit's verdict depends on the Lean declarations and evidence.
 
 ## The audit's verdicts
 
@@ -94,7 +95,7 @@ implementation also satisfies has no such proof, so its theorem is never admitte
 before the theorem's own proof is elaborated. Set `specTools.adversarial.root` in the audit module
 to require this of every source theorem under that root.
 
-## Tests
+## Legacy Python integration
 
 `SpecTools.Tests.run rows adapter module testFile` reports a test a row names that the test file
 doesn't define, and a guard of the implementation whose removal no test notices. The Python adapter
@@ -180,10 +181,10 @@ launcher as part of the command's environment. Claude calls retain their existin
 For a remote Codex `synthetic run` with the `ledger` arm, set `SPEC_TOOLS_CHECK_HOST` to the SSH
 name of the machine holding the original variant and `SPEC_TOOLS_CHECK_LAUNCHER` to the absolute
 path of that machine's protected launcher. The model host must be able to connect to this host over
-SSH. The agent can request `audit`, `tests`, `gaps` or `clauses` through the Elenxis MCP server with
-empty arguments. Each request runs on the original variant, whose lock serializes requests from
-independent connections. The result's `check_events` records attempts and terminal statuses. An
-agent can skip a check or submit findings after a failed check.
+SSH. In this legacy mode the agent can request `audit`, `integration`, `gaps` or `clauses` through
+the Elenxis MCP server with empty arguments. Each request runs on the original variant, whose lock
+serializes requests from independent connections. The result's `check_events` records attempts and
+terminal statuses. An agent can skip a check or submit findings after a failed check.
 
 ## The synthetic evaluation
 

@@ -400,6 +400,17 @@ def testUsage : IO Unit := do
   ensure (out.exitCode == 0 && has text "usage: 1 calls; tokens input 7" && has text "output 3")
     s!"gaps printed no usage line: {text}"
   ensure ((← readRecorded usageRecord).input == .of (some 7)) "gaps recorded no usage in SPEC_TOOLS_USAGE"
+  let unreportedFile ← gapsFile "GapsUnreportedUsage" "printf '{\\\"gaps\\\":[]}'"
+  let unreportedRecord := dir / "unreported.jsonl"
+  let unreported ← IO.Process.output {
+    cmd := "lake"
+    args := #["env", "lean", unreportedFile.toString]
+    env := #[("SPEC_TOOLS_USAGE", some unreportedRecord.toString), ("SPEC_TOOLS_TRACE", none)] }
+  ensure (unreported.exitCode == 0 && has unreported.stdout "input unknown (1 unreported)")
+    s!"gaps did not report the unreported call: {unreported.stdout}{unreported.stderr}"
+  let unreportedUsage ← readRecorded unreportedRecord
+  ensure (unreportedUsage.calls == 1 && unreportedUsage.input == .of none &&
+    unreportedUsage.output == .of none) s!"gaps recorded incorrect missing usage: {repr unreportedUsage}"
   let traces := (← traceDir.readDir).map (·.path)
   ensure (traces.size == 1) s!"one trace file expected, found {traces.size}"
   let traced ← IO.FS.readFile traces[0]!

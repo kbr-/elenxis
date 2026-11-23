@@ -28,6 +28,12 @@ def sampleRows : List Row :=
 /-- The table and the same rows written in Lean are equal. -/
 theorem table_reads_rows : (readTable sampleTable).toOption = some sampleRows := by decide +kernel
 
+theorem external_table_reads_rows :
+    (readTable "| id | clause | source | theorems | witnesses | externalChecks | status |\n\
+      | r | c | s | | | probe | covered |").toOption =
+      some [{ id := "r", clause := "c", source := "s", externalChecks := ["probe"] }] := by
+  decide +kernel
+
 def refusal (r : Except String (List Row)) : Option String :=
   match r with
   | .error e => some e

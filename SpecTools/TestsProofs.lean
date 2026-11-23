@@ -28,7 +28,7 @@ theorem killed_not_reported (rows : List Row) (defined : List String) (gs : List
     simp_all
 
 theorem missing_iff (rows : List Row) (defined : List String) (gs : List GuardResult) (r : Row)
-    (t : String) (hr : r ∈ rows) (ht : t ∈ r.tests) :
+    (t : String) (hr : r ∈ rows) (ht : t ∈ r.externalCheckNames) :
     Finding.missingTest r.id t ∈ findings rows defined gs ↔ t ∉ defined := by
   constructor
   · intro h

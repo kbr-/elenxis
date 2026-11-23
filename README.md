@@ -6,17 +6,16 @@ the spec?" width="600"> </picture> </p>
 
 **Review what your Lean specification promises, clause by clause.**
 
-Elenxis links natural-language requirements to Lean theorems, proofs and implementation tests. Use
-it to spot missing or weaker-than-intended rules, audit what the proofs establish, and check whether
-implementation tests exercise the rules they are meant to protect. Lean computes the audit verdicts.
-A configured model proposes gaps that need a reading of the prose, and a person judges those
-proposals.
+Elenxis links natural-language requirements to Lean contracts, counterexamples and proofs. Use it to
+spot missing or weaker-than-intended rules and audit what the proofs establish. Lean computes the
+audit verdicts. A configured model proposes gaps that need a reading of the prose, and a person
+judges those proposals.
 
 ## The problem
 
 A proved theorem can cover only part of a requirement, rely on impossible hypotheses, or enforce a
 rule the user never requested. An entire requirement can also be missing from the specification.
-Those gaps matter even when the proofs compile and the tests pass.
+Those gaps matter even when the proofs compile.
 
 ## Examples
 
@@ -209,9 +208,8 @@ approved contract (the draft a person accepted)
 Lean specification and its ledger
   │  Audit.run                   proved, vacuous, conditional or unstated, row by row
   │  Gaps.runConfigured          the statements against the prose
-  │  Tests.run                   each guard of the implementation noticed by a test
   ▼
-implementation and its tests
+Lean implementation and proofs of its obligations
 ```
 
 The checks above the line "approved contract" compare the formalization with the prose; those below
@@ -228,9 +226,9 @@ is only reviewed, by a model's reading and a person's decision.
 - **Adversarial admission** (`SpecTools.Adversarial`): `adversarial_claim` admits a theorem only
   with a witness for its hypotheses and, for each attack, a proof that a cheap wrong implementation
   (a constant, doing nothing) fails the same law.
-- **Tests** (`SpecTools.Tests`, `adapters/python_guards.py`): find implementation guards whose
-  removal escapes the property tests. Executable fixtures can also replay the same operations in
-  Lean and Python and report the first disagreement.
+- **Proof checks** (`spec-tools check proofs|contracts|counterexamples`): build the corresponding
+  modules of a generated Lean project. See the [optional cross-language
+  target](docs/reference.md#optional-cross-language-target) for Python.
 - **Draft review** (`spec-tools draft-check`, `draft-review`): the clauses' planned contracts,
   reviewed before any Lean is written.
 - **Clauses** (`spec-tools clauses`): a prose file's clauses extracted twice, blind, and compared.

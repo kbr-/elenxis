@@ -44,12 +44,22 @@ structure Row where
   theorems : List Name := []
   /-- Legacy witness names, retained for declaration coverage. -/
   witnesses : List Name := []
-  /-- Tests covering the clause in other languages, by name. -/
+  /-- Legacy spelling of external check names. -/
   tests : List String := []
   status : Status := .covered
   /-- Claims about individual theorem premise domains, checked by the audit. -/
   evidence : List EvidenceBinding := []
+  /-- Optional integration checks covering the clause, by name. -/
+  externalChecks : List String := []
   deriving Repr, Inhabited
+
+/-- Select all named external checks, including older rows, once each. -/
+def Row.externalCheckNames (row : Row) : List String :=
+  (row.externalChecks ++ row.tests).eraseDups
+
+theorem externalCheckNames_iff (row : Row) (name : String) :
+    name ∈ row.externalCheckNames ↔ name ∈ row.externalChecks ∨ name ∈ row.tests := by
+  simp [Row.externalCheckNames, List.mem_eraseDups]
 
 abbrev CheckedEvidence := EvidenceBinding → Bool
 
@@ -147,6 +157,11 @@ def verdict (facts : Facts) (row : Row) (checked : CheckedEvidence := fun _ => f
             (fun n => (facts n).any (·.kind == .theoremStatement)) then
           premiseVerdict facts row checked
         else .specified
+
+theorem verdict_independent_of_external_checks (facts : Facts) (row : Row)
+    (checked : CheckedEvidence) (current legacy : List String) :
+    verdict facts { row with externalChecks := current, tests := legacy } checked =
+      verdict facts row checked := rfl
 
 inductive SpecificationFinding where
   | emptyLedger

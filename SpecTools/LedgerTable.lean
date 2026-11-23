@@ -2,8 +2,9 @@ import SpecTools.Ledger
 
 /-!
 The ledger's Markdown reader, for a clause table kept in a document: a table whose header row is
-`| id | clause | source | theorems | witnesses | tests | status |`, a separator row, then one row per
-clause. Names and tests are comma-separated; the status is `covered`, `uncovered: REASON`,
+`| id | clause | source | theorems | witnesses | externalChecks | status |`, a separator row,
+then one row per clause. The historical header `tests` selects the legacy field. Names are
+comma-separated. Status is `covered`, `uncovered: REASON`,
 `provisional: DECISION` or `accepted: DECISION`. Lines outside the table are prose and ignored.
 Written over lists of characters with structural recursion, so the kernel evaluates it.
 -/
@@ -51,29 +52,41 @@ def cellsOf (line : List Char) : Option (List (List Char)) :=
     | _ => none
   | _ => none
 
-def rowOf (cells : List (List Char)) : Option Row :=
+def rowOf (cells : List (List Char)) (external : Bool := false) : Option Row :=
   match cells with
-  | [id, clause, source, theorems, witnesses, tests, status] =>
+  | [id, clause, source, theorems, witnesses, checks, status] =>
+    let names := (items checks).map String.ofList
     (statusOf status).map fun st =>
       { id := String.ofList id, clause := String.ofList clause, source := String.ofList source,
         theorems := (items theorems).map nameOf, witnesses := (items witnesses).map nameOf,
-        tests := (items tests).map String.ofList, status := st }
+        tests := if external then [] else names, externalChecks := if external then names else [],
+        status := st }
   | _ => none
+
+theorem rowOf_check_names (id clause source theorems witnesses checks status : List Char)
+    (external : Bool) :
+    (rowOf [id, clause, source, theorems, witnesses, checks, status] external).map
+        Row.externalCheckNames =
+      (statusOf status).map (fun _ => ((items checks).map String.ofList).eraseDups) := by
+  cases parsed : statusOf status <;> cases external <;>
+    simp [rowOf, Row.externalCheckNames, parsed]
 
 def isSeparator (cells : List (List Char)) : Bool :=
   cells.all fun c => !c.isEmpty && c.all (fun x => x == '-' || x == ':')
 
 /-- The rows of the table in the lines given, numbered from `n`; the header and separator rows are
 skipped, and a malformed row is refused with its line number. -/
-def readLines : Nat → List (List Char) → Except String (List Row)
-  | _, [] => .ok []
-  | n, line :: rest =>
+def readLines : Nat → List (List Char) → (external : Bool := false) → Except String (List Row)
+  | _, [], _ => .ok []
+  | n, line :: rest, external =>
     match cellsOf line with
-    | none => readLines (n + 1) rest
+    | none => readLines (n + 1) rest external
     | some cells =>
-      if isSeparator cells || cells.head? == some "id".toList then readLines (n + 1) rest
-      else match rowOf cells with
-        | some row => (readLines (n + 1) rest).map (row :: ·)
+      if cells.head? == some "id".toList then
+        readLines (n + 1) rest (cells[5]? == some "externalChecks".toList)
+      else if isSeparator cells then readLines (n + 1) rest external
+      else match rowOf cells external with
+        | some row => (readLines (n + 1) rest external).map (row :: ·)
         | none => .error s!"line {n}: not a ledger row (7 cells, the last a status)"
 
 def readTable (text : String) : Except String (List Row) := readLines 1 (splitAt '\n' text.toList)
