@@ -1,5 +1,9 @@
-<p align="center"><img src="docs/elenxis.webp" alt="Elenxis: The proof checks. Does the spec?"
-width="600"></p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/elenxis-dark.webp">
+    <img src="docs/elenxis.webp" alt="Elenxis: The proof checks. Does the spec?" width="600">
+  </picture>
+</p>
 
 # Elenxis
 
