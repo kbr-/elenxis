@@ -24,7 +24,7 @@ structure KeyedCase where
 inductive Arm where
   | baseline
   | elenxis
-  deriving DecidableEq, ToJson
+  deriving BEq, DecidableEq, FromJson, ToJson
 
 private def disposition : List String := ["too weak", "extra", "no defect", "unknown"]
 

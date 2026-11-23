@@ -1,5 +1,5 @@
 import SpecTools
-import SpecTools.Benchmark
+import SpecTools.BenchmarkReview
 
 namespace SpecTools.ProofInventory
 open Lean Elab Command
@@ -41,7 +41,9 @@ def obligations : List Name := [
   ``Model.observe_success_reuses,
   ``SyntheticRun.runLockedCheck_refused,
   ``OwnerApproval.accepts_iff,
-  ``Benchmark.same_budget]
+  ``Benchmark.same_budget,
+  ``Benchmark.Review.hit_iff,
+  ``Benchmark.Review.hits_bounded]
 
 def check (names : List Name) : CommandElabM Unit := do
   for name in names do

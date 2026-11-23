@@ -123,6 +123,89 @@ def auditCase (dir : System.FilePath) (name body : String) : IO (UInt32 × Strin
 def has (text needle : String) : Bool := (text.splitOn needle).length > 1
 
 open Lean in
+def testBenchmarkReview : IO Unit := IO.FS.withTempDir fun dir => do
+  let bin := (← IO.currentDir) / ".lake/build/bin/spec-tools"
+  let cases := dir / "cases.json"
+  let key := dir / "key.json"
+  let journal := dir / "journal.jsonl"
+  let config := dir / "backend.json"
+  let review := dir / "review.json"
+  let fixture (id : String) (limit : Nat) := Json.mkObj [
+    ("id", toJson id), ("family", "booking"), ("prose", toJson id),
+    ("candidate", "Synthetic candidate"), ("rule", toJson (1 : Nat)),
+    ("property", "cutoff"), ("referenceLimit", toJson (2 : Nat)), ("candidateLimit", toJson limit)]
+  let keyRow (id kind : String) := Json.mkObj [("id", toJson id), ("key", Json.mkObj [
+    ("version", toJson (1 : Nat)), ("plants", Json.arr (if kind.isEmpty then #[] else #[Json.mkObj [
+      ("id", toJson (1 : Nat)), ("kind", toJson kind), ("property", "cutoff"),
+      ("location", Json.mkObj [("rule", toJson (1 : Nat)), ("part", "main")])]]))])]
+  IO.FS.writeFile cases (toJson [fixture "ALPHA" 4, fixture "BETA" 1, fixture "INTACT" 2]).compress
+  IO.FS.writeFile key (toJson [
+    keyRow "ALPHA" "too weak", keyRow "BETA" "extra", keyRow "INTACT" ""]).compress
+  let script := "case \"$(cat request.json)\" in\n" ++
+    "  *BETA*'Lean comparison'*) category=extra; observation=1 ;;\n" ++
+    "  *BETA*) exit 42 ;;\n" ++
+    "  *) category='too weak'; observation=2 ;;\n" ++
+    "esac\n" ++
+    "printf '{\"category\":\"%s\",\"rules\":[1],\"properties\":[\"cutoff\"],\"observations\":[%s],\"questions\":[],\"reason\":\"Synthetic control\"}\\n' \"$category\" \"$observation\""
+  IO.FS.writeFile config (Json.mkObj [
+    ("adapter", "command"), ("command", "sh"), ("model", "local/review"), ("dataGoesTo", "local"),
+    ("args", toJson ["-c", script, "benchmark-review-control"])]).compress
+  let run (args : Array String) := IO.Process.output {
+    cmd := bin.toString
+    args := args
+    env := #[("SPEC_TOOLS_BACKEND", some config.toString), ("SPEC_TOOLS_HOST", none)] }
+  let generated ← run #["benchmark", cases.toString, key.toString, journal.toString, "1000"]
+  ensure (generated.exitCode == 1 && has generated.stdout "BETA: paired responses saved with failures")
+    (generated.stdout ++ generated.stderr)
+  let saved ← IO.FS.readFile journal
+  let rows ← IO.ofExcept ((saved.splitOn "\n").filter (!·.isEmpty) |>.mapM Json.parse)
+  let pairRows := rows.filter fun row => (row.getObjValAs? String "type").toOption == some "pair"
+  let reviewPairs ← pairRows.mapM fun row => do
+    let id ← IO.ofExcept (row.getObjValAs? String "id")
+    let arms ← IO.ofExcept (row.getObjValAs? (List Json) "arms")
+    let marks ← arms.mapM fun arm => do
+      let label ← IO.ofExcept (arm.getObjValAs? String "arm")
+      let response ← IO.ofExcept (arm.getObjVal? "response")
+      let accepted := id == "ALPHA" || (id == "BETA" && label == "elenxis")
+      return Json.mkObj [("arm", toJson label), ("response", response), ("accepted", toJson accepted)]
+    return Json.mkObj [("id", toJson id), ("hasDefect", toJson (id != "INTACT")), ("arms", toJson marks)]
+  let annotation := Json.mkObj [("version", toJson (1 : Nat)), ("reviewer", "Synthetic reviewer"),
+    ("synthetic", toJson true), ("ownerMillis", toJson (37 : Nat)), ("pairs", toJson reviewPairs)]
+  IO.FS.writeFile review annotation.compress
+  let check := run #["benchmark-review", journal.toString, review.toString]
+  let evaluated ← check
+  ensure (evaluated.exitCode == 0) (evaluated.stdout ++ evaluated.stderr)
+  let result ← IO.ofExcept (Json.parse evaluated.stdout)
+  let scores ← IO.ofExcept (result.getObjValAs? (List Json) "arms")
+  let ratio (a b : Nat) := Json.mkObj [("numerator", toJson a), ("denominator", toJson b)]
+  for (arm, precision, expectedRecall) in [("baseline", ratio 1 2, ratio 1 2),
+      ("elenxis", ratio 2 3, ratio 2 2)] do
+    let some score := scores.find? (fun score => (score.getObjValAs? String "arm").toOption == some arm)
+      | throw (IO.userError "missing arm metrics")
+    ensure ((score.getObjVal? "precision").toOption == some precision &&
+      (score.getObjVal? "recall").toOption == some expectedRecall) evaluated.stdout
+  ensure ((result.getObjValAs? Nat "ownerMillis").toOption == some 37 &&
+    (result.getObjValAs? String "humanCost").toOption == some "unknown") evaluated.stdout
+  let some first := reviewPairs.head? | throw (IO.userError "benchmark wrote no pair")
+  let firstArms ← IO.ofExcept (first.getObjValAs? (List Json) "arms")
+  let changedArms := firstArms.map (·.setObjVal! "response" Json.null)
+  let altered := first.setObjVal! "arms" (toJson changedArms)
+  IO.FS.writeFile review (annotation.setObjVal! "pairs" (toJson (altered :: reviewPairs.drop 1))).compress
+  let refused ← check
+  ensure (refused.exitCode == 2 && has refused.stderr "Review response differs") refused.stderr
+  IO.FS.writeFile review annotation.compress
+  let some summary := rows.getLast? | throw (IO.userError "benchmark wrote no summary")
+  let summaryArms ← IO.ofExcept (summary.getObjValAs? (List Json) "arms")
+  let missing := summary.setObjVal! "arms" (toJson (summaryArms.map
+    (·.setObjVal! "notAttempted" (toJson (1 : Nat)))))
+  IO.FS.writeFile journal ("\n".intercalate ((rows.dropLast ++ [missing]).map Json.compress) ++ "\n")
+  let partialResult ← check
+  ensure (partialResult.exitCode == 0 && has partialResult.stdout "\"precision\":\"unknown\"" &&
+    has partialResult.stdout "\"recall\":\"unknown\"") (partialResult.stdout ++ partialResult.stderr)
+  IO.println evaluated.stdout
+  IO.println "PASS: benchmark review CLI (false alarm, missed failed call, stale review, partial journal)"
+
+open Lean in
 /-- Exercise the fixture refusal and resume through the compiled CLI and real child processes. -/
 def testEffectProtocol : IO Unit := IO.FS.withTempDir fun dir => do
   let bin := (← IO.currentDir) / ".lake/build/bin/spec-tools"
@@ -803,6 +886,7 @@ def main : IO Unit := do
   let groups ← [("command adapter", testCommandAdapter), ("usage", testUsage), ("prose", testProse),
       ("owners", testOwners), ("tool preparation", testPrepareReports),
       ("paired journals", testPairedJournals), ("effect protocol", testEffectProtocol),
+      ("benchmark review", testBenchmarkReview),
       ("requirement audits", testRequirementAudits), ("finished process", testFinishedProcess),
       ("overrun", testOverrun), ("full codex prompt", testFullCodexPrompt),
       ("draft review", testDraftReview), ("approved contracts", testApprovedContracts),

@@ -387,8 +387,21 @@ key stays with the scorer.
 
 The resulting JSON Lines file reports each pair's answers, checked witnesses, model usage and local
 timing. The summary separates row location, category and formal evidence. It also records intact
-controls, abstentions and owner questions, and groups diagnoses by paraphrase family. Human
-precision, recall, time and cost are unknown in this benchmark.
+controls, abstentions and owner questions, and groups diagnoses by paraphrase family.
+
+After a run, `spec-tools benchmark-review JOURNAL REVIEW` prints a separate report without making
+model calls. The reviewer supplies JSON with `version: 1`, a nonempty `reviewer` and a Boolean
+`synthetic`. Its `pairs` list covers each saved case once, with the case `id`, an independent
+`hasDefect` judgment and two `arms` entries. Each entry names the `arm` (`baseline` or `elenxis`),
+copies its exact `response` from the journal and gives `accepted` as a Boolean. Mark an accepted
+diagnosis only when it correctly describes a defect. The importer checks the annotation's
+attribution and correspondence to the journal. The provenance of the judgment comes from the
+reviewer supplying it.
+
+The report gives exact counts for accepted diagnoses over reported diagnoses (precision) and over
+cases with defects (recall). A failed or abstaining arm misses a defect in the recall denominator. A
+zero denominator or a run with unattempted pairs gives `unknown`. Optional `reviewMillis`,
+`ownerMillis` and `humanCost` (with `currency` and `minorUnits`) report supplied observations.
 
 ## Running
 
