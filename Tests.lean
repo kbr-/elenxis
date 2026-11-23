@@ -363,22 +363,8 @@ def testCommandAdapter : IO Unit := do
   IO.println "PASS: configurable command adapter (transport, schema, malformed output, exit, configuration)"
 
 open SpecTools.Usage in
-/-- A call's usage, read from what each harness really printed (the probes saved in
-`research/results/lean-specification-tools/` of the workspace, copied here), from a command adapter's
-`usage.json`, and printed by `gaps`; and the trace `SPEC_TOOLS_TRACE` asks for. -/
+/-- Usage from a command adapter's `usage.json` reaches the Gaps output, journal and trace. -/
 def testUsage : IO Unit := do
-  -- Claude Code's report for "Answer with the single word: ok" under the adapter's flags.
-  let claude := "{\"total_cost_usd\":0.018001800000000002,\"num_turns\":1,\"duration_api_ms\":4620,\"usage\":{\"input_tokens\":2,\"cache_creation_input_tokens\":2223,\"cache_read_input_tokens\":649,\"output_tokens\":4}}"
-  let u := ofClaudeReport (← IO.ofExcept (Lean.Json.parse claude)) 5196
-  ensure (u.input == .of (some 2) && u.cacheWrite == .of (some 2223) && u.cacheRead == .of (some 649) &&
-    u.output == .of (some 4) && u.turns == .of (some 1) && u.listPriceNano == .of (some 18001800))
-    s!"Claude Code's report read wrong: {repr u}"
-  -- Codex's events for the same question, `gpt-6.1-sol`.
-  let codex := "{\"type\":\"thread.started\",\"thread_id\":\"t\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_2\",\"type\":\"agent_message\",\"text\":\"ok\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":35450,\"cached_input_tokens\":0,\"cache_write_input_tokens\":0,\"output_tokens\":5,\"reasoning_output_tokens\":0}}\n"
-  let c := ofCodexEvents codex 11000
-  ensure (c.input == .of (some 35450) && c.cacheRead == .of (some 0) && c.cacheWrite == .of (some 0) &&
-    c.output == .of (some 5) && c.listPriceNano == .of none) s!"Codex's events read wrong: {repr c}"
-  ensure (ofCodexEvents "not json\n" 1 == unreported 1) "Codex events without a turn's end aren't unreported"
   -- A command adapter with and without `usage.json`.
   let dir ← IO.FS.createTempDir
   let schema := Lean.Json.mkObj [("type", "object")]
@@ -453,7 +439,7 @@ def testUsage : IO Unit := do
     "parallel gap traces lost or mixed records"
   IO.FS.removeDirAll dir
   IO.FS.removeDirAll dir2
-  IO.println "PASS: usage (Claude Code, Codex, adapter file, unreported, gaps line, record, trace)"
+  IO.println "PASS: usage (adapter file, unreported, gaps line, record, trace)"
 
 open SpecTools.Prose SpecTools.Generated in
 /-- The person-prose writer's loop with a scripted model: a kept document, a rewrite, a variant left

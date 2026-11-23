@@ -74,19 +74,76 @@ def ofClaudeReport (report : Json) (millis : Nat) : Usage :=
     turns := .of (natAt report "num_turns"), millis, apiMillis := .of (natAt report "duration_api_ms"),
     listPriceNano := .of price }
 
+theorem ofClaudeReport_fields (report usage : Json) (millis input cacheWrite cacheRead output
+    turns apiMillis : Nat) (price : JsonNumber)
+    (hasUsage : report.getObjVal? "usage" = .ok usage)
+    (hasInput : usage.getObjValAs? Nat "input_tokens" = .ok input)
+    (hasWrite : usage.getObjValAs? Nat "cache_creation_input_tokens" = .ok cacheWrite)
+    (hasRead : usage.getObjValAs? Nat "cache_read_input_tokens" = .ok cacheRead)
+    (hasOutput : usage.getObjValAs? Nat "output_tokens" = .ok output)
+    (hasTurns : report.getObjValAs? Nat "num_turns" = .ok turns)
+    (hasApiMillis : report.getObjValAs? Nat "duration_api_ms" = .ok apiMillis)
+    (hasPrice : report.getObjVal? "total_cost_usd" = .ok (.num price)) :
+    ofClaudeReport report millis = {
+      calls := 1, input := .of (some input), cacheWrite := .of (some cacheWrite),
+      cacheRead := .of (some cacheRead), output := .of (some output), turns := .of (some turns),
+      millis, apiMillis := .of (some apiMillis), listPriceNano := .of (nanoOf price) } := by
+  simp [ofClaudeReport, natAt, hasUsage, hasInput, hasWrite, hasRead, hasOutput, hasTurns,
+    hasApiMillis, hasPrice, Except.toOption]
+
+/-- A line contributes usage only if it is a completed turn with a usage member. -/
+def codexUsageEvent? (line : String) : Option Json := do
+  let event ← (Json.parse line).toOption
+  if (event.getObjValAs? String "type").toOption = some "turn.completed" then
+    (event.getObjVal? "usage").toOption
+  else none
+
+theorem codexUsageEvent_iff (line : String) (usage : Json) :
+    codexUsageEvent? line = some usage ↔
+      ∃ event, Json.parse line = .ok event ∧
+        event.getObjValAs? String "type" = .ok "turn.completed" ∧
+        event.getObjVal? "usage" = .ok usage := by
+  cases parsed : Json.parse line with
+  | error error => simp [codexUsageEvent?, parsed, Except.toOption]
+  | ok event =>
+    cases kind : event.getObjValAs? String "type" <;>
+      cases reported : event.getObjVal? "usage" <;>
+      simp [codexUsageEvent?, parsed, kind, reported, Except.toOption, and_comm]
+
+def ofCodexLines (lines : List String) (millis : Nat) : Usage :=
+  match (lines.filterMap codexUsageEvent?).getLast? with
+  | none => unreported millis
+  | some usage =>
+    { calls := 1, input := .of (natAt usage "input_tokens"),
+      cacheWrite := .of (natAt usage "cache_write_input_tokens"),
+      cacheRead := .of (natAt usage "cached_input_tokens"), output := .of (natAt usage "output_tokens"),
+      turns := .of none, millis, apiMillis := .of none, listPriceNano := .of none }
+
 /-- One call's usage from Codex's `--json` events: the last `turn.completed` event's `usage`. Codex
 reports no turns count, API time or price. -/
 def ofCodexEvents (events : String) (millis : Nat) : Usage :=
-  let usage := ((events.splitOn "\n").filterMap fun l => do
-    let j ← (Json.parse l).toOption
-    guard ((j.getObjValAs? String "type").toOption == some "turn.completed")
-    (j.getObjVal? "usage").toOption).getLast?
-  match usage with
-  | none => unreported millis
-  | some u =>
-    { calls := 1, input := .of (natAt u "input_tokens"), cacheWrite := .of (natAt u "cache_write_input_tokens"),
-      cacheRead := .of (natAt u "cached_input_tokens"), output := .of (natAt u "output_tokens"),
-      turns := .of none, millis, apiMillis := .of none, listPriceNano := .of none }
+  ofCodexLines (events.splitOn "\n") millis
+
+theorem ofCodexLines_no_report (lines : List String) (millis : Nat)
+    (missing : ∀ line ∈ lines, codexUsageEvent? line = none) :
+    ofCodexLines lines millis = unreported millis := by
+  simp [ofCodexLines, List.filterMap_eq_nil_iff.mpr missing]
+
+theorem ofCodexLines_last (before after : List String) (line : String) (usage : Json)
+    (millis input cacheWrite cacheRead output : Nat)
+    (reported : codexUsageEvent? line = some usage)
+    (noLater : ∀ event ∈ after, codexUsageEvent? event = none)
+    (hasInput : usage.getObjValAs? Nat "input_tokens" = .ok input)
+    (hasWrite : usage.getObjValAs? Nat "cache_write_input_tokens" = .ok cacheWrite)
+    (hasRead : usage.getObjValAs? Nat "cached_input_tokens" = .ok cacheRead)
+    (hasOutput : usage.getObjValAs? Nat "output_tokens" = .ok output) :
+    ofCodexLines (before ++ line :: after) millis = {
+      calls := 1, input := .of (some input), cacheWrite := .of (some cacheWrite),
+      cacheRead := .of (some cacheRead), output := .of (some output), turns := .of none,
+      millis, apiMillis := .of none, listPriceNano := .of none } := by
+  simp [ofCodexLines, List.filterMap_append, reported,
+    List.filterMap_eq_nil_iff.mpr noLater, List.getLast?_append, natAt, hasInput, hasWrite, hasRead,
+    hasOutput, Except.toOption]
 
 /-- One call's usage from a command adapter's `usage.json`, whose fields are the record's names
 (`input`, `cacheWrite`, `cacheRead`, `output`, `turns`, `apiMillis`, `listPriceUsd`); an absent field
