@@ -453,41 +453,47 @@ def testProse : IO Unit := do
   let exact := (Lean.Json.mkObj [("rules", Lean.Json.arr (rules.map answer).toArray)]).compress
   let wrong := (Lean.Json.mkObj [("rules", Lean.Json.arr #[answer rules[0]!,
     answer { rules[1]! with flag := none }])]).compress
-  let backend : Backend := ⟨.codex, "test-model", "test", none⟩
-  let run (writes : List (Option String)) (extractions : List String) : IO (Writing × Nat) := do
-    let w ← IO.mkRef writes
-    let e ← IO.mkRef extractions
-    let calls ← IO.mkRef (0 : Nat)
-    let runner : Runner := fun invocation _ _ => do
-      calls.modify (· + 1)
-      let prompt := invocation.input.getD ""
-      let reply ← if (prompt.splitOn "# Rules").length > 1 then
-          w.modifyGet fun l => (l.head?.join, l.tail)
-        else e.modifyGet fun l => (l.head?, l.tail)
-      return reply.map fun a =>
-        { exitCode := 0, stdout := "", stderr := "", readBack := [("answer.json", a)], millis := 1 }
-    let dir ← IO.FS.createTempDir
-    let result ← writeFaithful runner [backend] backend rules shown dir 10000
-    IO.FS.removeDirAll dir
-    return (result, ← calls.get)
+  let run (attempts : List (Option String × List String)) : IO (Writing × Nat × String) :=
+    IO.FS.withTempDir fun dir => do
+      let input := dir / "responses"
+      let workspace := dir / "workspace"
+      let calls := dir / "calls"
+      for ((writer, readers), index) in attempts.zipIdx do
+        let replies := input / s!"writing{index + 1}"
+        IO.FS.createDirAll replies
+        if let some reply := writer then
+          IO.FS.writeFile (replies / "write") reply
+        for (reply, reader) in readers.zipIdx do
+          IO.FS.writeFile (replies / s!"extract{reader + 1}") reply
+      let script := "stage=${PWD##*/}; parent=${PWD%/*}; " ++
+        "printf '%s\\n' \"$stage\" >> \"$2\" && cat \"$1/${parent##*/}/$stage\""
+      let backend : Backend :=
+        ⟨.command "sh" ["-c", script, "prose-adapter", input.toString, calls.toString],
+          "local/prose", "local", none⟩
+      let result ← writeFaithful liveRunner [backend] backend rules shown workspace 10000
+      let request ← IO.ofExcept (Lean.Json.parse
+        (← IO.FS.readFile (workspace / "writing1" / "write" / "request.json")))
+      let prompt ← IO.ofExcept (request.getObjValAs? String "prompt")
+      let launched ← IO.FS.lines calls
+      return (result, launched.size, prompt)
   let doc := some "{\"document\":\"Our desk rules.\"}"
-  let (kept, calls) ← run [doc] [exact, exact]
+  let (kept, calls, deliveredPrompt) ← run [(doc, [exact, exact])]
   ensure (kept.document == some "Our desk rules." && kept.writings == 1 && kept.discarded.isEmpty &&
     calls == 3 && kept.usage.calls == 3) s!"equal extractions didn't keep the document: {kept.discarded}"
-  ensure ((kept.prompt.splitOn "worked example").length > 1 && (kept.prompt.splitOn "group name").length > 1)
+  ensure ((deliveredPrompt.splitOn "worked example").length > 1 && (deliveredPrompt.splitOn "group name").length > 1)
     "the writer's prompt lacks the rules' presentations"
-  let (rewritten, _) ← run [doc, doc] [wrong, exact, exact, exact]
+  let (rewritten, _, _) ← run [(doc, [wrong, exact]), (doc, [exact, exact])]
   ensure (rewritten.document.isSome && rewritten.writings == 2 && rewritten.discarded.length == 1 &&
     (rewritten.discarded[0]!.splitOn "exempt staff").length > 1)
     s!"one differing rule didn't rewrite the document: {rewritten.discarded}"
-  let (leftOut, calls) ← run [doc, doc, doc] [wrong, wrong, wrong, wrong, wrong, wrong]
+  let (leftOut, calls, _) ← run (List.replicate 3 (doc, [wrong, wrong]))
   ensure (leftOut.document.isNone && leftOut.writings == 3 && leftOut.discarded.length == 3 && calls == 9)
     s!"three failed writings didn't leave the variant out: {leftOut.discarded}"
-  let (afterFailure, calls) ← run [none, doc] [exact, exact]
+  let (afterFailure, calls, _) ← run [(none, []), (doc, [exact, exact])]
   ensure (afterFailure.document.isSome && afterFailure.writings == 2 && calls == 4 &&
     (afterFailure.discarded[0]!.splitOn "writing 1").length > 1)
     s!"a failed writer call didn't count as a failed writing: {afterFailure.discarded}"
-  IO.println "PASS: person prose (kept, rewritten, left out, failed call)"
+  IO.println "PASS: person prose adapter (kept, rewritten, left out, failed call)"
 
 /-- The owners' loop with a scripted runner (Path step 14.4 and 14.5): five review rounds each
 followed by a revision, a round whose review finds nothing among them, then one more review and

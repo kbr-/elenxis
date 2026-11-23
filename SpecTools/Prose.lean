@@ -161,6 +161,43 @@ structure Writing where
 /-- The most writings a variant gets before it is left out. -/
 def maxWritings : Nat := 3
 
+private def extractionFault (expected : List Shape) (name : String) :
+    Except String (List Shape) → Option String
+  | .error reason => some s!"{name}: {reason}"
+  | .ok actual =>
+    if faithful expected actual then none
+    else
+      let (lacks, adds) := differences expected actual
+      some s!"{name} lacks [{"; ".intercalate (lacks.map (·.describe))}] and adds [{"; ".intercalate (adds.map (·.describe))}]"
+
+private theorem extractionFault_none_iff (expected : List Shape) (name : String)
+    (result : Except String (List Shape)) :
+    extractionFault expected name result = none ↔
+      ∃ actual, result = .ok actual ∧ faithful expected actual = true := by
+  cases result with
+  | error reason => simp [extractionFault]
+  | ok actual =>
+    by_cases agrees : faithful expected actual = true <;> simp [extractionFault, agrees]
+
+def confirmationFaults (expected : List Shape) (first second : Except String (List Shape)) :
+    List String :=
+  (extractionFault expected "extraction 1" first).toList ++
+    (extractionFault expected "extraction 2" second).toList
+
+theorem confirmationFaults_empty_iff (expected : List Shape)
+    (first second : Except String (List Shape)) :
+    confirmationFaults expected first second = [] ↔
+      (∃ actual, first = .ok actual ∧ faithful expected actual = true) ∧
+        (∃ actual, second = .ok actual ∧ faithful expected actual = true) := by
+  simp [confirmationFaults, extractionFault_none_iff]
+
+private def extractedShapes : Except Failure Outcome → Except String (List Shape)
+  | .error failure => .error failure.describe
+  | .ok outcome =>
+    match shapesOf outcome.answer with
+    | none => .error "no rule list"
+    | some shapes => .ok shapes
+
 /-- Write `rules` in their presentations and check the document with two blind extractions, up to
 `maxWritings` times; a failed or malformed call discards its writing. -/
 def writeFaithful (runner : Runner) (allowed : List Backend) (backend : Backend) (rules : List Rule)
@@ -187,18 +224,10 @@ def writeFaithful (runner : Runner) (allowed : List Backend) (backend : Backend)
         { prompt := extractionPrompt doc, schema := extractionSchema, timeoutMs } (dir / name)
     let t1 ← extract "extract1"
     let t2 ← extract "extract2"
-    let mut faults : List String := []
-    for (name, t) in [("extraction 1", t1), ("extraction 2", t2)] do
-      let (e, ue) ← IO.ofExcept t.get
-      used := used + ue
-      match e with
-      | .error f => faults := faults ++ [s!"{name}: {f.describe}"]
-      | .ok o => match shapesOf o.answer with
-        | none => faults := faults ++ [s!"{name}: no rule list"]
-        | some got =>
-          unless faithful expected got do
-            let (lacks, adds) := differences expected got
-            faults := faults ++ [s!"{name} lacks [{"; ".intercalate (lacks.map (·.describe))}] and adds [{"; ".intercalate (adds.map (·.describe))}]"]
+    let (first, firstUsage) ← IO.ofExcept t1.get
+    let (second, secondUsage) ← IO.ofExcept t2.get
+    used := used + firstUsage + secondUsage
+    let faults := confirmationFaults expected (extractedShapes first) (extractedShapes second)
     if faults.isEmpty then
       return { document := some doc, discarded, writings := attempt + 1, prompt, usage := used }
     discarded := discarded ++ [s!"writing {attempt + 1}: " ++ "; ".intercalate faults]

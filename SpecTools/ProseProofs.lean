@@ -13,6 +13,12 @@ theorem faithful_iff (expected got : List Shape) :
     faithful expected got = true ↔ (expected.map Shape.norm).Perm (got.map Shape.norm) := by
   simp [faithful, List.isPerm_iff]
 
+theorem confirmation_exact (expected : List Shape) (first second : Except String (List Shape)) :
+    confirmationFaults expected first second = [] ↔
+      (∃ actual, first = .ok actual ∧ (expected.map Shape.norm).Perm (actual.map Shape.norm)) ∧
+        (∃ actual, second = .ok actual ∧ (expected.map Shape.norm).Perm (actual.map Shape.norm)) := by
+  simp only [confirmationFaults_empty_iff, faithful_iff]
+
 private def deliver : Shape := ⟨"deliver", ["requests", "loans"], 15, none⟩
 
 /-- Measures in another order are the same rule. -/
