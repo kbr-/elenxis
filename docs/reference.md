@@ -351,6 +351,21 @@ Build with `lake build` and run these from the repository root. For a Lean-only 
 | Refund effects | `lake env lean examples/refund/Countermodels.lean` | The return value stays within the limit, but the observed credits exceed the payment. |
 | Salon booking | `lake env lean examples/owners/salon-call/Interpretations.lean` | Two readings of the synthetic conversation decide the same booking differently. The owner chooses the rule. |
 
+## Paired synthetic benchmark
+
+`spec-tools benchmark CASES KEY OUT TIMEOUT-MS` compares a baseline with an Elenxis-assisted
+reading. Both arms use the configured backend, the same requirements and candidate text, and the
+same time allowance. The assisted arm receives a comparison of the Lean predicates for the booking
+cutoff. The cases file can use the [salon
+fixture](../examples/owners/salon-call/benchmark-cases.json). Supply the evaluation key separately
+as a JSON array of objects with `id` and a versioned `key` in the `score-observations` format. The
+key stays with the scorer.
+
+The resulting JSON Lines file reports each pair's answers, checked witnesses, model usage and local
+timing. The summary separates row location, category and formal evidence. It also records intact
+controls, abstentions and owner questions, and groups diagnoses by paraphrase family. Human
+precision, recall, time and cost are unknown in this benchmark.
+
 ## Running
 
 ```bash

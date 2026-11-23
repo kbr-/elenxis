@@ -2,6 +2,7 @@ import SpecTools
 import SpecTools.DraftHook
 import SpecTools.OwnerInterview
 import SpecTools.PairedScore
+import SpecTools.Benchmark
 import SpecTools.Targets.Python
 
 /-- The commands, each with what it does. -/
@@ -16,6 +17,7 @@ def commands : List (String × String) := [
   ("synthetic", "generate a synthetic Lean project: \
     synthetic generate SEEDS NS OUT-DIR [--target lean|python]"),
   ("score-observations", "score a versioned key and findings file: score-observations KEY FINDINGS"),
+  ("benchmark", "run paired synthetic observations: benchmark CASES KEY OUT TIMEOUT-MS"),
   ("check", "run a check in the current Lean project: check proofs|contracts|counterexamples"),
   ("check --target python", "check a historical Python fixture: audit|integration|gaps|clauses")
 ]
@@ -1024,6 +1026,9 @@ def main (args : List String) : IO UInt32 := do
   | "draft-review" :: rest => reviewCoverageDraft rest
   | "synthetic" :: rest => synthetic rest
   | ["score-observations", key, findings] => scoreObservations key findings
+  | ["benchmark", cases, key, out, timeout] =>
+    let some millis := timeout.toNat? | IO.eprintln "TIMEOUT-MS must be a number"; return 2
+    SpecTools.Benchmark.run cases key out millis
   | ["check", sub] => SpecTools.SyntheticRun.runProjectCheck sub
   | ["check", "--target", "python", sub] => SpecTools.SyntheticRun.runLegacyCheck sub
   | ["fixture-mcp", launcher, executable] =>

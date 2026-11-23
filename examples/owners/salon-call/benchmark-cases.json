@@ -1,0 +1,42 @@
+[
+  {
+    "id": "loose-direct",
+    "family": "loose",
+    "prose": "I'll still let someone book online if they missed one appointment. Once they've missed two, have them call me to book.",
+    "candidate": "Online booking is available when the customer has fewer than four recorded no-shows.",
+    "rule": 1,
+    "property": "online booking cutoff",
+    "referenceLimit": 2,
+    "candidateLimit": 4
+  },
+  {
+    "id": "loose-rephrased",
+    "family": "loose",
+    "prose": "If someone's already skipped two bookings, don't let them make another one through the site. They need to ring the salon from then on.",
+    "candidate": "Online booking is available when the customer has fewer than four recorded no-shows.",
+    "rule": 1,
+    "property": "online booking cutoff",
+    "referenceLimit": 2,
+    "candidateLimit": 4
+  },
+  {
+    "id": "strict",
+    "family": "strict",
+    "prose": "Don't block online booking just because somebody missed one appointment. It takes two missed appointments before they have to book by phone.",
+    "candidate": "Only customers with zero recorded no-shows can book online.",
+    "rule": 1,
+    "property": "online booking cutoff",
+    "referenceLimit": 2,
+    "candidateLimit": 1
+  },
+  {
+    "id": "intact",
+    "family": "intact",
+    "prose": "Two missed appointments is my cutoff. At zero or one I let people book online. From two on I take their bookings over the phone.",
+    "candidate": "Customers with fewer than two recorded no-shows may book online.",
+    "rule": 1,
+    "property": "online booking cutoff",
+    "referenceLimit": 2,
+    "candidateLimit": 2
+  }
+]
