@@ -18,14 +18,18 @@ def catalogue : List Plant := [
   -- The row names a neighbouring theorem, about standard members, in place of its own.
   { kind := "uncovered", clause := "A premium member who owes any fine may have no more copies on loan than a standard member.", edits := [
       lean "theorem limit_owing (s : State) (m : Nat) (h : 0 < s.fine m) : s.limit m = 5 := by\n  have : s.fine m ≠ 0 := by omega\n  simp [State.limit, this]\n\n" "",
-      lean "theorem witness_premium_owing : 1 ∈ premiumOwing.premium ∧ 0 < premiumOwing.fine 1 := by decide\n" "",
-      lean "    theorems := [``borrow_at_limit, ``limit_owing], witnesses := [``witness_premium_owing] },"
-        "    theorems := [``borrow_at_limit, ``limit_standard], witnesses := [``witness_standard] },"] },
+      lean "theorem witness_limit_owing :\n    ∃ (s : State) (m : Nat) (h : 0 < s.fine m), True :=\n  ⟨premiumOwing, 1, by decide, trivial⟩\n\n" "",
+      lean "    theorems := [``borrow_at_limit, ``limit_owing],"
+        "    theorems := [``borrow_at_limit, ``limit_standard],",
+      lean "      ⟨``limit_owing, ``witness_limit_owing, .inhabited⟩] },"
+        "      ⟨``limit_standard, ``witness_limit_standard, .inhabited⟩] },"] },
   -- The bound moves by one in the theorem alone.
   { kind := "too weak", clause := "A member may hold at most three copies.", edits := [
       lean "theorem hold_three (s : State) (m c : Nat) (h : 3 ≤ s.holdCount m) : placeHold s m c = none := by\n  simp [placeHold, h]"
-        "theorem hold_three (s : State) (m c : Nat) (h : 4 ≤ s.holdCount m) : placeHold s m c = none := by\n  have : 3 ≤ s.holdCount m := by omega\n  simp [placeHold, this]"] },
-  -- A hypothesis contradicting the first; the witness still listed shows only the first.
+        "theorem hold_three (s : State) (m c : Nat) (h : 4 ≤ s.holdCount m) : placeHold s m c = none := by\n  have : 3 ≤ s.holdCount m := by omega\n  simp [placeHold, this]",
+      lean "    ∃ (s : State) (m c : Nat) (h : 3 ≤ s.holdCount m), True :=\n  ⟨threeHolds, 2, 10, by decide, trivial⟩"
+        "    ∃ (s : State) (m c : Nat) (h : 4 ≤ s.holdCount m), True :=\n  ⟨{ threeHolds with holds := (10, 2) :: threeHolds.holds }, 2, 11, by decide, trivial⟩"] },
+  -- A contradictory premise leaves the original witness inapplicable to the new domain.
   { kind := "vacuous", clause := "A member with a loan past its due date may not borrow.", edits := [
       lean "theorem borrow_overdue (s : State) (m c t : Nat) (h : s.overdue m t = true) :\n    borrow s m c t = none := by"
         "theorem borrow_overdue (s : State) (m c t : Nat) (h : s.overdue m t = true)\n    (h' : s.overdue m t = false) : borrow s m c t = none := by"] },

@@ -227,9 +227,16 @@ score a run's findings against the key: how many planted gaps are found, and the
 - A finding names the ledger row of the rule it concerns, and a plant is found by a finding naming
   its rule's row, whatever it quotes; results saved without rows are scored by their quotes. `run`
   and `gapsrun` print the planted, found and false alarms per presentation when the key has them.
-- `spec-tools synthetic rescore DIR` scores a batch's saved findings again.
+- `spec-tools synthetic rescore DIR` scores a batch's saved findings again. The historical
+  `legacy_row_match` metric localizes findings using rule identifiers and a quote fallback. Its
+  counts measure agreement with the saved key at that level.
 - `generate`, `gplants`, `gvariants` and the owners' commands take `vocab=NAME` for the domain's
   words: `library` (the default), `salon`, `tailor` or `bakery`.
+
+Use the saved fixture and key or the producer revision when replaying a historical run. Typed
+premise evidence changes the generated Lean source and the audit seen by the agent. Use
+`ca6aa2d227ae1758dc324b9b70f872f34db7ba65` for the generator immediately before that change.
+Rescoring saved journals needs their original key and findings only.
 
 The owners' tests (`SpecTools.Owners`) have a small business owner, non-technical and imperfect,
 describe the program they want. The owner gets two rules of each kind wrong: a limit given loosely,
