@@ -71,7 +71,7 @@ private structure SavedPair where
 
 private structure SavedSummary where
   arm : Arm
-  notAttempted : Nat
+  notAttempted : Option Nat := none
   deriving FromJson
 
 private def bothArms (arms : List Arm) : Bool :=
@@ -133,13 +133,15 @@ def report (journal : String) (review : ReviewFile) : Except String Json := do
     unless bothArms (pair.arms.map (·.arm)) && bothArms (entry.arms.map (·.arm)) do
       throw s!"Expected one review for each arm in {pair.id}"
     return (pair, entry)
-  let complete := summaries.all (·.notAttempted == 0)
+  let pending := summaries.head? >>= (·.notAttempted)
+  let complete := pending == some 0
   let baseline ← marksFor .baseline paired
   let elenxis ← marksFor .elenxis paired
   let observed {α : Type} [ToJson α] (value : Option α) : Json :=
     value.map toJson |>.getD "unknown"
   return Json.mkObj [("version", toJson (1 : Nat)), ("reviewer", toJson review.reviewer),
     ("synthetic", toJson review.synthetic), ("complete", toJson complete),
+    ("unattemptedPairs", observed pending),
     ("reviewMillis", observed review.reviewMillis), ("ownerMillis", observed review.ownerMillis),
     ("humanCost", observed review.humanCost),
     ("arms", toJson [measure .baseline baseline complete, measure .elenxis elenxis complete])]

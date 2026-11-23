@@ -202,8 +202,16 @@ def testBenchmarkReview : IO Unit := IO.FS.withTempDir fun dir => do
   let partialResult ← check
   ensure (partialResult.exitCode == 0 && has partialResult.stdout "\"precision\":\"unknown\"" &&
     has partialResult.stdout "\"recall\":\"unknown\"") (partialResult.stdout ++ partialResult.stderr)
+  let legacyArms ← summaryArms.mapM fun arm => do
+    let kind ← IO.ofExcept (arm.getObjVal? "arm")
+    return Json.mkObj [("arm", kind)]
+  let legacy := summary.setObjVal! "arms" (toJson legacyArms)
+  IO.FS.writeFile journal ("\n".intercalate ((rows.dropLast ++ [legacy]).map Json.compress) ++ "\n")
+  let legacyResult ← check
+  ensure (legacyResult.exitCode == 0 && has legacyResult.stdout "\"unattemptedPairs\":\"unknown\"" &&
+    has legacyResult.stdout "\"recall\":\"unknown\"") (legacyResult.stdout ++ legacyResult.stderr)
   IO.println evaluated.stdout
-  IO.println "PASS: benchmark review CLI (false alarm, missed failed call, stale review, partial journal)"
+  IO.println "PASS: benchmark review CLI (false alarm, failed call, stale review, partial and legacy journals)"
 
 open Lean in
 /-- Exercise the fixture refusal and resume through the compiled CLI and real child processes. -/

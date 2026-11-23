@@ -400,8 +400,10 @@ reviewer supplying it.
 
 The report gives exact counts for accepted diagnoses over reported diagnoses (precision) and over
 cases with defects (recall). A failed or abstaining arm misses a defect in the recall denominator. A
-zero denominator or a run with unattempted pairs gives `unknown`. Optional `reviewMillis`,
-`ownerMillis` and `humanCost` (with `currency` and `minorUnits`) report supplied observations.
+zero denominator or a run with unattempted pairs gives `unknown`. Version 1 journals predating the
+missing-pair count give unknown precision and recall and an unknown `unattemptedPairs`. Optional
+`reviewMillis`, `ownerMillis` and `humanCost` (with `currency` and `minorUnits`) report supplied
+observations.
 
 ## Running
 
