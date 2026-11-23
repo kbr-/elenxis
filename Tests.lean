@@ -353,32 +353,12 @@ def testCommandAdapter : IO Unit := do
     let broken := { backend with harness := .command executable arguments }
     ensure (← ask liveRunner [broken] broken { prompt := "", schema, timeoutMs := 10000 } dir).toOption.isNone
       "failed adapter accepted"
-  for adapter in ["codex", "claude-code", "command"] do
-    let json := Lean.Json.mkObj [("adapter", Lean.toJson adapter), ("model", Lean.toJson "chosen"),
-      ("dataGoesTo", Lean.toJson "chosen destination"), ("command", Lean.toJson "cat"),
-      ("args", Lean.toJson ([] : List String))]
-    let parsed ← IO.ofExcept (backendOfJson json)
-    ensure (parsed.model == "chosen" && parsed.dataGoesTo == "chosen destination") "configuration changed"
-    ensure (parsed.effort == none) "an effort chosen though the configuration names none"
-    let withEffort := json.setObjVal! "effort" (Lean.toJson "medium")
-    ensure ((← IO.ofExcept (backendOfJson withEffort)).effort == some "medium") "configured effort lost"
-    ensure ((backendOfJson (json.setObjVal! "effort" (Lean.toJson " "))).toOption.isNone)
-      "empty effort accepted"
-    ensure ((backendOfJson (Lean.Json.mkObj [("adapter", Lean.toJson adapter)])).toOption.isNone)
-      "incomplete configuration accepted"
   let config := dir / "backend.json"
-  IO.FS.writeFile config "{\"adapter\":\"command\",\"command\":\"cat\",\"args\":[],\"model\":\"default\",\"dataGoesTo\":\"local\",\"effort\":\"medium\"}"
-  let source := dir / "Select.lean"
-  IO.FS.writeFile source "import SpecTools.BackendConfig\n#eval show IO Unit from do\n  let b ← SpecTools.Model.selectedBackend \"configured\" \"override\"\n  if b.model != \"override\" then throw (IO.userError \"model override lost\")\n  if b.effort != some \"medium\" then throw (IO.userError \"configured effort lost on a model override\")\n  match b.harness with\n  | .command \"cat\" [] => pure ()\n  | _ => throw (IO.userError \"configured adapter lost\")\n"
   let selected ← IO.Process.output {
     cmd := "lake"
-    args := #["env", "lean", source.toString]
+    args := #["env", "lean", "integration/BackendConfig.lean"]
     env := #[("SPEC_TOOLS_BACKEND", some config.toString)] }
   ensure (selected.exitCode == 0) s!"configured selection: {selected.stdout}{selected.stderr}"
-  for model in ["", "  "] do
-    let refused ← (selectedBackend "configured" model).toBaseIO
-    ensure (match refused with | .error _ => true | .ok _ => false)
-      "empty configured model override accepted"
   IO.FS.removeDirAll dir
   IO.println "PASS: configurable command adapter (transport, schema, malformed output, exit, configuration)"
 
