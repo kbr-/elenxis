@@ -131,6 +131,16 @@ bindings cover the approved draft's contract names exactly. It then calls
 `SpecTools.Audit.checkApprovedContracts` to compare actual definitions with separately elaborated
 baselines by type and proposition body. The caller supplies the baselines from the approved draft.
 
+`SpecTools.OwnerApproval` adds an owner decision bound to the subject, revision, prose, coverage and
+elaborated baseline. `capture` makes the packet from a trusted Lean environment. The project's
+OpenSSH allowed-signers file authorizes the expected owner for the `elenxis-owner-approval-v1`
+namespace. The owner signs the receipt carrying the snapshot. The verifier compares exact values and
+reports owner acceptance independently of definition matching. The snapshot includes the types and
+bodies of reachable definitions. The calling project controls the signer policy and trusts its Lean
+environment, including opaque bodies and imported artifacts. The [salon approval
+example](../examples/owners/salon-call/#a-signed-synthetic-decision) uses an explicitly synthetic
+identity.
+
 ## Clauses
 
 `spec-tools clauses HARNESS MODEL PROSE` has a model extract a prose file's clauses twice, blind to

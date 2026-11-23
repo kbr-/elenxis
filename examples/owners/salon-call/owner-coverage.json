@@ -1,0 +1,14 @@
+[
+  {
+    "source": {
+      "id": "online-booking",
+      "clause": "Customers can book online below two missed appointments."
+    },
+    "evidence": {
+      "contract": {
+        "name": "SalonOwner.Current.onlineBooking",
+        "statement": "fun noShows : Nat => noShows < 2"
+      }
+    }
+  }
+]
