@@ -193,7 +193,8 @@ def runCheck (sub : String) : IO UInt32 := do
   log.putStrLn sub
   let toolConfig := dir / toolBackendFile
   let savedBackend ← toolConfig.pathExists
-  let names := if sub == "gaps" then backendEnvironment ++ ["SPEC_TOOLS_GAP_READINGS"]
+  let names := if sub == "gaps" then
+      backendEnvironment ++ ["SPEC_TOOLS_GAP_READINGS", "SPEC_TOOLS_MECHANICAL_GAPS"]
     else backendEnvironment
   let passed ← (names.filter (fun k => !savedBackend || k != "SPEC_TOOLS_BACKEND")).filterMapM fun k => do
     return (← IO.getEnv k).map (s!"{k}=" ++ ·)
@@ -378,7 +379,17 @@ def runArm (backend : Backend) (variantDir : System.FilePath) (arm : Arm) (root 
   -- The tools arm's reports, run before the agent starts; check.log then records only the
   -- agent's own reruns.
   let readings := if arm == .confirmed then 3 else 1
-  let reports ← (prepareReports (checkExecutable root) work arm.preparedChecks readings).run
+  let structuredRequirements := "prose-rules.json"
+  let hasStructuredRequirements ←
+    (variantDir / structuredRequirements).pathExists
+  let copyRequirements := arm == .confirmed && hasStructuredRequirements
+  if copyRequirements then
+    IO.FS.writeFile (work / structuredRequirements)
+      (← IO.FS.readFile (variantDir / structuredRequirements))
+  let reports ← try
+    (prepareReports (checkExecutable root) work arm.preparedChecks readings).run
+  finally
+    if copyRequirements then IO.FS.removeFile (work / structuredRequirements)
   match reports with
   | .error why => return (.error why, {}, ← Usage.readRecorded (usageFile work.toString), #[])
   | .ok reports =>

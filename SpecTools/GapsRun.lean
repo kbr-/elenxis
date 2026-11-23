@@ -2,6 +2,8 @@ import SpecTools.Audit
 import SpecTools.Gaps
 import SpecTools.BackendConfig
 import SpecTools.UsageReport
+import SpecTools.FiniteGaps
+import SpecTools.Prose
 
 /-!
 Running `gaps` from a project's ledger file: `#eval SpecTools.Gaps.run rows prose backend` gathers
@@ -55,6 +57,55 @@ private def readGaps (backend : Backend) (question : Question) :
     | .error failure => .error failure.describe
   return (proposals, used)
 
+private structure Verified where
+  issues : List Gap := []
+  covered : List String := []
+
+private def generatedRequirements (prose : String) : IO (List Generated.Rule) := do
+  let some dir ← IO.getEnv "SPEC_TOOLS_DIR" | return []
+  let path := System.FilePath.mk dir / "prose-rules.json"
+  unless ← path.pathExists do return []
+  let json ← IO.FS.readFile path
+  let some rules := (Json.parse json >>= Json.getArr?).toOption.bind
+    (fun rules => rules.toList.mapM Prose.ruleOfJson) | return []
+  if Generated.prose (rules.map Generated.View.plain) == prose then return rules
+  return []
+
+private def verifyScopes (prose : String) (rows : List Row) (facts : Facts) :
+    CommandElabM Verified := do
+  let required ← generatedRequirements prose
+  if required.isEmpty then return {}
+  liftTermElabM do
+    unless ← FiniteGaps.requestAccessMatches do return {}
+    let mut verified : Verified := {}
+    for rule in required do
+      let id := Generated.rowId rule
+      let some row := rows.find? (·.id == id) | continue
+      unless verdict facts row == .proved && row.theorems.contains `Loans.refused_of do continue
+      let declarations ← row.theorems.mapM fun name => do
+        FiniteGaps.statementScope name
+      let [(ruleName, statement)] := declarations.filterMap (fun candidate => candidate) | continue
+      unless ← FiniteGaps.establishesRefusal ruleName do continue
+      let requirement : FiniteGaps.Scope := ⟨rule.kind, rule.measures, rule.bound, rule.flag, none⟩
+      if requirement.sameCondition statement then
+        verified := { verified with covered := id :: verified.covered }
+      else if let some (difference, request) := FiniteGaps.findDifference requirement statement then
+        let (kind, reason) : Kind × String := match difference with
+          | .missingRefusal => (.tooWeak, "the requirement demands refusal outside the theorem's premises")
+          | .extraRefusal => (.extra, "the statement covers a refusal outside the requirement")
+        verified := { verified with issues :=
+          ⟨kind, id, s!"checked request {(toJson request).compress}: {reason}"⟩ :: verified.issues }
+    return verified
+
+/-- Keep the proof-backed decisions alongside the independently confirmed proposals. -/
+private def withVerified (facts : Facts) (rows : List Row) (verification : Verified)
+    (confirmed : List Gap) : List Gap :=
+  let mechanical := verification.issues ++ decided facts rows
+  mechanical ++ confirmed.filter fun finding =>
+    !(mechanical.any (fun known => known.key == finding.key)) &&
+      !(verification.covered.contains finding.row &&
+        (finding.kind == .uncovered || finding.kind == .tooWeak))
+
 /-- Print the gaps of the ledger `rows` against `prose`, asking `backend` for what Lean can't decide. -/
 def run (rows : List Row) (prose : String) (backend : Backend) (timeoutMs : Nat := 300000)
     (requirements : Bool := false) :
@@ -65,21 +116,27 @@ def run (rows : List Row) (prose : String) (backend : Backend) (timeoutMs : Nat 
     if let some f ← factOf n requirements then table := (n, f) :: table
   let facts : Facts := fun n => table.lookup n
   IO.ofExcept (validateRequirements requirements facts rows)
-  IO.println s!"Requirements check: {backend.describe}"
   let count ← configuredReadingCount
+  let mechanicalOnly := (← IO.getEnv "SPEC_TOOLS_MECHANICAL_GAPS").isSome
+  let verification ← if count > 1 || mechanicalOnly then verifyScopes prose rows facts else pure {}
+  IO.println s!"Requirements check: {backend.describe}"
   let question : Question := { prompt := gapsPrompt prose rows facts, schema := proposalSchema, timeoutMs }
-  let tasks ← (List.replicate count ()).mapM fun _ => IO.asTask (readGaps backend question)
+  let requested := if mechanicalOnly then 0 else count
+  let tasks ← (List.replicate requested ()).mapM fun _ => IO.asTask (readGaps backend question)
   let readings ← tasks.mapM fun task => IO.ofExcept task.get
   let usageLine := Usage.line (Usage.total (readings.map (·.2))) (Usage.brief backend)
   let proposals ← match readings.mapM (·.1) with
     | .ok all => pure all
     | .error why => IO.println usageLine; throwError why
-  let report ← if count = 1 then
+  let report ← if mechanicalOnly then
+      let gaps := withVerified facts rows verification []
+      pure { byKind := fun k => gaps.filter (·.kind == k), refused := [] }
+    else if count = 1 then
       pure (gather facts rows (proposals.headD []))
     else
       match mergeReadings rows count proposals with
       | .ok confirmed =>
-        let gaps := decided facts rows ++ confirmed
+        let gaps := withVerified facts rows verification confirmed
         pure { byKind := fun k => gaps.filter (·.kind == k), refused := [] }
       | .error why => IO.println usageLine; throwError why
   let mut total := 0
@@ -88,6 +145,7 @@ def run (rows : List Row) (prose : String) (backend : Backend) (timeoutMs : Nat 
       total := total + 1
       IO.println s!"{k.name}: {g.row}: {g.why}"
   for e in report.refused do IO.println s!"refused as malformed: {e}"
+  for row in verification.covered.reverse do IO.println s!"mechanically verified refusal: {row}"
   IO.println s!"{total} gaps, {report.refused.length} proposals refused"
   IO.println usageLine
 
