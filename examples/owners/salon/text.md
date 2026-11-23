@@ -1,0 +1,9 @@
+hi are you free to do a website for my hair salon? ive had enough of the phone and the paper diary. most of the pics are on facebook and someone set me up with a web adress ages ago, can we keep that? its got a free theme on it now that i dont like. just want a few pics on the front, hours and where we are, a price page and a big book button. most of our lot will do it on their phones
+
+weve got 3 chairs, 2 stylists and our junior. people can pick who they want or take whoever is free. for a kids cut the site should say no once the customer has 2 no shows. can the girls put people in the diary from their own phones when someone rings? we do home visits too so need somewhere to put their address and see it in the diary, and if the customer has 1 late cancellation the site should turn down the home visit.
+
+our evening hours change some weeks so i need to be able to move them myself. if a customer has 1 no show dont let them book an evening slot, except staff customers, they can always book an evening even with no shows. ive got seperate pics of wedding hair so maybe a page for that with a button for bridal bookings. turn down a bridal booking if the customer has 1 no show, family customers can still book bridal however many no shows theyve got. can you show me where id mark staff and family in the diary
+
+we take the money in the shop, just need to tick paid and be able to see it without opening every appt. if the customer has a few unpaid visits the site should turn down any booking they try to make. can it send a text when they book and another before they come in, do those cost extra? on the booking screen for kids cuts set it to turn down the booking once the customer has 4 no shows, can it show our phone number when it says no
+
+could you give me a rough price and say if you can get it up in the next few weeks? i can snd the pics and pricelist over
