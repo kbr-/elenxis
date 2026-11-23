@@ -547,6 +547,7 @@ def synthetic (args : List String) : IO UInt32 := do
     -- spots, an owner's flaws and false alarms count apart; each variant's line goes to
     -- results-gaps.jsonl. An older key is scored by `rowScore` as before.
     let byRow := !plantsAll.isEmpty && plantsAll.all (·.all (·.row.isSome))
+    if byRow then IO.println SpecTools.Score.legacyHeader
     let resultsOut ← IO.FS.Handle.mk (System.FilePath.mk outDir / "results-gaps.jsonl") .write
     let mut split : List (Bool × Nat × Nat × Nat × Nat × Nat) := []
     for batch in batches do
@@ -673,6 +674,7 @@ def synthetic (args : List String) : IO UInt32 := do
     let resultsFile := if arms.length == 1 then s!"results-{(arms.headD .baseline).name}.jsonl"
       else "results.jsonl"
     let keyText ← IO.FS.readFile (System.FilePath.mk outDir / "key.jsonl")
+    IO.println SpecTools.Score.legacyHeader
     let keys := SpecTools.SyntheticRun.keyPlants keyText
     let shownAll := SpecTools.SyntheticRun.keyPresentations keyText
     let root ← IO.currentDir
@@ -835,6 +837,9 @@ def synthetic (args : List String) : IO UInt32 := do
     for file in files.mergeSort (· ≤ ·) do
       for l in ((← IO.FS.readFile (dir / file)).splitOn "\n").filter (· ≠ "") do
         let some j := (Lean.Json.parse l).toOption | IO.eprintln s!"{file}: unparsed line"; return 1
+        if (j.getObjVal? "version").isOk then
+          IO.eprintln s!"{file}: versioned score journals cannot be scored as legacy findings"
+          return 2
         let some arm := (j.getObjValAs? String "arm").toOption | continue
         let some v := (j.getObjValAs? Nat "variant").toOption | continue
         let some fsJ := (j.getObjValAs? (Array Lean.Json) "findings").toOption | continue

@@ -199,6 +199,32 @@ The report lists exact observed key locations as `located` and plant IDs matched
 property and kind as `classified`. It returns `unknown` for `distinguished` and `humanReviewed` at
 this entry point. Both input files must use version 1.
 
+Use `#score_journal` in Lean to check directional witnesses and include independent human decisions:
+
+```lean
+import SpecTools.ScoreEvidence
+
+#score_journal "key.json" "findings.json" with "review.json"
+```
+
+Put the domain definitions and evidence theorems in the same Lean environment and run the file with
+`lake env lean`. For each property with a formal criterion, add an entry to the protected key's
+`formalBindings` array with `property`, `reference` and `candidate` declaration names, and a
+`direction` of `admitsExtra` or `rejectsRequired`. A finding can supply a `formal` object containing
+`observation` and `theoremName`. Lean checks that the theorem proves `BoundDistinction` for the
+key's exact binding and the named observation. The report lists the accepted direction, theorem and
+observation. Unsupported or absent evidence leaves the distinction unknown.
+
+The optional independent review file contains `{"version": 1, "decisions": [...]}`. Each decision
+has an `evidenceId`, a `reviewer` supplied by the independent reviewer, and an `accepted` or
+`rejected` `judgment`. The command joins these decisions by evidence ID and reports one judgment
+with the agreeing reviewers for that ID. Conflicts and unattributed decisions leave its human result
+unknown. The caller supplies the independent source.
+
+The output is a versioned JSON object. Its `findings` preserve the original evidence references,
+explanations and proposed reviews. A saved object can be read again as the findings input, with the
+same key, Lean environment and independent review file to recheck all observations.
+
 `SpecTools.Synthetic`, `SpecTools.Generated`, `SpecTools.Score` and `spec-tools synthetic` generate
 a requirement of N rules from a seed with its four artifacts (prose, Lean model and ledger, Python
 and its tests) agreeing by construction, plant gaps in one artifact with the key kept apart, and
