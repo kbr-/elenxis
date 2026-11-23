@@ -1,0 +1,36 @@
+name: Elenxis CI
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  proofs:
+    name: Lean proofs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: 'false'
+          use-github-cache: 'false'
+          use-mathlib-cache: 'false'
+      - run: lake build SpecTools
+
+  integration:
+    name: Integration and end-to-end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: 'false'
+          use-github-cache: 'false'
+          use-mathlib-cache: 'false'
+      - run: lake build spec-tools
+      - run: lake test
