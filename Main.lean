@@ -1,5 +1,6 @@
 import SpecTools
 import SpecTools.DraftHook
+import SpecTools.OwnerInterview
 
 /-- The commands, each with what it does. -/
 def commands : List (String × String) := [
@@ -184,6 +185,16 @@ def synthetic (args : List String) : IO UInt32 := do
     IO.println s!"prose: {kept} of {shownOf.length} variants kept, {writings} writings, left out {leftOut}"
     IO.println s!"prose {SpecTools.Usage.line (SpecTools.Usage.total used) (SpecTools.Usage.brief backend)}"
     return if leftOut.isEmpty then 0 else 1
+  | ["owners-interview", outDir, seed, turns]
+  | ["owners-interview", outDir, seed, turns, _] =>
+    let some seed := seed.toNat? | IO.eprintln "SEED is a number"; return 2
+    let some limit := turns.toNat? | IO.eprintln "TURNS is a positive number"; return 2
+    if limit == 0 then IO.eprintln "TURNS is a positive number"; return 2
+    let backend ← SpecTools.Model.selectedBackend "configured" (args[4]?.getD "default")
+    let rs := SpecTools.Generated.ownerRules seed SpecTools.Owners.ruleCount vocab
+    let flaws := SpecTools.Owners.imperfections seed rs vocab.flawKinds
+    SpecTools.OwnerInterview.collect SpecTools.Model.liveRunner backend vocab rs flaws
+      (System.FilePath.mk outDir) limit 900000
   | ["owners-write", outDir, seed, form]
   | ["owners-write", outDir, seed, form, _]
   | ["owners-write", outDir, seed, form, _, _]

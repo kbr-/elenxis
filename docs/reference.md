@@ -216,6 +216,11 @@ number given without saying whether that number itself is refused.
   review and fidelity process. Pass an empty string for `NOTES-FILE` to use the draft without notes.
   A final optional `REVIEW-DIR` resumes an incomplete review from its saved consecutive rounds.
   Supply the same draft, seed, form and vocabulary and use a fresh destination.
+- `spec-tools synthetic owners-interview DIR SEED TURNS [MODEL]` collects a first call one turn at a
+  time. The developer receives the conversation so far, and the owner also receives the private
+  booking brief. The journal records completed turns and usage. Repeat the command with the same
+  brief and backend to continue an interrupted call. A completed `draft.md` can be supplied to
+  `owners-write` for review and fidelity checks.
 - `spec-tools synthetic owners-variants DIR SEED COUNT EMPTY vocab=NAME` writes COUNT variants with
   the owner's text as their prose, the first EMPTY without plants, the others three shared blind
   spots on rules with no flaw; the key names the blind spots and the flaws by row, so a finding on a
