@@ -8,6 +8,32 @@ and no other.
 
 namespace SpecTools.Generated
 
+/-- A plant scoped to one rule leaves a different rule in the same position unchanged. -/
+theorem onRule_other (id index : Nat) (change : View → View) (views : List View) (other : View)
+    (atIndex : views[index]? = some other) (different : other.model.id ≠ id) :
+    (onRule id change views)[index]? = some other := by
+  simp [onRule, atIndex, different]
+
+open SpecTools.FiniteGaps in
+/-- Raising a refusal bound cannot create a refusal anywhere in the request domain. -/
+theorem raisedBound_weakening (rule : Rule) (request : Request)
+    (refused : ({ rule with bound := rule.bound + 1 } : Rule).scope.holds request = true) :
+    rule.scope.holds request = true := by
+  simp only [Rule.scope, Scope.holds, Bool.and_eq_true] at *
+  rcases refused with ⟨⟨⟨kind, bound⟩, exempt⟩, below⟩
+  have raised : rule.bound + 1 ≤ (rule.measures.map request.get).sum := of_decide_eq_true bound
+  exact ⟨⟨⟨kind, decide_eq_true (by omega)⟩, exempt⟩, below⟩
+
+open SpecTools.FiniteGaps in
+/-- A refusal at the original bound witnesses the gap planted by raising that bound. -/
+theorem raisedBound_missing (rule : Rule) (request : Request)
+    (refused : rule.scope.holds request = true)
+    (atBound : (rule.measures.map request.get).sum = rule.bound) :
+    compareAt rule.scope ({ rule with bound := rule.bound + 1 } : Rule).scope request =
+      some .missingRefusal := by
+  apply (missing_refusal _ _ _).mpr
+  exact ⟨refused, by simp [Rule.scope, Scope.holds, atBound, Nat.not_succ_le_self]⟩
+
 private theorem not_mem_of_contains_false {l : List (String × String)} {p : String × String}
     (h : l.contains p = false) : p ∉ l := by
   intro hm

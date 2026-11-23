@@ -27,6 +27,23 @@ theorem accept_unknown_row (rows : List Row) (p : Proposal) (h : ∀ r ∈ rows,
       simpa using fun r hr => h r hr
     simp [this]
 
+/-- Admission preserves the proposal's category, row and reason, and requires a ledger row. -/
+theorem accept_exact (rows : List Row) (proposal : Proposal) (gap : Gap) :
+    accept rows proposal = .ok gap ↔
+      Kind.parse proposal.kind = some gap.kind ∧ proposal.row = gap.row ∧
+        proposal.why = gap.why ∧ ∃ row ∈ rows, row.id = proposal.row := by
+  cases gap
+  cases parsed : Kind.parse proposal.kind <;>
+    simp [accept, parsed, List.any_eq_true]
+  split <;> simp_all
+  grind
+
+/-- A proved ledger verdict is outside the model proposal categories. -/
+theorem proposal_cannot_be_proved (rows : List Row) (proposal : Proposal)
+    (label : proposal.kind = Verdict.proved.label) :
+    ∃ message, accept rows proposal = .error message := by
+  simp [accept, label, Verdict.label, Kind.parse]
+
 /-- An accepted proposal is printed under its own kind. -/
 theorem accepted_printed (facts : Facts) (rows : List Row) (ps : List Proposal) (p : Proposal)
     (g : Gap) (hp : p ∈ ps) (hg : accept rows p = .ok g) :

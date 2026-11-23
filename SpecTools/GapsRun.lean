@@ -88,7 +88,7 @@ private def verifyScopes (prose : String) (rows : List Row) (facts : Facts)
         FiniteGaps.statementScope name
       let [(ruleName, statement)] := declarations.filterMap (fun candidate => candidate) | continue
       unless ← FiniteGaps.establishesRefusal ruleName do continue
-      let requirement : FiniteGaps.Scope := ⟨rule.kind, rule.measures, rule.bound, rule.flag, none⟩
+      let requirement := rule.scope
       if requirement.sameCondition statement then
         verified := { verified with covered := id :: verified.covered }
       else if let some (difference, request) := FiniteGaps.findDifference requirement statement then
@@ -286,6 +286,31 @@ def contractBindingIssues (draft : List DraftRow) (bindings : List ApprovedContr
     if expected.contains name then none else some s!"Unreviewed final contract binding: {name}") ++
   (distinct.filterMap fun name =>
     if actual.count name > 1 then some s!"Duplicate final contract binding: {name}" else none)
+
+/-- Reviewed names have exactly one final binding, and every final binding was reviewed. -/
+theorem contractBindingIssues_empty_iff (draft : List DraftRow) (bindings : List ApprovedContract) :
+    contractBindingIssues draft bindings = [] ↔
+      (∀ name ∈ draftContractNames draft, (bindings.map (·.declaration)).count name = 1) ∧
+      (∀ name ∈ bindings.map (·.declaration), name ∈ draftContractNames draft) := by
+  unfold contractBindingIssues
+  dsimp only
+  generalize bindings.map ApprovedContract.declaration = actual
+  simp [List.mem_eraseDups, Nat.not_lt]
+  constructor
+  · rintro ⟨covered, reviewed, unique⟩
+    refine ⟨?_, reviewed⟩
+    intro name expected
+    have found := covered name expected
+    have positive := List.count_pos_iff.mpr found
+    exact Nat.le_antisymm (unique name found) positive
+  · rintro ⟨once, reviewed⟩
+    have covered (name : Name) (expected : name ∈ draftContractNames draft) :
+        name ∈ actual := by
+      apply List.count_pos_iff.mp
+      simp [once name expected]
+    refine ⟨covered, reviewed, ?_⟩
+    intro name found
+    simp [once name (reviewed name found)]
 
 def checkDraftContracts (draft : List DraftRow) (bindings : List ApprovedContract) :
     CommandElabM Unit := do

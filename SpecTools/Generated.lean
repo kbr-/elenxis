@@ -1,4 +1,5 @@
 import SpecTools.Synthetic
+import SpecTools.FiniteGaps
 
 /-!
 The generated synthetic test: a requirement of N rules drawn from a seed, and its four artifacts
@@ -139,6 +140,9 @@ structure Rule where
   bound : Nat
   flag : Option String
   deriving Repr, DecidableEq, Inhabited
+
+def Rule.scope (rule : Rule) : FiniteGaps.Scope :=
+  ⟨rule.kind, rule.measures, rule.bound, rule.flag, none⟩
 
 /-- The (kind, measure) pairs a rule reads. -/
 def Rule.pairs (r : Rule) : List (String × String) := r.measures.map fun m => (r.kind, m)
