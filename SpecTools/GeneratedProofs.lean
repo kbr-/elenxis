@@ -8,6 +8,46 @@ and no other.
 
 namespace SpecTools.Generated
 
+theorem refusalBinding_has_declaration (views : List View) (view : View) (evidence : RefusalEvidence)
+    (member : view ∈ views) (binding : view.refusalBinding views = some evidence) :
+    ∃ source ∈ views, source.refusalEvidence = some evidence := by
+  cases own : view.refusalEvidence with
+  | some found =>
+    exact ⟨view, member, by simpa [View.refusalBinding, own] using binding⟩
+  | none =>
+    cases borrowed : view.borrowsTheorem with
+    | none => simp [View.refusalBinding, own, borrowed] at binding
+    | some id =>
+      cases target : views.find? (·.model.id == id) with
+      | none => simp [View.refusalBinding, own, borrowed, target] at binding
+      | some source =>
+        refine ⟨source, List.mem_of_find?_eq_some target, ?_⟩
+        simpa [View.refusalBinding, own, borrowed, target] using binding
+
+theorem emitted_refusal_has_binding (views : List View) (view : View) (evidence : RefusalEvidence)
+    (emitted : view.refusalEvidence = some evidence) :
+    view.refusalBinding views = some evidence := by
+  simp [View.refusalBinding, emitted]
+
+theorem emitsRefusalAux_iff (views : List View) :
+    emitsRefusalAux views = true ↔ ∃ view ∈ views, ∃ evidence,
+      view.refusalBinding views = some evidence := by
+  simp only [emitsRefusalAux, List.any_eq_true]
+  constructor
+  · rintro ⟨view, member, present⟩
+    cases proof : view.refusalEvidence with
+    | none => simp [proof] at present
+    | some evidence => exact ⟨view, member, evidence, emitted_refusal_has_binding _ _ _ proof⟩
+  · rintro ⟨view, member, evidence, binding⟩
+    obtain ⟨source, inList, emitted⟩ := refusalBinding_has_declaration views view evidence member binding
+    exact ⟨source, inList, by simp [emitted]⟩
+
+theorem exceptionBinding_iff (view : View) (proseFlag modelFlag : String) :
+    view.exceptionBinding = some (proseFlag, modelFlag) ↔
+      (view.prose.getD view.model).flag = some proseFlag ∧ view.model.flag = some modelFlag := by
+  cases p : (view.prose.getD view.model).flag <;> cases m : view.model.flag <;>
+    simp [View.exceptionBinding, p, m]
+
 /-- A plant scoped to one rule leaves a different rule in the same position unchanged. -/
 theorem onRule_other (id index : Nat) (change : View → View) (views : List View) (other : View)
     (atIndex : views[index]? = some other) (different : other.model.id ≠ id) :

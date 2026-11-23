@@ -10,7 +10,7 @@ def leanFile (vs : List View) : String :=
     "/-! The generated synthetic fixture's Lean model: the rules as data, a request refused when one",
     "fires, a theorem per clause with a witness that its hypotheses hold, and the ledger. -/", "",
     "namespace Loans", "open SpecTools.Ledger", ""] ++ "\n" ++
-  leanModel (vs.map (·.model)) ++ leanImplementation ++
+  leanModel (vs.map (·.model)) ++ leanImplementation vs ++
   "\n\n".intercalate (vs.map leanTheorems) ++ "\n\n" ++
   "def pythonTest (id : String) : List String := [\"test_\" ++ id.replace \"-\" \"_\"]\n\n" ++
   s!"def rows : List Row := [\n{leanRows vs}\n]\n\n" ++

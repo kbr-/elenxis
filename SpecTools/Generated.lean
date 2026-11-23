@@ -263,6 +263,27 @@ def leanRule (r : Rule) : String :=
 
 def total (r : Rule) : String := " + ".intercalate (r.measures.map fun m => s!"q.get \"{m}\"")
 
+structure RefusalEvidence where
+  id : Nat
+  vacuous : Bool
+  deriving DecidableEq
+
+def View.refusalEvidence (view : View) : Option RefusalEvidence :=
+  if view.omitTheorem then none else some ⟨view.theorem_.id, view.vacuous⟩
+
+def View.refusalBinding (views : List View) (view : View) : Option RefusalEvidence :=
+  view.refusalEvidence.orElse fun _ =>
+    view.borrowsTheorem.bind fun id =>
+      (views.find? (·.model.id == id)).bind View.refusalEvidence
+
+def View.exceptionBinding (view : View) : Option (String × String) := do
+  let prose ← (view.prose.getD view.model).flag
+  let model ← view.model.flag
+  return (prose, model)
+
+/-- The shared refusal lemma is emitted when the inventory has a rule proof using it. -/
+def emitsRefusalAux (views : List View) : Bool := views.any (·.refusalEvidence.isSome)
+
 def leanTheorems (v : View) : String :=
   let t := v.theorem_
   let flagHyp := match t.flag with | some f => s!" (hf : q.get \"{f}\" = 0)" | none => ""
@@ -281,34 +302,33 @@ def leanTheorems (v : View) : String :=
   let request := s!"(⟨\"{model.kind}\", [{", ".intercalate
     (model.measures.map fun m => s!"(\"{m}\", {model.bound})")}]⟩ : Req)"
   let refusedWitness := s!"theorem wit_refused_r{t.id} :\n    ∃ r : Rule, ∃ q : Req, ∃ _h : r ∈ rules, ∃ _hf : fires r q = true, True :=\n  ⟨r{t.id}, {request}, by decide, by decide, trivial⟩"
-  let exc := match v.model.flag with
-    | some f => s!"\ntheorem exempt_r{t.id} (q : Req) (hf : 1 ≤ q.get \"{f}\") : fires r{t.id} q = false := by\n  have : q.get \"{f}\" ≠ 0 := by omega\n  simp [fires, r{t.id}, this]\ndef x{t.id} : Req := ⟨\"{t.kind}\", [(\"{f}\", 1)]⟩\ntheorem wit_x{t.id} : ∃ q : Req, ∃ _hf : 1 ≤ q.get \"{f}\", True :=\n  ⟨x{t.id}, by decide, trivial⟩"
+  let exc := match v.exceptionBinding with
+    | some (_, f) => s!"\ntheorem exempt_r{t.id} (q : Req) (hf : 1 ≤ q.get \"{f}\") : fires r{t.id} q = false := by\n  have : q.get \"{f}\" ≠ 0 := by omega\n  simp [fires, r{t.id}, this]\ndef x{t.id} : Req := ⟨\"{t.kind}\", [(\"{f}\", 1)]⟩\ntheorem wit_x{t.id} : ∃ q : Req, ∃ _hf : 1 ≤ q.get \"{f}\", True :=\n  ⟨x{t.id}, by decide, trivial⟩"
     | none => ""
-  (if v.omitTheorem then "" else
-    "\n".intercalate ([ruleThm, refusedWitness] ++ if v.vacuous then [empty] else [witDef, wit])) ++ exc
+  let refusal := match v.refusalEvidence with
+    | none => ""
+    | some evidence =>
+      "\n".intercalate ([ruleThm, refusedWitness] ++ if evidence.vacuous then [empty] else [witDef, wit])
+  refusal ++ exc
 
 def rowId (r : Rule) : String := s!"r{r.id}"
-
-private def View.hasRuleTheoremBinding (view : View) : Bool :=
-  !view.omitTheorem || view.borrowsTheorem.isSome
 
 def leanRows (vs : List View) : String :=
   let row (v : View) : List String :=
     let r := v.prose.getD v.model
-    let j := v.borrowsTheorem.getD r.id
-    -- A theorem left out with none borrowed leaves the row naming none: the audit's "not stated".
-    let named := if !v.hasRuleTheoremBinding then "theorems := []"
-      else
-        let subject := v.borrowsTheorem.bind
-          (fun id => vs.find? (fun candidate => candidate.model.id == id))
-        let vacuous := (subject.getD v).vacuous
-        let certificate := if vacuous then s!"⟨``fires_r{j}, ``empty_r{j}, .inconsistent⟩"
+    let named := match v.refusalBinding vs with
+      | none => "theorems := []"
+      | some evidence =>
+        let j := evidence.id
+        let certificate := if evidence.vacuous then s!"⟨``fires_r{j}, ``empty_r{j}, .inconsistent⟩"
           else s!"⟨``fires_r{j}, ``wit_r{j}, .inhabited⟩"
         s!"theorems := [``fires_r{j}, ``refused_of], evidence := [{certificate}, ⟨``refused_of, ``wit_refused_r{j}, .inhabited⟩]"
     let base := s!"  \{ id := \"{rowId r}\", clause := {(ruleSentence r).quote},\n    {named} }"
-    match r.flag, v.model.flag with
-    | some f, some _ => [base, s!"  \{ id := \"{rowId r}-exempt\", clause := {(flagSentence r f).quote},\n    theorems := [``exempt_r{r.id}], evidence := [⟨``exempt_r{r.id}, ``wit_x{r.id}, .inhabited⟩] }"]
-    | _, _ => [base]
+    match v.exceptionBinding with
+    | some (f, _) =>
+      let j := v.theorem_.id
+      [base, s!"  \{ id := \"{rowId r}-exempt\", clause := {(flagSentence r f).quote},\n    theorems := [``exempt_r{j}], evidence := [⟨``exempt_r{j}, ``wit_x{j}, .inhabited⟩] }"]
+    | none => [base]
   ",\n".intercalate (vs.flatMap row)
 
 /-- The common Lean declarations used by both fixture layouts. -/
@@ -324,10 +344,12 @@ def leanModel (rules : List Rule) : String :=
   "\n".intercalate (rules.map leanRule) ++ "\n\n" ++
   s!"def rules : List Rule := [{", ".intercalate (rules.map fun r => s!"r{r.id}")}]\n\n"
 
-def leanImplementation : String :=
+def leanImplementation (views : List View) : String :=
   "def refused (q : Req) : Bool := rules.any (fires · q)\n\n" ++
-  "theorem refused_of (r : Rule) (q : Req) (h : r ∈ rules) (hf : fires r q = true) :\n" ++
-  "    refused q = true := List.any_eq_true.mpr ⟨r, h, hf⟩\n\n"
+  (if emitsRefusalAux views then
+    "theorem refused_of (r : Rule) (q : Req) (h : r ∈ rules) (hf : fires r q = true) :\n" ++
+    "    refused q = true := List.any_eq_true.mpr ⟨r, h, hf⟩\n\n"
+  else "")
 
 def requirementsFile : String := "requirements.md"
 
@@ -353,7 +375,7 @@ def leanFiles (views : List View) (root toolchain : String) : List (String × St
    ("ProofObligations.lean", "import Implementation\n\nnamespace Loans\n\n" ++
      "theorem refused_iff (q : Req) : refused q = true ↔ requiresRefusal q :=\n" ++
      "  List.any_eq_true\n\n" ++
-     (if views.any View.hasRuleTheoremBinding then
+     (if emitsRefusalAux views then
        "theorem refused_of (r : Rule) (q : Req) (h : r ∈ rules) (hf : fires r q = true) :\n" ++
        "    refused q = true := (refused_iff q).mpr ⟨r, h, hf⟩\n\n"
      else "") ++
