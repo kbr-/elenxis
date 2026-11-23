@@ -16,8 +16,8 @@ def commands : List (String × String) := [
   ("synthetic", "generate a synthetic Lean project: \
     synthetic generate SEEDS NS OUT-DIR [--target lean|python]"),
   ("score-observations", "score a versioned key and findings file: score-observations KEY FINDINGS"),
-  ("check", "run one spec tool on the synthetic variant in the current directory, with the root and \
-    model its spec-tools.json names: check audit|tests|gaps|clauses")
+  ("check", "run a check in the current Lean project: check proofs|contracts|counterexamples"),
+  ("check --target python", "check a historical Python fixture: audit|integration|gaps|clauses")
 ]
 
 /-- The loans fixture's files a variant is made of. -/
@@ -988,8 +988,14 @@ def main (args : List String) : IO UInt32 := do
   | "draft-review" :: rest => reviewCoverageDraft rest
   | "synthetic" :: rest => synthetic rest
   | ["score-observations", key, findings] => scoreObservations key findings
-  | ["check", sub] => SpecTools.SyntheticRun.runCheck sub
-  | ["fixture-mcp", launcher, executable] => SpecTools.SyntheticRun.serveChecks launcher executable
-  | ["fixture-check", sub, receipt] => SpecTools.SyntheticRun.runLockedCheck sub receipt
+  | ["check", sub] => SpecTools.SyntheticRun.runProjectCheck sub
+  | ["check", "--target", "python", sub] => SpecTools.SyntheticRun.runLegacyCheck sub
+  | ["fixture-mcp", launcher, executable] =>
+    SpecTools.SyntheticRun.serveChecks .project launcher executable
+  | ["fixture-mcp", launcher, executable, "--target", "python"] =>
+    SpecTools.SyntheticRun.serveChecks .pythonLegacy launcher executable
+  | ["fixture-check", sub, receipt] => SpecTools.SyntheticRun.runLockedCheck .project sub receipt
+  | ["fixture-check", "--target", "python", sub, receipt] =>
+    SpecTools.SyntheticRun.runLockedCheck .pythonLegacy sub receipt
   | [] => IO.eprintln usage; return 2
   | command :: _ => IO.eprintln s!"unknown command `{command}`\n{usage}"; return 2

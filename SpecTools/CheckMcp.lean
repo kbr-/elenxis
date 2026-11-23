@@ -4,8 +4,8 @@ namespace SpecTools.CheckMcp
 
 open Lean OwnerCheck
 
-private def tool (check : Check) : Json :=
-  Json.mkObj [("name", toJson check.name), ("description", toJson s!"Run the {check.name} check"),
+private def tool (name : String) : Json :=
+  Json.mkObj [("name", toJson name), ("description", toJson s!"Run the {name} check"),
     ("inputSchema", Json.mkObj [("type", toJson "object"), ("properties", Json.mkObj []),
       ("additionalProperties", toJson false)])]
 
@@ -21,18 +21,13 @@ private def initialized : Json :=
     ("capabilities", Json.mkObj [("tools", Json.mkObj [])]),
     ("serverInfo", Json.mkObj [("name", toJson "elenxis"), ("version", toJson "1")])]
 
-private def selectedCheck (params : Json) : Option Check := do
+private def selectedCheck (profile : Profile) (params : Json) : Option String := do
   let name ← (params.getObjValAs? String "name").toOption
-  decode name (params.getObjVal? "arguments").toOption
+  if admitted profile name (params.getObjVal? "arguments").toOption then some name else none
 
-example : selectedCheck (Json.mkObj [("name", toJson "gaps")]) = some .gaps := by native_decide
-example : selectedCheck (Json.mkObj [("name", toJson "gaps"),
-    ("arguments", Json.mkObj [("fixture", toJson "other")])]) = none := by native_decide
-example : selectedCheck (Json.mkObj [("name", toJson "missing")]) = none := by native_decide
-
-/-- Serve the four tools over line-delimited JSON-RPC. The caller binds the fixture and provides
+/-- Serve a project's tools over line-delimited JSON-RPC. The caller binds the fixture and provides
 the execution function. A malformed call is rejected before that function runs. -/
-def serve (run : Check → IO (Bool × String)) : IO Unit := do
+def serve (profile : Profile) (run : String → IO (Bool × String)) : IO Unit := do
   let input ← IO.getStdin
   let output ← IO.getStdout
   repeat
@@ -51,10 +46,11 @@ def serve (run : Check → IO (Bool × String)) : IO Unit := do
             | some "initialize" => pure (reply id initialized)
             | some "ping" => pure (reply id (Json.mkObj []))
             | some "tools/list" =>
-              pure (reply id (Json.mkObj [("tools", toJson (Check.all.map tool))]))
+              pure (reply id (Json.mkObj [("tools", toJson (profile.names.map tool))]))
             | some "tools/call" =>
-              match (request.getObjVal? "params").toOption.bind selectedCheck with
-              | none => pure (failure id (-32602) "Select audit, tests, gaps or clauses with no arguments")
+              match (request.getObjVal? "params").toOption.bind (selectedCheck profile) with
+              | none => pure (failure id (-32602)
+                  s!"Select {String.intercalate ", " profile.names} with no arguments")
               | some check => do
                 let (ok, report) ← run check
                 pure (reply id (Json.mkObj [("isError", toJson (!ok)), ("content", Json.arr #[

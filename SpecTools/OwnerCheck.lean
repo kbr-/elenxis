@@ -26,7 +26,7 @@ private def byName (name : String) : Option Check :=
   else if name = "clauses" then some .clauses
   else none
 
-private def argumentless : Option Json → Bool
+def argumentless : Option Json → Bool
   | none => true
   | some (.obj fields) => fields.isEmpty
   | _ => false
@@ -67,5 +67,31 @@ theorem decode_iff (name : String) (arguments : Option Json) (check : Check) :
   · have h : ¬(arguments = none ∨ arguments = some (Json.mkObj [])) :=
       fun h => accepted ((argumentless_iff arguments).mpr h)
     simp [decode, accepted, h]
+
+/-- The fixed targets available on a generated Lean project. -/
+def projectTargets : List (String × String) :=
+  [("proofs", "ProofObligations"), ("contracts", "Ledger"), ("counterexamples", "Counterexamples")]
+
+inductive Profile where
+  | project
+  | pythonLegacy
+  deriving DecidableEq
+
+def Profile.names : Profile → List String
+  | .project => projectTargets.map Prod.fst
+  | .pythonLegacy => ["audit", "integration", "gaps", "clauses"]
+
+def Profile.options : Profile → List String
+  | .project => []
+  | .pythonLegacy => ["--target", "python"]
+
+/-- Only advertised checks with no caller-controlled arguments are admitted. -/
+def admitted (profile : Profile) (name : String) (args : Option Json) : Bool :=
+  profile.names.contains name && argumentless args
+
+theorem admitted_iff (profile : Profile) (name : String) (args : Option Json) :
+    admitted profile name args = true ↔
+      name ∈ profile.names ∧ (args = none ∨ args = some (Json.mkObj [])) := by
+  simp [admitted, argumentless_iff]
 
 end SpecTools.OwnerCheck

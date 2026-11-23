@@ -230,12 +230,18 @@ seed and rule count. Run it from the Elenxis checkout so the generated Lake proj
 local library. `requirements.md` states the rules. `Spec.lean` defines the refusal condition,
 `Implementation.lean` implements the decision, `ProofObligations.lean` proves their agreement and
 `Ledger.lean` audits the clauses. Run `lake -d DIR/sSEED-nN build` to compile and audit the project.
+For a nonempty fixture, `Counterexamples.lean` checks a request distinguished by raising a rule's
+refusal bound. From the generated directory, use `spec-tools check proofs`, `check contracts` or
+`check counterexamples` to build the corresponding module. Fixture MCP advertises the same three
+checks and accepts no tool arguments.
 
 ### Optional cross-language target
 
 Append `--target python` to `synthetic generate` to export the original cross-language fixture,
 including `Loans.lean`, `loans.py` and its property tests. This target uses the legacy layout. The
-historical planted experiments below use that layout.
+historical planted experiments below use that layout. In a configured historical variant,
+`spec-tools check --target python integration` runs its adapter. Starting fixture MCP with
+`--target python` selects the legacy tools, including `integration`.
 
 - `spec-tools synthetic gvariants SEED N COUNT EMPTY DIR [blind [hard]]` writes a batch of COUNT
   variants of N rules, the first EMPTY with no plant; `blind` gives each three *shared blind spots*:

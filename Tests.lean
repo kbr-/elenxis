@@ -683,10 +683,11 @@ def testPrepareReports : IO Unit := do
   let failure := dir / "failure"
   try
     IO.FS.writeFile executable "#!/bin/sh\n\
-      printf '%s\\n' \"$2\" >> attempts\n\
-      printf 'report for %s\\n' \"$2\"\n\
-      if test -f failure && test \"$2\" = \"$(cat failure)\"; then\n\
-        printf 'diagnostic for %s\\n' \"$2\" >&2\n\
+      test \"$1 $2 $3\" = 'check --target python' || exit 3\n\
+      printf '%s\\n' \"$4\" >> attempts\n\
+      printf 'report for %s\\n' \"$4\"\n\
+      if test -f failure && test \"$4\" = \"$(cat failure)\"; then\n\
+        printf 'diagnostic for %s\\n' \"$4\" >&2\n\
         exit 42\n\
       fi\n"
     let mode ← IO.Process.output { cmd := "chmod", args := #["+x", executable.toString] }

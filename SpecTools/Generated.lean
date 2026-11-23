@@ -325,9 +325,9 @@ def leanImplementation : String :=
 /-- A generated project uses the local Elenxis library without a network dependency. -/
 def leanFiles (rules : List Rule) (root toolchain : String) : List (String × String) :=
   let views := rules.map View.plain
-  let config := "name = \"GeneratedLoans\"\ndefaultTargets = [\"Ledger\"]\n\n" ++
+  let config := "name = \"GeneratedLoans\"\ndefaultTargets = [\"Ledger\", \"Counterexamples\"]\n\n" ++
     s!"[[require]]\nname = \"Elenxis\"\npath = {root.quote}\n\n" ++
-    String.join (["Spec", "Implementation", "ProofObligations", "Ledger"].map fun name =>
+    String.join (["Spec", "Implementation", "ProofObligations", "Ledger", "Counterexamples"].map fun name =>
       s!"[[lean_lib]]\nname = {name.quote}\n\n")
   [("requirements.md", prose views),
    ("Spec.lean", "namespace Loans\n\n" ++ leanModel rules ++
@@ -346,6 +346,12 @@ def leanFiles (rules : List Rule) (root toolchain : String) : List (String × St
      "  [{ id := \"implementation\", clause := \"Executable refusal agrees with the Lean specification\",\n" ++
      "     theorems := [``refused_iff] }]\n\nend Loans\n\n" ++
      "#eval SpecTools.Audit.run Loans.ledger `ProofObligations\n"),
+   ("Counterexamples.lean", "import Spec\n\nnamespace Loans\n\n" ++
+     (rules.head?.map fun rule =>
+       s!"def atBound : Req := ⟨{rule.kind.quote}, [({(rule.measures.headD "").quote}, {rule.bound})]⟩\n\n" ++
+       s!"theorem raisedBoundCounterexample : fires r{rule.id} atBound = true ∧\n" ++
+       s!"    fires \{ r{rule.id} with bound := {rule.bound + 1} } atBound = false := by decide\n\n").getD
+       "" ++ "end Loans\n"),
    ("lakefile.toml", config),
    ("lean-toolchain", toolchain)]
 

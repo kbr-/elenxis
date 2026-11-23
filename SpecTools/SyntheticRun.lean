@@ -174,10 +174,31 @@ questions go to, so the agent running `check` chooses neither. -/
 def configFile : String := "spec-tools.json"
 private def toolBackendFile : String := "tool-backend.json"
 
-/-- `spec-tools check SUB`, run in a variant's directory: records SUB in `check.log`, then runs the
-tool, its output passed through. -/
-def runCheck (sub : String) : IO UInt32 := do
+/-- A Lean project check always selects a fixed local build target. -/
+def runProjectCheck (sub : String) : IO UInt32 := do
+  let some target := OwnerCheck.projectTargets.lookup sub
+    | IO.eprintln "usage: spec-tools check proofs|contracts|counterexamples"; return 2
   let dir ← IO.currentDir
+  unless (← (dir / "lakefile.toml").pathExists) || (← (dir / "lakefile.lean").pathExists) do
+    IO.eprintln "check: run from the Lean project's directory"
+    return 2
+  unless ← (dir / (target ++ ".lean")).pathExists do
+    IO.eprintln s!"check: {target}.lean is missing from the Lean project"
+    return 2
+  let child ← IO.Process.spawn { cmd := "lake", args := #["build", target], cwd := some dir }
+  child.wait
+
+/-- A legacy check, run in a variant's directory: records SUB in `check.log`, then runs the
+tool, its output passed through. -/
+def runLegacyCheck (requested : String) : IO UInt32 := do
+  let dir ← IO.currentDir
+  let sub := if requested == "integration" then "tests" else requested
+  if sub == "tests" then
+    unless (← (dir / "Loans.lean").pathExists) && (← (dir / "loans.py").pathExists) &&
+        (← (dir / "test_loans.py").pathExists) do
+      IO.eprintln "legacy Python integration requires Loans.lean, loans.py and test_loans.py"
+      return 2
+    IO.println "legacy Python integration"
   unless ← (dir / configFile).pathExists do
     IO.eprintln s!"check: no {configFile} in {dir}; run it in an arm's variant directory, which the run writes"
     return 2
@@ -188,7 +209,7 @@ def runCheck (sub : String) : IO UInt32 := do
   let some model := (cfg.getObjValAs? String "model").toOption
     | IO.eprintln s!"check: {configFile} names no model"; return 2
   let some inv := checkInvocation root dir.toString model sub
-    | IO.eprintln "usage: spec-tools check audit|tests|gaps|clauses"; return 2
+    | IO.eprintln "usage: spec-tools check --target python audit|integration|gaps|clauses"; return 2
   let log ← IO.FS.Handle.mk (dir / "check.log") .append
   log.putStrLn sub
   let toolConfig := dir / toolBackendFile
@@ -258,19 +279,23 @@ def checkExecutable (root : String) : String := root ++ "/.lake/build/bin/spec-t
 
 /-- Called under the fixture lock by the protected launcher. Record the attempt before starting
 the CLI and retain its actual status and both output streams. -/
-def runLockedCheck (sub : String) (receipt : System.FilePath) : IO UInt32 := do
-  let some check := OwnerCheck.decode sub none | return 2
+def runLockedCheck (profile : OwnerCheck.Profile) (sub : String) (receipt : System.FilePath) :
+    IO UInt32 := do
+  unless OwnerCheck.admitted profile sub none do return 2
   let work ← IO.currentDir
-  let json ← IO.ofExcept (Json.parse (← IO.FS.readFile (work / configFile)))
-  let root ← IO.ofExcept (json.getObjValAs? String "root")
+  let executable ← match profile with
+    | .project => pure (← IO.appPath).toString
+    | .pythonLegacy => do
+      let json ← IO.ofExcept (Json.parse (← IO.FS.readFile (work / configFile)))
+      pure (checkExecutable (← IO.ofExcept (json.getObjValAs? String "root")))
   let journal ← IO.FS.Handle.mk (work / "check-events.jsonl") .append
   let event (phase : String) (fields : List (String × Json)) := do
-    journal.putStrLn (Json.mkObj ([("check", toJson check.name), ("phase", toJson phase)] ++ fields)).compress
+    journal.putStrLn (Json.mkObj ([("check", toJson sub), ("phase", toJson phase)] ++ fields)).compress
     journal.flush
   event "attempt" []
   let result ← (IO.Process.output {
-    cmd := checkExecutable root
-    args := #["check", check.name]
+    cmd := executable
+    args := (#["check"] ++ profile.options.toArray).push sub
     cwd := some work }).toBaseIO
   let (ok, report) ← match result with
     | .error error => do
@@ -279,26 +304,26 @@ def runLockedCheck (sub : String) (receipt : System.FilePath) : IO UInt32 := do
     | .ok response => do
       event "exit" [("status", toJson response.exitCode.toNat)]
       pure (response.exitCode == 0,
-        s!"{check.name}: exit {response.exitCode}\n{response.stdout}{response.stderr}")
+        s!"{sub}: exit {response.exitCode}\n{response.stdout}{response.stderr}")
   IO.FS.writeFile receipt (Json.mkObj [("ok", toJson ok), ("report", toJson report)]).compress
   return 0
 
 /-- Serve fixture checks on the machine holding the original variant and the Lean build. -/
-def serveChecks (launcher executable : String) : IO UInt32 := do
+def serveChecks (profile : OwnerCheck.Profile) (launcher executable : String) : IO UInt32 := do
   let work ← IO.currentDir
   let env ← backendEnvironment.filterMapM fun key => do
     return (← IO.getEnv key).map (s!"{key}=" ++ ·)
-  CheckMcp.serve fun check => do
+  CheckMcp.serve profile fun check => do
     let scratch ← IO.FS.createTempDir
     let receipt := scratch / "receipt.json"
     let job ← (IO.Process.output {
       cmd := launcher
       args := #["--category", "formal_verification", "--expect", "60", "env"] ++ env.toArray ++
-        #["/usr/bin/flock", (work / "check.lock").toString, executable, "fixture-check",
-          check.name, receipt.toString]
+        #["/usr/bin/flock", (work / "check.lock").toString, executable, "fixture-check"] ++
+        profile.options.toArray ++ #[check, receipt.toString]
       cwd := some work }).toBaseIO
     let result ← match job with
-      | .error error => pure (false, s!"Could not launch {check.name}: {error}")
+      | .error error => pure (false, s!"Could not launch {check}: {error}")
       | .ok job =>
         if job.exitCode == 0 && (← receipt.pathExists) then
           let json ← IO.ofExcept (Json.parse (← IO.FS.readFile receipt))
@@ -325,17 +350,17 @@ private def fixtureToolArgs (work : System.FilePath) (root : String) (timeoutMs 
   let executable := checkExecutable root
   let command := s!"cd {shellQuote work.toString} && exec " ++ " ".intercalate
     ((["timeout", toString seconds, "env"] ++ env ++
-      [executable, "fixture-mcp", launcher, executable]).map shellQuote)
+      [executable, "fixture-mcp", launcher, executable, "--target", "python"]).map shellQuote)
   let args := toJson #["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "--", host, command]
-  let approvals := OwnerCheck.Check.all.toArray.flatMap fun check =>
-    #["-c", s!"mcp_servers.elenxis.tools.{check.name}.approval_mode=\"approve\""]
+  let approvals := OwnerCheck.Profile.pythonLegacy.names.toArray.flatMap fun check =>
+    #["-c", s!"mcp_servers.elenxis.tools.{check}.approval_mode=\"approve\""]
   return .ok (#["-c", "mcp_servers.elenxis.command=\"/usr/bin/ssh\"",
     "-c", "mcp_servers.elenxis.args=" ++ args.compress, "-c", "mcp_servers.elenxis.required=true",
     "-c", "mcp_servers.elenxis.startup_timeout_sec=10",
     "-c", s!"mcp_servers.elenxis.tool_timeout_sec={seconds}"] ++ approvals)
 
 /-- The command an agent runs the spec tools with. -/
-def checkCommand (root : String) : String := checkExecutable root ++ " check"
+def checkCommand (root : String) : String := checkExecutable root ++ " check --target python"
 
 /-- The tools of an arm: reading and the tests for all, `spec-tools check` for the ledger's and the
 tools arm. -/
@@ -349,7 +374,7 @@ def prepareReports (executable : String) (work : System.FilePath)
     ExceptT String IO String := do
   let run (check : String) : ExceptT String IO String := do
     let result ← liftM <| (IO.Process.output
-      { cmd := executable, args := #["check", check], cwd := some work,
+      { cmd := executable, args := #["check", "--target", "python", check], cwd := some work,
         env := #[("SPEC_TOOLS_GAP_READINGS", some (toString readings))] }).toBaseIO
     let output ← match result with
       | .ok output => pure output
@@ -396,8 +421,8 @@ def runArm (backend : Backend) (variantDir : System.FilePath) (arm : Arm) (root 
     if !arm.preparedChecks.isEmpty && (← (work / "check.log").pathExists) then
       IO.FS.removeFile (work / "check.log")
     let prompt := if bound then task ++ "\n\n" ++
-      "Use the Elenxis MCP tools on the fixture. Audit checks proof status, tests checks the named \
-      tests, gaps compares prose to the ledger and clauses extracts the prose's claims. Select \
+      "Use the Elenxis MCP tools on the fixture. Audit checks proof status, integration checks the \
+      named tests, gaps compares prose to the ledger and clauses extracts the prose's claims. Select \
       checks as needed. Verify each finding against the files.\n\n" ++ answerFormat
       else arm.prompt (checkCommand root) reports
     let question : Question := { prompt, schema := findingsSchema, timeoutMs }
