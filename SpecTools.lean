@@ -24,6 +24,7 @@ import SpecTools.SyntheticProofs
 import SpecTools.LoansPlants
 import SpecTools.Score
 import SpecTools.ScoreProofs
+import SpecTools.ScoreObservations
 import SpecTools.SyntheticRun
 import SpecTools.Generated
 import SpecTools.GeneratedProofs

@@ -228,6 +228,9 @@ Each is described in [docs/reference.md](docs/reference.md).
 
 ## Results
 
+These historical tables use `legacy_row_match`, which credits a location or its matching quote
+against a planted key. A match can have the wrong category or explanation.
+
 Measured with `spec-tools synthetic` on generated requirements, not on production projects. Each
 variant is a requirement of 30 rules with its Lean specification, ledger, Python implementation and
 property tests, into which the generator plants three *shared blind spots*: clauses the Lean, the
@@ -253,7 +256,9 @@ doesn't ask for (the planted gap seen from the rule's side), and one names the e
 whose sum was planted. The scorer credits only the clause the key names. A test that can tell the
 arms apart on Opus needs gaps the bare agent misses.
 
-Reproduce, from the repository's root (`DIR` any empty directory):
+To replay these historical commands against the original fixture format, use the producer revision.
+See [the reference on synthetic experiments](docs/reference.md#the-synthetic-evaluation). Run from
+the repository root with an empty `DIR`:
 
 ```bash
 spec-tools synthetic gvariants 20261107 30 20 0 DIR blind

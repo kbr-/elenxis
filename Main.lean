@@ -14,6 +14,7 @@ def commands : List (String × String) := [
   ("draft-review", "review a complete coverage draft: draft-review HARNESS MODEL PROSE INVENTORY DRAFT"),
   ("synthetic", "write a batch of variants of the loans fixture with planted gaps, the key apart: \
     synthetic SEED COUNT EMPTY FIXTURE-DIR OUT-DIR"),
+  ("score-observations", "score a versioned key and findings file: score-observations KEY FINDINGS"),
   ("check", "run one spec tool on the synthetic variant in the current directory, with the root and \
     model its spec-tools.json names: check audit|tests|gaps|clauses")
 ]
@@ -513,8 +514,9 @@ def synthetic (args : List String) : IO UInt32 := do
           | throw (IO.userError s!"{f}: expected a successful score for each of {n} variants")
         return complete
       return (rows.filter (· ≠ "")).filterMap fun l => (Lean.Json.parse l).toOption
-    IO.println (SpecTools.Owners.table (← lines "gaps")
-      (← lines "baseline") (← lines "ledger") (← lines "tools") (args[3]?.isSome))
+    let table := SpecTools.Owners.table (← lines "gaps")
+      (← lines "baseline") (← lines "ledger") (← lines "tools") (args[3]?.isSome)
+    IO.println s!"{SpecTools.Score.legacyHeader}\n\n{table}"
     return 0
   | ["gapsrun", seed, n, outDir, model] =>
     -- `gaps` itself on each variant of a batch written by gvariants SEED N, three at a time, scored
@@ -801,6 +803,7 @@ def synthetic (args : List String) : IO UInt32 := do
     if directories.isEmpty then
       IO.eprintln "usage: spec-tools synthetic compare DIR ..."
       return 2
+    IO.println SpecTools.Score.legacyHeader
     let mut comparisons := []
     for outDir in directories do
       let dir := System.FilePath.mk outDir
@@ -821,12 +824,13 @@ def synthetic (args : List String) : IO UInt32 := do
     return if met then 0 else 1
   | ["rescore", outDir] =>
     -- Each arm's saved findings in DIR's results*.jsonl scored again against DIR/key.jsonl by the
-    -- current scorer, per arm in total; a run that failed has no findings and is left out.
+    -- legacy scorer, per arm in total; a run that failed has no findings and is left out.
     let dir := System.FilePath.mk outDir
     let keyText ← IO.FS.readFile (dir / "key.jsonl")
     let keys := SpecTools.SyntheticRun.keyPlants keyText
     let files := ((← dir.readDir).map (·.fileName)).toList.filter fun n =>
       n.startsWith "results" && n.endsWith ".jsonl"
+    IO.println SpecTools.Score.legacyHeader
     let mut totals : List (String × Nat × Nat × Nat × Nat) := []
     for file in files.mergeSort (· ≤ ·) do
       for l in ((← IO.FS.readFile (dir / file)).splitOn "\n").filter (· ≠ "") do
@@ -911,6 +915,15 @@ def ask (args : List String) : IO UInt32 := do
 private def readJsonFile [Lean.FromJson α] (path : String) : IO α := do
   IO.ofExcept ((Lean.Json.parse (← IO.FS.readFile path)).bind Lean.fromJson?)
 
+private def scoreObservations (keyPath findingsPath : String) : IO UInt32 := do
+  let result ← try
+    pure (SpecTools.Score.Observations.report (← readJsonFile keyPath) (← readJsonFile findingsPath))
+  catch error =>
+    pure (.error error.toString)
+  match result with
+  | .ok report => IO.println report.compress; return 0
+  | .error message => IO.eprintln message; return 2
+
 open SpecTools.Gaps SpecTools.Model in
 def reviewCoverageDraft (args : List String) : IO UInt32 := do
   match args with
@@ -958,6 +971,7 @@ def main (args : List String) : IO UInt32 := do
   | ["draft-hook-json", python, bridge] => SpecTools.DraftHook.runJson python bridge
   | "draft-review" :: rest => reviewCoverageDraft rest
   | "synthetic" :: rest => synthetic rest
+  | ["score-observations", key, findings] => scoreObservations key findings
   | ["check", sub] => SpecTools.SyntheticRun.runCheck sub
   | ["fixture-mcp", launcher, executable] => SpecTools.SyntheticRun.serveChecks launcher executable
   | ["fixture-check", sub, receipt] => SpecTools.SyntheticRun.runLockedCheck sub receipt

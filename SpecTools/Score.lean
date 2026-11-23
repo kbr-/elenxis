@@ -11,6 +11,11 @@ alarm. Clauses compare by `Clauses.normalize`. Pure.
 namespace SpecTools.Score
 open SpecTools.Synthetic SpecTools.Clauses
 
+def legacyMetric : String := "legacy_row_match"
+
+def legacyHeader : String :=
+  s!"Score metric: {legacyMetric}\nFormal distinction: unknown\nHuman judgment: unknown"
+
 /-- A finding: the clause it quotes, its kind, and the ledger row it names, which answers saved
 before rows were asked for lack. -/
 structure Finding where
@@ -31,7 +36,7 @@ def quoteNames (f : Finding) (p : Plant) : Bool :=
   normalize f.clause == normalize p.clause ||
     ((sentences f.clause).length ≤ 2 && (sentences f.clause).contains (normalize p.clause))
 
-/-- A finding names a plant by row when both have one: the rows name one rule (`rK` and
+/-- The legacy metric matches a plant by row when both have one: the rows name one rule (`rK` and
 `rK-exempt` alike), whatever the quote, since a person's sentence never equals a generated clause.
 Without both rows, by its quote. -/
 def names (f : Finding) (p : Plant) : Bool :=

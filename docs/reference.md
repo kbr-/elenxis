@@ -187,6 +187,18 @@ agent can skip a check or submit findings after a failed check.
 
 ## The synthetic evaluation
 
+`spec-tools score-observations KEY FINDINGS` reads two JSON objects with `"version": 1`. The
+protected key holds a `plants` array. Each plant has a unique natural-number `id`, a unique nonempty
+`property` identifier, a `location` of the form `{"rule": 2, "part": "exception"}`, and a `kind`
+name (`uncovered`, `too weak`, `undecided` or `extra`). Findings go in a `findings` array. Each
+finding has an `evidenceId` and may supply a `location`, `property` and `kind`. Reuse an evidence ID
+for repeated records from the same source observation. Conflicting scoring fields under that ID
+exclude the observation.
+
+The report lists exact observed key locations as `located` and plant IDs matched by location,
+property and kind as `classified`. It returns `unknown` for `distinguished` and `humanReviewed` at
+this entry point. Both input files must use version 1.
+
 `SpecTools.Synthetic`, `SpecTools.Generated`, `SpecTools.Score` and `spec-tools synthetic` generate
 a requirement of N rules from a seed with its four artifacts (prose, Lean model and ledger, Python
 and its tests) agreeing by construction, plant gaps in one artifact with the key kept apart, and
