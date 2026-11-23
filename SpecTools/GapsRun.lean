@@ -192,6 +192,19 @@ def draftIssues (inventory : List DraftSource) (draft : List DraftRow) : List St
       if reason.trimAscii.isEmpty || acceptance.trimAscii.isEmpty then
         [s!"External check needs a reason and acceptance case: {row.source.id}"] else [])
 
+theorem draftIssues_missing (inventory : List DraftSource) (draft : List DraftRow)
+    (source : DraftSource) (listed : source ∈ inventory)
+    (absent : draft.any (fun row => row.source.id == source.id) = false) :
+    s!"Missing draft row: {source.id}" ∈ draftIssues inventory draft := by
+  have missing : s!"Missing draft row: {source.id}" ∈
+      inventory.filterMap (fun item =>
+        if draft.any (fun row => row.source.id == item.id) then none
+        else some s!"Missing draft row: {item.id}") :=
+    List.mem_filterMap.mpr ⟨source, listed, by simp [absent]⟩
+  unfold draftIssues
+  simp only [List.mem_append]
+  grind
+
 def draftPrompt (prose : String) (draft : List DraftRow) : String :=
   let contracts := (draft.filterMap fun row => match row.evidence with
     | .contract name statement => some (name, statement)
@@ -211,23 +224,52 @@ def draftPrompt (prose : String) (draft : List DraftRow) : String :=
     "\n".intercalate (contracts.map fun ((name, statement), index) =>
       s!"- Statement {index}, {name}: {statement}")
 
+def draftReviewQuestion (inventory : List DraftSource) (draft : List DraftRow) (prose : String)
+    (timeoutMs : Nat) : Except String Question :=
+  let issues := draftIssues inventory draft
+  if issues.isEmpty then
+    .ok {
+      prompt := draftPrompt prose draft
+      schema := proposalSchemaFor (some (inventory.map (·.id)))
+      timeoutMs := timeoutMs }
+  else
+    .error ("Submit the full Coverage draft together.\n" ++ "\n".intercalate issues)
+
+theorem draftReviewQuestion_ok_iff (inventory : List DraftSource) (draft : List DraftRow)
+    (prose : String) (timeoutMs : Nat) (question : Question) :
+    draftReviewQuestion inventory draft prose timeoutMs = .ok question ↔
+      (draftIssues inventory draft).isEmpty = true ∧
+        question = {
+          prompt := draftPrompt prose draft
+          schema := proposalSchemaFor (some (inventory.map (·.id)))
+          timeoutMs := timeoutMs } := by
+  by_cases valid : (draftIssues inventory draft).isEmpty = true
+  · simp [draftReviewQuestion, valid, eq_comm]
+  · simp [draftReviewQuestion, valid]
+
 def reviewDraft (runner : Runner) (allowed : List Backend) (backend : Backend)
     (inventory : List DraftSource) (draft : List DraftRow) (prose : String)
     (scratch : System.FilePath) (timeoutMs : Nat := 300000) :
     IO (Except String Report × Usage.Usage) := do
-  let issues := draftIssues inventory draft
-  unless issues.isEmpty do
-    return (.error ("Submit the full Coverage draft together.\n" ++ "\n".intercalate issues), {})
-  let (result, used) ← Usage.askRecorded "draft-review" runner allowed backend
-      { prompt := draftPrompt prose draft,
-        schema := proposalSchemaFor (some (inventory.map (·.id))), timeoutMs } scratch
-  match result with
-  | .error failure => return (.error failure.describe, used)
-  | .ok outcome =>
-    let some proposals := proposalsOf outcome.answer
-      | return (.error "The review answer is no list of gaps.", used)
-    let rows := draft.map fun row => ({ id := row.source.id, clause := row.source.clause } : Row)
-    return (.ok (gather (fun _ => none) rows proposals), used)
+  match draftReviewQuestion inventory draft prose timeoutMs with
+  | .error reason => return (.error reason, {})
+  | .ok question =>
+    let (result, used) ← Usage.askRecorded "draft-review" runner allowed backend question scratch
+    match result with
+    | .error failure => return (.error failure.describe, used)
+    | .ok outcome =>
+      let some proposals := proposalsOf outcome.answer
+        | return (.error "The review answer is no list of gaps.", used)
+      let rows := draft.map fun row => ({ id := row.source.id, clause := row.source.clause } : Row)
+      return (.ok (gather (fun _ => none) rows proposals), used)
+
+theorem reviewDraft_refused (runner : Runner) (allowed : List Backend) (backend : Backend)
+    (inventory : List DraftSource) (draft : List DraftRow) (prose : String)
+    (scratch : System.FilePath) (timeoutMs : Nat) (reason : String)
+    (refused : draftReviewQuestion inventory draft prose timeoutMs = .error reason) :
+    reviewDraft runner allowed backend inventory draft prose scratch timeoutMs =
+      pure (.error reason, {}) := by
+  simp [reviewDraft, refused]
 
 def draftContractNames (draft : List DraftRow) : List Name :=
   (draft.filterMap fun row => match row.evidence with

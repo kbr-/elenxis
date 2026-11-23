@@ -8,10 +8,6 @@ open SpecTools.DraftHook in
 open SpecTools.DraftHook in
 #guard additions "*** Begin Patch\n*** Update File: tasks/t/spec/Coverage.draft.json\n+[]\n*** End Patch" == []
 
-open SpecTools.DraftHook in
-#guard (issues [("question", "Preserve both eyes.")] "[]").toOption ==
-  some ["Missing draft row: 1"]
-
 /-!
 Tests of what meets the world: the live runner starting real processes. The pure core's properties
 are theorems (`SpecTools.ModelProofs`).
@@ -66,51 +62,64 @@ def testFullCodexPrompt : IO Unit := do
   | none => throw <| IO.userError "child did not receive EOF on stdin"
   IO.FS.removeDirAll dir
 
-open SpecTools.Gaps in
-def testDraftReview : IO Unit := do
-  let source : DraftSource := ⟨"strength", "Zero Strength uses the left image for both eyes."⟩
-  let external : DraftSource := ⟨"comfort", "Check optical fusion in the glasses."⟩
-  let strength : DraftRow :=
-    ⟨source, .contract `Geometry.mono "∀ left, render 0 left = (left, left)"⟩
-  let complete : List DraftRow := [strength,
-    ⟨external, .externalCheck "Device optics" "Wear the glasses and verify fusion."⟩]
-  let sameContract := { strength with source := ⟨"mono", "Mono uses identical eyes."⟩ }
-  let shared := draftPrompt "requirements" [strength, sameContract]
-  ensure ((shared.splitOn "render 0 left").length == 2 &&
-      (shared.splitOn "Geometry.mono, statement 0").length == 3)
-    "one statement is carried with both clause references"
-  let calls ← IO.mkRef (0 : Nat)
-  let runner : Runner := fun invocation _ _ => do
-    calls.modify (· + 1)
-    let prompt := invocation.input.getD ""
-    ensure ((prompt.splitOn "render 0 left").length > 1) "draft statement is in the prompt"
-    ensure ((prompt.splitOn "verify fusion").length > 1) "external acceptance is in the prompt"
-    return some {
-      exitCode := 0, stdout := "", stderr := "",
-      readBack := [("answer.json", "{\"gaps\":[]}")], millis := 0 }
-  let backend : Backend := ⟨.codex, "test-model", "test", none⟩
-  let inventory := [source, external]
-  let schema := proposalSchemaFor (some (inventory.map (·.id)))
-  let proposal (row : String) := Lean.Json.mkObj [("gaps", Lean.Json.arr #[
-    Lean.Json.mkObj [("kind", "too weak"), ("row", row), ("why", "test")]])]
-  ensure (SpecTools.Schema.violation schema (proposal "strength")).isNone
-    "one current row key is allowed"
-  ensure (SpecTools.Schema.violation schema (proposal "strength, comfort")).isSome
-    "multiple row keys in one identifier are refused"
-  let invalid : List DraftRow := [⟨{ source with clause := "changed" }, .contract `Geometry.mono " "⟩,
-    strength]
-  match (← reviewDraft runner [backend] backend inventory invalid "requirements" ".").1 with
-  | .ok _ => throw <| IO.userError "incomplete draft reached review"
-  | .error message =>
-    for diagnostic in ["Missing draft row: comfort", "Duplicate draft key: strength",
-        "Unknown or changed source clause: strength", "Empty draft contract: strength"] do
-      ensure ((message.splitOn diagnostic).length > 1) s!"missing diagnostic {diagnostic}"
-  ensure ((← calls.get) == 0) "incomplete draft invoked a backend"
-  match (← reviewDraft runner [backend] backend inventory complete "requirements" ".").1 with
-  | .error message => throw <| IO.userError message
-  | .ok report => ensure (report.refused.isEmpty) "complete review returned malformed proposals"
-  ensure ((← calls.get) == 1) "complete draft used exactly one review"
-  IO.println "PASS: draft review (complete inventory, all defects, one backend call)"
+open Lean in
+def testDraftReview : IO Unit := IO.FS.withTempDir fun dir => do
+  let capture := dir / "captured.json"
+  let calls := dir / "calls"
+  let reply := dir / "reply.json"
+  let config := dir / "backend.json"
+  let prose := dir / "requirements.txt"
+  let inventory := dir / "inventory.json"
+  let complete := dir / "complete.json"
+  let invalid := dir / "invalid.json"
+  let source (id clause : String) :=
+    Json.mkObj [("id", toJson id), ("clause", toJson clause)]
+  let row (source evidence : Json) := Json.mkObj [("source", source), ("evidence", evidence)]
+  let strength := source "strength" "Zero strength uses the left image for both eyes."
+  let mono := source "mono" "Mono uses identical eyes."
+  let comfort := source "comfort" "Check optical fusion in the glasses."
+  let contract (statement : String) :=
+    Json.mkObj [("contract", Json.mkObj [("name", toJson "Geometry.mono"),
+      ("statement", toJson statement)])]
+  let external := Json.mkObj [("externalCheck", Json.mkObj [
+    ("reason", toJson "Device optics"), ("acceptance", toJson "Wear the glasses and verify fusion.")])]
+  let shared := contract "∀ left, render 0 left = (left, left)"
+  IO.FS.writeFile inventory (toJson [strength, mono, comfort]).compress
+  IO.FS.writeFile complete (toJson [row strength shared, row mono shared, row comfort external]).compress
+  IO.FS.writeFile invalid (toJson [
+    row (source "strength" "changed") (contract " "), row strength shared, row mono shared]).compress
+  IO.FS.writeFile prose "Zero strength renders mono. Validate fusion on the device."
+  let script := "printf 'invoked\\n' >> \"$1\" && cp \"$4\" \"$2\" && cat \"$3\""
+  IO.FS.writeFile config (Json.mkObj [
+    ("adapter", toJson "command"), ("command", toJson "sh"), ("model", toJson "local/review"),
+    ("dataGoesTo", toJson "local"), ("args", toJson [
+      "-c", script, "review-adapter", calls.toString, capture.toString, reply.toString])]).compress
+  let run (draft : System.FilePath) := IO.Process.output {
+    cmd := "lake", args := #["exe", "spec-tools", "draft-review", "configured", "default",
+      prose.toString, inventory.toString, draft.toString],
+    env := #[("SPEC_TOOLS_BACKEND", some config.toString)] }
+  IO.FS.writeFile reply "{\"gaps\":[]}"
+  let refused ← run invalid
+  ensure (refused.exitCode == 1) (refused.stdout ++ refused.stderr)
+  for diagnostic in ["Missing draft row: comfort", "Duplicate draft key: strength",
+      "Unknown or changed source clause: strength", "Empty draft contract: strength"] do
+    ensure ((refused.stderr.splitOn diagnostic).length > 1) refused.stderr
+  ensure (!(← calls.pathExists)) "incomplete draft started the command adapter"
+  let accepted ← run complete
+  ensure (accepted.exitCode == 0 &&
+    (accepted.stdout.splitOn "0 gaps, 0 proposals refused").length > 1)
+      (accepted.stdout ++ accepted.stderr)
+  ensure ((← IO.FS.readFile calls) == "invoked\n") "complete draft did not invoke the adapter once"
+  let request ← IO.ofExcept (Json.parse (← IO.FS.readFile capture))
+  let prompt ← IO.ofExcept (request.getObjValAs? String "prompt")
+  ensure ((prompt.splitOn "render 0 left").length == 2 &&
+    (prompt.splitOn "Geometry.mono, statement 0").length == 3 &&
+    (prompt.splitOn "verify fusion").length > 1) "review request lost draft evidence"
+  IO.FS.writeFile reply "{\"gaps\":[{\"kind\":\"too weak\",\"row\":\"strength, comfort\",\"why\":\"wrong key\"}]}"
+  let badReply ← run complete
+  ensure (badReply.exitCode == 1 && (badReply.stderr.splitOn "schema").length > 1)
+    (badReply.stdout ++ badReply.stderr)
+  IO.println "PASS: draft review CLI (refusal before spawn, file transport, invalid response)"
 
 /-- Run the audit over a Lean file written for the case, in this project's environment. -/
 def auditCase (dir : System.FilePath) (name body : String) : IO (UInt32 × String) := do
