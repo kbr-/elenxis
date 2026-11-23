@@ -1,10 +1,20 @@
 # A salon's first booking call
 
 [The conversation](text.md) is a fictional first call between Mae, who owns the salon, and Rob, who
-is developing its booking page. Mae gives conflicting limits for children's haircuts and leaves the
-unpaid-visit threshold open. The generated key identifies these imperfections and the planted blind
-spots by ledger row. The [table](table.md) compares matching rows and false alarms across the arms.
-Tells scored the packaged dialogue 1.00 against a threshold of 0.95.
+is developing its booking page. Mae first says that two no-shows block an online booking for a
+child's haircut, then reads a note that gives the limit as four. She also says that customers with
+“a few” unpaid visits should call the salon, leaving the exact threshold open. Both cases call for a
+decision from the owner before the booking rules are finalized.
+
+The benchmark generates variants of a Lean specification, a Python implementation and property tests
+for this dialogue. Some variants deliberately share a blind spot across all three artifacts. For
+example, variant 3 marks the staff exception to the no-show rule for evening bookings as a planted
+blind spot. The [scoring key](key.jsonl) identifies the planted gaps and ambiguities by ledger row.
+The two variants without planted blind spots still contain the ambiguities in the dialogue.
+
+The [results table](table.md) shows matches and false alarms for `gaps`, an agent reading the files,
+an agent with access to the tools, and an agent given the tools' reports before it starts. Tells
+scored the packaged dialogue 1.00 against a threshold of 0.95.
 
 Run these commands from the Elenxis project directory. The table uses Codex with GPT-6.2 Sol at
 medium effort. A Codex session supplies those defaults. If `SPEC_TOOLS_HOST` runs Codex on another

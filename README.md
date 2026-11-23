@@ -3,23 +3,19 @@ width="600"></p>
 
 # Elenxis
 
-**Lean's kernel checks a proof against its theorem. Nothing checks the theorem against what you
-meant. This does.**
+**Review what your Lean specification promises, clause by clause.**
 
-Formal verification can prove that code satisfies a specification. It cannot, by itself, prove that
-the specification says what the user intended. `Elenxis` makes the links between natural-language
-requirements, Lean statements, proofs and implementation tests explicit and auditable: Lean decides
-what it can, a model is asked only for what Lean can't decide, and its answers are proposals a
-person judges.
+Elenxis links natural-language requirements to Lean theorems, proofs and implementation tests. Use
+it to spot missing or weaker-than-intended rules, audit what the proofs establish, and check whether
+implementation tests exercise the rules they are meant to protect. Lean computes the audit verdicts.
+A configured model proposes gaps that need a reading of the prose, and a person judges those
+proposals.
 
 ## The problem
 
-A proof is the easy part to trust: Lean's kernel checks it, and a wrong proof doesn't compile. What
-nobody checks is the *statement*. A theorem can be proved and still miss its requirement: its
-hypotheses can never hold, so it proves anything; it covers one case of its clause; a clause has no
-theorem at all; the prose never decided a case the code handles; or a theorem constrains something
-nobody asked for. Every one of these compiles, and when a model writes both the specification and
-its proof, it can produce any of them.
+A proved theorem can cover only part of a requirement, rely on impossible hypotheses, or enforce a
+rule the user never requested. An entire requirement can also be missing from the specification.
+Those gaps matter even when the proofs compile and the tests pass.
 
 ## A one-minute demo (synthetic)
 
@@ -70,6 +66,14 @@ The same command on it prints `0 gaps, 0 proposals refused`.
 The outputs above are those of one run each, on Opus (`claude-opus-5-5`) at medium reasoning effort
 through Claude Code ([`examples/backend.json`](examples/backend.json)). A model's wording varies
 from run to run, and so can its findings; the audit's lines don't.
+
+## Worked example: a salon booking call
+
+In a fictional first call about online bookings, the salon owner gives two different no-show limits
+for children's haircuts and leaves the unpaid-visit threshold open. The benchmark tests for both
+kinds of ambiguity alongside rules deliberately missed by the Lean specification, Python
+implementation and tests. The example includes the dialogue, scoring key, measured results and
+commands to reproduce them. [Salon's first booking call](examples/owners/salon-call/README.md)
 
 ## What Lean checks, and what the model checks
 
@@ -138,8 +142,9 @@ is only reviewed, by a model's reading and a person's decision.
 - **Adversarial admission** (`SpecTools.Adversarial`): `adversarial_claim` admits a theorem only
   with a witness for its hypotheses and, for each attack, a proof that a cheap wrong implementation
   (a constant, doing nothing) fails the same law.
-- **Tests** (`SpecTools.Tests`, `adapters/python_guards.py`): a guard of the implementation whose
-  removal no property test notices.
+- **Tests** (`SpecTools.Tests`, `adapters/python_guards.py`): find implementation guards whose
+  removal escapes the property tests. Executable fixtures can also replay the same operations in
+  Lean and Python and report the first disagreement.
 - **Draft review** (`spec-tools draft-check`, `draft-review`): the clauses' planned contracts,
   reviewed before any Lean is written.
 - **Clauses** (`spec-tools clauses`): a prose file's clauses extracted twice, blind, and compared.
