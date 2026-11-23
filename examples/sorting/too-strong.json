@@ -1,0 +1,6 @@
+[
+  {
+    "source": { "id": "sorting", "clause": "For every list of natural numbers, return its elements in nondecreasing order, preserving how many times each element occurs." },
+    "evidence": { "contract": { "name": "Sorting.postcondition", "statement": "def postcondition (input output : List Nat) : Prop :=\n  output.Pairwise (· ≤ ·) ∧ output.Perm input ∧ output.length ≤ 10" } }
+  }
+]

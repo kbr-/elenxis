@@ -75,6 +75,64 @@ kinds of ambiguity alongside rules deliberately missed by the Lean specification
 implementation and tests. The example includes the dialogue, scoring key, measured results and
 commands to reproduce them. [Salon's first booking call](examples/owners/salon-call/README.md)
 
+## Sorting in Lean 4 (synthetic)
+
+With the prompt `Sorting spec in Lean 4`, `spec-tools ask` generated this Lean postcondition in its
+`lean` field. Lean accepted the definition.
+
+```lean
+import Std
+
+/-- The output is nondecreasing and contains exactly the input elements, with multiplicity. -/
+def SortPostcondition (input output : List Nat) : Prop :=
+  output.Pairwise (fun a b => a ≤ b) ∧ output.Perm input
+```
+
+<details> <summary>Full output from ask</summary>
+
+```text
+usage: 1 calls; tokens input 17083, cache write 0, cache read 0, output 79; 5391 ms; codex gpt-6.2-sol
+{"lean":"import Std\n\n/-- The output is nondecreasing and contains exactly the input elements, with multiplicity. -/\ndef SortPostcondition (input output : List Nat) : Prop :=\n  output.Pairwise (fun a b => a ≤ b) ∧ output.Perm input\n"}
+```
+
+</details>
+
+For `draft-review`, the [requirement](examples/sorting/inventory.json) says that sorting must put
+any list of natural numbers in nondecreasing order and preserve every element's multiplicity. Both
+drafts below were rejected, with exit status 1.
+
+**Too weak.** This [draft](examples/sorting/too-weak.json) checks only `output.Pairwise (· ≤ ·)`. It
+ignores the input.
+
+```text
+uncovered: sorting: The draft supplies no external acceptance cases. For example, input [2, 1, 2] should accept [1, 2, 2] and reject [2, 1, 2], [1, 2], and [1, 2, 2, 3].
+too weak: sorting: Statement 0 requires nondecreasing output but ignores the input. It accepts [] for input [2, 1, 2]. Require the output to be a permutation of the input so every element's multiplicity is preserved.
+2 gaps, 0 proposals refused
+usage: 1 calls; tokens input 17280, cache write 0, cache read 0, output 177; 7811 ms; codex gpt-6.2-sol
+```
+
+The `uncovered` line is a separate suggestion to add acceptance cases.
+
+**Too strong.** This [draft](examples/sorting/too-strong.json) checks order and permutation and adds
+`output.length ≤ 10`.
+
+```text
+extra: sorting: Statement 0 requires output.length ≤ 10. Since permutation preserves length, inputs with more than 10 elements admit no valid output, even though the requirement applies to every list of natural numbers.
+1 gaps, 0 proposals refused
+usage: 1 calls; tokens input 16354, cache write 0, cache read 0, output 82; 5489 ms; codex gpt-6.2-sol
+```
+
+To replay these calls after building Elenxis, use the [sorting inputs](examples/sorting) from the
+repository root. The diagnostic wording can vary across runs.
+
+```sh
+cli=.lake/build/bin/spec-tools
+example=examples/sorting
+"$cli" ask codex gpt-6.2-sol "$example/proposal.schema.json" "$example/prompt.txt"
+"$cli" draft-review codex gpt-6.2-sol "$example/prompt.txt" "$example/inventory.json" "$example/too-weak.json"
+"$cli" draft-review codex gpt-6.2-sol "$example/prompt.txt" "$example/inventory.json" "$example/too-strong.json"
+```
+
 ## What Lean checks, and what the model checks
 
 - **Lean decides** whatever the environment settles: whether a named theorem exists and is a

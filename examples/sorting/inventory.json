@@ -1,0 +1,3 @@
+[
+  { "id": "sorting", "clause": "For every list of natural numbers, return its elements in nondecreasing order, preserving how many times each element occurs." }
+]

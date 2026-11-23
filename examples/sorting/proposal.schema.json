@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "properties": {
+    "lean": { "type": "string", "description": "A short, self-contained Lean 4 sorting postcondition as Lean source code." }
+  },
+  "required": ["lean"],
+  "additionalProperties": false
+}
