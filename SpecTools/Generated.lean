@@ -266,14 +266,16 @@ def total (r : Rule) : String := " + ".intercalate (r.measures.map fun m => s!"q
 def leanTheorems (v : View) : String :=
   let t := v.theorem_
   let flagHyp := match t.flag with | some f => s!" (hf : q.get \"{f}\" = 0)" | none => ""
-  let vac := if v.vacuous then s!" (hv : q.get \"{t.measures.head!}\" < {t.bound})" else ""
+  let vac := if v.vacuous then s!" (hv : {total t} < {t.bound})" else ""
   -- `omega` closes what `simp` leaves: a bound the theorem states above the rule's, or a
   -- contradicting hypothesis.
   let ruleThm := s!"theorem fires_r{t.id} (q : Req) (hk : q.kind = \"{t.kind}\") (hb : {t.bound} ≤ {total t}){flagHyp}{vac} :\n    fires r{t.id} q = true := by\n  simp [fires, r{t.id}, hk{if t.flag.isSome then ", hf" else ""}]\n  all_goals omega"
   -- The witness meets every hypothesis of the rule's theorem: its kind, its bound and the flag unset.
   let witFlag := match t.flag with | some f => s!"∃ _hf : q.get \"{f}\" = 0, " | none => ""
+  let premises := s!"∃ q : Req, ∃ _hk : q.kind = \"{t.kind}\", ∃ _hb : {t.bound} ≤ {total t}, {witFlag}"
   let flagProof := if t.flag.isSome then ", by decide" else ""
-  let wit := s!"theorem wit_r{t.id} :\n    ∃ q : Req, ∃ _hk : q.kind = \"{t.kind}\", ∃ _hb : {t.bound} ≤ {total t}, {witFlag}True :=\n  ⟨w{t.id}, by decide, by decide{flagProof}, trivial⟩"
+  let wit := s!"theorem wit_r{t.id} :\n    {premises}True :=\n  ⟨w{t.id}, by decide, by decide{flagProof}, trivial⟩"
+  let empty := s!"theorem empty_r{t.id} :\n    ¬ ({premises}∃ _hv : {total t} < {t.bound}, True) := by\n  intro ⟨_, _, lo, {if t.flag.isSome then "_, " else ""}hi, _⟩\n  exact (Nat.not_lt_of_ge lo) hi"
   let witDef := s!"def w{t.id} : Req := ⟨\"{t.kind}\", [{", ".intercalate (t.measures.map fun m => s!"(\"{m}\", {t.bound})")}]⟩"
   let model := v.model
   let request := s!"(⟨\"{model.kind}\", [{", ".intercalate
@@ -282,7 +284,8 @@ def leanTheorems (v : View) : String :=
   let exc := match v.model.flag with
     | some f => s!"\ntheorem exempt_r{t.id} (q : Req) (hf : 1 ≤ q.get \"{f}\") : fires r{t.id} q = false := by\n  have : q.get \"{f}\" ≠ 0 := by omega\n  simp [fires, r{t.id}, this]\ndef x{t.id} : Req := ⟨\"{t.kind}\", [(\"{f}\", 1)]⟩\ntheorem wit_x{t.id} : ∃ q : Req, ∃ _hf : 1 ≤ q.get \"{f}\", True :=\n  ⟨x{t.id}, by decide, trivial⟩"
     | none => ""
-  (if v.omitTheorem then "" else "\n".intercalate ([ruleThm, refusedWitness] ++ if v.vacuous then [] else [witDef, wit])) ++ exc
+  (if v.omitTheorem then "" else
+    "\n".intercalate ([ruleThm, refusedWitness] ++ if v.vacuous then [empty] else [witDef, wit])) ++ exc
 
 def rowId (r : Rule) : String := s!"r{r.id}"
 
@@ -296,8 +299,9 @@ def leanRows (vs : List View) : String :=
         let subject := v.borrowsTheorem.bind
           (fun id => vs.find? (fun candidate => candidate.model.id == id))
         let vacuous := (subject.getD v).vacuous
-        let inhabitant := if vacuous then "" else s!"⟨``fires_r{j}, ``wit_r{j}, .inhabited⟩, "
-        s!"theorems := [``fires_r{j}, ``refused_of], evidence := [{inhabitant}⟨``refused_of, ``wit_refused_r{j}, .inhabited⟩]"
+        let certificate := if vacuous then s!"⟨``fires_r{j}, ``empty_r{j}, .inconsistent⟩"
+          else s!"⟨``fires_r{j}, ``wit_r{j}, .inhabited⟩"
+        s!"theorems := [``fires_r{j}, ``refused_of], evidence := [{certificate}, ⟨``refused_of, ``wit_refused_r{j}, .inhabited⟩]"
     let base := s!"  \{ id := \"{rowId r}\", clause := {(ruleSentence r).quote},\n    {named} }"
     match r.flag, v.model.flag with
     | some f, some _ => [base, s!"  \{ id := \"{rowId r}-exempt\", clause := {(flagSentence r f).quote},\n    theorems := [``exempt_r{r.id}], evidence := [⟨``exempt_r{r.id}, ``wit_x{r.id}, .inhabited⟩] }"]
@@ -323,8 +327,8 @@ def leanImplementation : String :=
   "    refused q = true := List.any_eq_true.mpr ⟨r, h, hf⟩\n\n"
 
 /-- A generated project uses the local Elenxis library without a network dependency. -/
-def leanFiles (rules : List Rule) (root toolchain : String) : List (String × String) :=
-  let views := rules.map View.plain
+def leanFiles (views : List View) (root toolchain : String) : List (String × String) :=
+  let rules := views.map (·.model)
   let config := "name = \"GeneratedLoans\"\ndefaultTargets = [\"Ledger\", \"Counterexamples\"]\n\n" ++
     s!"[[require]]\nname = \"Elenxis\"\npath = {root.quote}\n\n" ++
     String.join (["Spec", "Implementation", "ProofObligations", "Ledger", "Counterexamples"].map fun name =>

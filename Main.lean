@@ -68,9 +68,9 @@ def synthetic (args : List String) : IO UInt32 := do
         let rs := SpecTools.Generated.rulesOf seed n vocab
         let dir := System.FilePath.mk outDir / s!"s{seed}-n{n}"
         IO.FS.createDirAll dir
-        let files := if target == "python" then
-            SpecTools.Targets.Python.files (rs.map SpecTools.Generated.View.plain)
-          else SpecTools.Generated.leanFiles rs root.toString toolchain
+        let views := rs.map SpecTools.Generated.View.plain
+        let files := if target == "python" then SpecTools.Targets.Python.files views
+          else SpecTools.Generated.leanFiles views root.toString toolchain
         for (f, text) in files do
           IO.FS.writeFile (dir / f) text
         let flagged := (rs.filter (·.flag.isSome)).length
