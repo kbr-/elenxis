@@ -48,6 +48,10 @@ private inductive Slot where
   | single (finding : EvidenceFinding)
   | conflict
 
+private def Slot.finding? : Slot → Option EvidenceFinding
+  | .single finding => some finding
+  | .conflict => none
+
 private def update (finding : EvidenceFinding) : Option Slot → Option Slot
   | none => some (.single finding)
   | some (.single previous) => some (if previous = finding then .single finding else .conflict)
@@ -114,9 +118,7 @@ private theorem table_single (findings : List EvidenceFinding) (id : String)
 
 /-- An identity has one usable observation when its repeated occurrences agree. -/
 def coherent (findings : List EvidenceFinding) : List EvidenceFinding :=
-  (evidenceTable findings).toList.filterMap fun
-    | (_, .single finding) => some finding
-    | (_, .conflict) => none
+  (evidenceTable findings).toList.filterMap fun (_, slot) => slot.finding?
 
 theorem coherent_exact (findings : List EvidenceFinding) (finding : EvidenceFinding) :
     finding ∈ coherent findings ↔ finding ∈ findings ∧
@@ -125,9 +127,9 @@ theorem coherent_exact (findings : List EvidenceFinding) (finding : EvidenceFind
   constructor
   · rintro ⟨⟨id, slot⟩, member, found⟩
     cases slot with
-    | conflict => simp at found
+    | conflict => simp [Slot.finding?] at found
     | single value =>
-      simp at found
+      simp [Slot.finding?] at found
       subst value
       have ⟨present, hasId, agrees⟩ := (table_single findings id finding).mp
         (Std.HashMap.mem_toList_iff_getElem?_eq_some.mp member)
@@ -136,6 +138,26 @@ theorem coherent_exact (findings : List EvidenceFinding) (finding : EvidenceFind
     exact ⟨(finding.evidenceId, .single finding),
       Std.HashMap.mem_toList_iff_getElem?_eq_some.mpr
         ((table_single findings finding.evidenceId finding).mpr ⟨present, rfl, agrees⟩), rfl⟩
+
+theorem coherent_ids_nodup (findings : List EvidenceFinding) :
+    ((coherent findings).map EvidenceFinding.evidenceId).Nodup := by
+  have hasId (id : String) (slot : Slot) (finding : EvidenceFinding)
+      (member : (id, slot) ∈ (evidenceTable findings).toList)
+      (selected : slot.finding? = some finding) : finding.evidenceId = id := by
+    cases slot with
+    | conflict => simp [Slot.finding?] at selected
+    | single value =>
+      simp [Slot.finding?] at selected
+      subst value
+      exact ((table_single findings id finding).mp
+        (Std.HashMap.mem_toList_iff_getElem?_eq_some.mp member)).2.1
+  rw [List.Nodup, List.pairwise_map, coherent, List.pairwise_filterMap]
+  apply (evidenceTable findings).distinct_keys_toList.imp_of_mem
+  rintro ⟨leftId, leftSlot⟩ ⟨rightId, rightSlot⟩ leftMember rightMember different
+    left leftSelected right rightSelected equal
+  have idEqual := (hasId leftId leftSlot left leftMember leftSelected).symm.trans
+    (equal.trans (hasId rightId rightSlot right rightMember rightSelected))
+  simp [idEqual] at different
 
 def classifies (plant : Plant) (finding : EvidenceFinding) : Bool :=
   decide (finding.location = some plant.location ∧ finding.property = some plant.property ∧
@@ -158,6 +180,13 @@ def localized (key : Key) (findings : List EvidenceFinding) : List Location :=
   let locations := Std.HashSet.ofList (key.toList.map fun (_, plant) => plant.location)
   (Std.HashSet.ofList ((coherent findings).filterMap fun finding =>
     finding.location.filter (locations.contains ·))).toList
+
+theorem localized_nodup (key : Key) (findings : List EvidenceFinding) :
+    (localized key findings).Nodup := by
+  let locations := Std.HashSet.ofList (key.toList.map fun (_, plant) => plant.location)
+  let found := (coherent findings).filterMap fun finding =>
+    finding.location.filter (locations.contains ·)
+  simpa [localized, List.Nodup, locations, found] using (Std.HashSet.ofList found).distinct_toList
 
 theorem localized_exact (key : Key) (findings : List EvidenceFinding) (location : Location) :
     location ∈ localized key findings ↔
