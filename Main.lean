@@ -1,6 +1,7 @@
 import SpecTools
 import SpecTools.DraftHook
 import SpecTools.OwnerInterview
+import SpecTools.PairedScore
 
 /-- The commands, each with what it does. -/
 def commands : List (String × String) := [
@@ -796,6 +797,28 @@ def synthetic (args : List String) : IO UInt32 := do
         (alarms base) led.length
       IO.println s!"bar: {bar}"
     return 0
+  | "compare" :: directories =>
+    if directories.isEmpty then
+      IO.eprintln "usage: spec-tools synthetic compare DIR ..."
+      return 2
+    let mut comparisons := []
+    for outDir in directories do
+      let dir := System.FilePath.mk outDir
+      let verdict := SpecTools.PairedScore.compare (← IO.FS.readFile (dir / "key.jsonl"))
+        (← IO.FS.readFile (dir / "results-tools.jsonl"))
+        (← IO.FS.readFile (dir / "results-confirmed.jsonl"))
+      match verdict with
+      | .error message => IO.eprintln s!"{outDir}: {message}"; return 2
+      | .ok comparison =>
+        IO.println s!"{outDir}:"
+        for report in comparison.reports do IO.println report
+        comparisons := comparison :: comparisons
+    let met := SpecTools.PairedScore.acceptance comparisons
+    IO.println s!"{(comparisons.map (·.variants)).sum} paired variants, \
+      {(comparisons.map (·.controls)).sum} controls, {(comparisons.map (·.losses)).sum} lost hits, \
+      {(comparisons.map (·.controlAlarms)).sum} confirmed control alarms, \
+      acceptance {if met then "met" else "unmet"}"
+    return if met then 0 else 1
   | ["rescore", outDir] =>
     -- Each arm's saved findings in DIR's results*.jsonl scored again against DIR/key.jsonl by the
     -- current scorer, per arm in total; a run that failed has no findings and is left out.
