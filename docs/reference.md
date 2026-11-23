@@ -216,6 +216,13 @@ Put the domain definitions and evidence theorems in the same Lean environment an
 key's exact binding and the named observation. The report lists the accepted direction, theorem and
 observation. Unsupported or absent evidence leaves the distinction unknown.
 
+`SpecTools.Discrimination` compares two Lean contracts on a common observation type. `Observation`
+can carry an input, an outcome and a list of effects. `searchObservations` returns a typed `TooWeak`
+or `TooStrong` witness when it finds a discrepancy. With no witness, the theorem guarantees
+agreement on the supplied observations. A proof that the enumeration covers the type extends
+agreement to the whole type. Bounded reports state the domain and leave the answer outside it
+unknown.
+
 The optional independent review file contains `{"version": 1, "decisions": [...]}`. Each decision
 has an `evidenceId`, a `reviewer` supplied by the independent reviewer, and an `accepted` or
 `rejected` `judgment`. The command joins these decisions by evidence ID and reports one judgment
@@ -341,6 +348,7 @@ Build with `lake build` and run these from the repository root. For a Lean-only 
 | Age limit | `lake env lean examples/age-limit/Wrong.lean` and `lake env lean examples/age-limit/Fixed.lean` | The original rule approves a 16-year-old. The corrected rule refuses them and approves an 18-year-old. The audit checks the premise witnesses. |
 | Sorting | `lake env lean examples/sorting/Countermodels.lean` | The weak postcondition admits an empty output, and the length cap rejects a valid sorted permutation. The score journal checks both directions. |
 | Refund | `lake env lean examples/refund/Refund.lean` | The audit distinguishes an ordinary proved bound from a theorem with checked inconsistent premises. |
+| Refund effects | `lake env lean examples/refund/Countermodels.lean` | The return value stays within the limit, but the observed credits exceed the payment. |
 | Salon booking | `lake env lean examples/owners/salon-call/Interpretations.lean` | Two readings of the synthetic conversation decide the same booking differently. The owner chooses the rule. |
 
 ## Running

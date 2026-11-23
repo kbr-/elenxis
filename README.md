@@ -134,7 +134,9 @@ example=examples/sorting
 Run `lake env lean examples/sorting/Countermodels.lean` to check both distinctions without a model.
 The first proof shows that the ordered-only predicate admits the empty output for `[2, 1, 2]`. The
 second shows that the length cap rejects an eleven-element sorted permutation. The command verifies
-both named theorems against the expected direction in the example's score key.
+both named theorems against the expected direction in the example's score key. The same command
+searches a smaller domain of binary inputs and outputs of length at most one. The report states
+where the search found no distinction and labels the result outside that domain unknown.
 
 ### Worked example: a salon booking call
 

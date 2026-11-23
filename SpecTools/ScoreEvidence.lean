@@ -1,31 +1,12 @@
 import SpecTools.ScoreObservations
 import SpecTools.Adversarial
+import SpecTools.Discrimination
 
 /-! Kernel-checked directions and independent human decisions for a versioned score journal. -/
 
 namespace SpecTools.Score.Evidence
 open Lean Elab Command Meta
 open Observations
-
-inductive Direction where
-  | admitsExtra
-  | rejectsRequired
-  deriving DecidableEq, FromJson, ToJson
-
-def Distinguishes {Input : Type} (reference candidate : Input → Prop)
-    (direction : Direction) (input : Input) : Prop :=
-  match direction with
-  | .admitsExtra => candidate input ∧ ¬ reference input
-  | .rejectsRequired => reference input ∧ ¬ candidate input
-
-structure BoundDistinction {Input : Type} (property : String) (reference candidate : Input → Prop)
-    (direction : Direction) (input : Input) : Prop where
-  distinguishes : Distinguishes reference candidate direction input
-
-theorem directions_disjoint {Input : Type} {reference candidate : Input → Prop} {input : Input}
-    (extra : Distinguishes reference candidate .admitsExtra input)
-    (missing : Distinguishes reference candidate .rejectsRequired input) : False :=
-  extra.2 missing.1
 
 private structure FormalBinding where
   property : String
