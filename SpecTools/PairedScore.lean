@@ -3,8 +3,8 @@ import SpecTools.SyntheticRun
 namespace SpecTools.PairedScore
 open Lean Score Synthetic
 
-structure Result where
-  findings : List Finding := []
+private structure Journal where
+  results : List (Nat × List Finding) := []
   agent : Usage.Usage := {}
   tools : Usage.Usage := {}
 
@@ -22,26 +22,26 @@ private def readKey (source : String) : Except String (List (Nat × List Plant))
     throw "The key needs variant IDs in order starting at zero"
   return keys
 
-private def readArm (arm : String) (ids : List Nat) (source : String) :
-    Except String (List (Nat × Result)) := do
-  let mut results := []
+private def readArm (arm : String) (ids : List Nat) (source : String) : Except String Journal := do
+  let mut journal : Journal := {}
   for record in ← decoded source do
     let id ← record.getObjValAs? Nat "variant"
     let actual ← record.getObjValAs? String "arm"
     unless ids.contains id && actual == arm do throw s!"Unexpected result for v{id} {actual}"
-    if (record.getObjValAs? String "error").isOk then continue
-    let entries ← record.getObjValAs? (Array Json) "findings"
-    let some findings := entries.toList.mapM SyntheticRun.findingOfSaved |
-      throw s!"Invalid finding in v{id} {arm}"
     let some agent := (record.getObjVal? "usage").toOption.bind Usage.fromJson? |
       throw s!"Invalid agent usage in v{id} {arm}"
     let some tools := (record.getObjVal? "tools_usage").toOption.bind Usage.fromJson? |
       throw s!"Invalid tool usage in v{id} {arm}"
-    if (results.lookup id).isSome then throw s!"Duplicate success for v{id} {arm}"
-    results := (id, ⟨findings, agent, tools⟩) :: results
+    journal := { journal with agent := journal.agent + agent, tools := journal.tools + tools }
+    if (record.getObjValAs? String "error").isOk then continue
+    let entries ← record.getObjValAs? (Array Json) "findings"
+    let some findings := entries.toList.mapM SyntheticRun.findingOfSaved |
+      throw s!"Invalid finding in v{id} {arm}"
+    if (journal.results.lookup id).isSome then throw s!"Duplicate success for v{id} {arm}"
+    journal := { journal with results := (id, findings) :: journal.results }
   for id in ids do
-    if (results.lookup id).isNone then throw s!"Missing successful result for v{id} {arm}"
-  return results
+    if (journal.results.lookup id).isNone then throw s!"Missing successful result for v{id} {arm}"
+  return journal
 
 def lostPlants (plants : List Plant) (baseline candidate : List Finding) : List Nat :=
   plants.zipIdx.filterMap fun (plant, index) =>
@@ -59,12 +59,12 @@ theorem lostPlants_covered (plants : List Plant) (baseline candidate : List Find
     simp [hit, kept] at selected
   · simp [hit] at selected
 
-private def summarize (arm : String) (scores : List Score) (results : List (Nat × Result)) :
+private def summarize (arm : String) (scores : List Score) (journal : Journal) :
     List String :=
   [s!"{arm}: hits {(scores.map (·.found.length)).sum}, " ++
       s!"misses {(scores.map (·.missed.length)).sum}, alarms {(scores.map (·.falseAlarms)).sum}",
-    Usage.line (Usage.total (results.map (·.2.agent))) s!"{arm} agent",
-    Usage.line (Usage.total (results.map (·.2.tools))) s!"{arm} checks"]
+    Usage.line journal.agent s!"{arm} agent attempts",
+    Usage.line journal.tools s!"{arm} checks across attempts"]
 
 structure Comparison where
   variants : Nat
@@ -89,11 +89,11 @@ def compare (key tools confirmed : String) : Except String Comparison := do
   let mut baselineScores := []
   let mut candidateScores := []
   for (id, plants) in keys do
-    let a := (baseline.lookup id).getD {}
-    let b := (candidate.lookup id).getD {}
-    let sa := score plants a.findings
-    let sb := score plants b.findings
-    let lost := lostPlants plants a.findings b.findings
+    let a := (baseline.results.lookup id).getD []
+    let b := (candidate.results.lookup id).getD []
+    let sa := score plants a
+    let sb := score plants b
+    let lost := lostPlants plants a b
     let control := if plants.isEmpty then sb.falseAlarms else 0
     losses := losses + lost.length
     controlAlarms := controlAlarms + control
@@ -124,6 +124,17 @@ private def hitSecond : Finding := ⟨"second clause", "weak", some "r1"⟩
 #guard lostPlants plants [hitFirst] [hitSecond] == [0]
 #guard (readArm "tools" [0] "").isOk == false
 #guard !(readKey "{\"variant\":1,\"plants\":[]}\n{\"variant\":0,\"plants\":[]}").isOk
+
+private def attempt (failed : Bool) : String :=
+  let usage := Usage.asJson { calls := 1 }
+  let result := if failed then ("error", Json.str "exit 1") else ("findings", Json.arr #[])
+  (Json.mkObj [("variant", toJson (0 : Nat)), ("arm", toJson "tools"),
+    ("usage", usage), ("tools_usage", usage), result]).compress
+
+#guard ((readArm "tools" [0] (attempt true ++ "\n" ++ attempt false)).toOption.map
+  (fun journal => (journal.results.length, journal.agent.calls, journal.tools.calls))) ==
+  some (1, 2, 2)
+#guard !(readArm "tools" [0] (attempt true)).isOk
 
 end Controls
 

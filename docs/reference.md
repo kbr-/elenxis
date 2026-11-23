@@ -210,8 +210,8 @@ score a run's findings against the key: how many planted gaps are found, and the
 - `spec-tools synthetic compare DIR ...` compares the saved `tools` and `confirmed` journals on each
   directory's key. Use the same frozen fixtures for both runs and keep key variant IDs in order
   starting at zero. A missing successful result, a lost baseline hit, or a confirmed finding on an
-  intact control fails the comparison. The report includes agent usage and all recorded check usage,
-  including checks the agent invoked.
+  intact control fails the comparison. Scoring uses successful attempts. The usage report includes
+  every attempt, including failed attempts and any checks the agent invoked.
 - `spec-tools synthetic gapsrun SEED N DIR MODEL` runs `gaps` alone on each variant, scored by the
   row it names.
 - A finding names the ledger row of the rule it concerns, and a plant is found by a finding naming
