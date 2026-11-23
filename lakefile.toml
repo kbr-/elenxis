@@ -13,3 +13,4 @@ root = "Main"
 [[lean_exe]]
 name = "spec_tools_tests"
 root = "Tests"
+needs = ["spec-tools"]

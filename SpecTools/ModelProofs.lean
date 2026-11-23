@@ -8,6 +8,37 @@ one step of `ask` that joins them to a runner.
 namespace SpecTools.Model
 open Lean
 
+theorem routeAllowed_iff (allowed : List Backend) (backend : Backend) :
+    routeAllowed allowed backend = true ↔
+      ∃ candidate ∈ allowed, candidate.harness = backend.harness ∧
+        candidate.model = backend.model := by
+  simp [routeAllowed]
+
+theorem nextEffect_refuses_iff (permitted : Bool) (prior : AttemptStatus) :
+    nextEffect permitted prior = .refuse ↔ permitted = false := by
+  cases permitted <;> cases prior <;> decide
+
+theorem nextEffect_schedules_iff (permitted : Bool) (prior : AttemptStatus) :
+    (nextEffect permitted prior).schedules = true ↔
+      permitted = true ∧ prior ≠ .succeeded := by
+  cases permitted <;> cases prior <;> decide
+
+theorem nextEffect_retries_iff (permitted : Bool) (prior : AttemptStatus) :
+    nextEffect permitted prior = .retry ↔ permitted = true ∧ prior = .failed := by
+  cases permitted <;> cases prior <;> decide
+
+theorem observe_success_reuses (prior : AttemptStatus) :
+    nextEffect true (prior.observe true) = .reuse := by
+  cases prior <;> rfl
+
+theorem observe_preserves_success (success : Bool) :
+    AttemptStatus.succeeded.observe success = .succeeded := by
+  cases success <;> rfl
+
+theorem observe_failure_retries {prior : AttemptStatus} (h : prior ≠ .succeeded) :
+    nextEffect true (prior.observe false) = .retry := by
+  cases prior <;> first | rfl | exact False.elim (h rfl)
+
 /-- A backend the project doesn't allow is refused. -/
 theorem plan_refuses_disallowed {allowed : List Backend} {backend : Backend} (q : Question)
     (s : System.FilePath) (h : routeAllowed allowed backend = false) :

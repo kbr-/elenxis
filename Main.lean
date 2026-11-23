@@ -740,39 +740,33 @@ def synthetic (args : List String) : IO UInt32 := do
     let width := if onHost then 3 else if prepares then 5 else 10
     -- Each result is appended to the results file as its run ends, so a run stopped part way keeps
     -- what finished; a later run on the same directory skips each variant and arm the file holds a
-    -- result for (a failed run is tried again) and counts the saved results in its totals.
+    -- successful result for and counts the saved results in its totals.
     let resultsPath := System.FilePath.mk outDir / resultsFile
-    let saved : List Lean.Json ← do
-      if ← resultsPath.pathExists then
-        let text ← IO.FS.readFile resultsPath
-        pure ((text.splitOn "\n").filter (· ≠ "") |>.filterMap fun l => (Lean.Json.parse l).toOption)
-      else pure []
-    let savedResult (j : Lean.Json) : Option (Nat × SpecTools.SyntheticRun.Arm × Nat × Nat × Nat × Nat) := do
-      let i ← (j.getObjValAs? Nat "variant").toOption
-      let name ← (j.getObjValAs? String "arm").toOption
-      let a ← arms.find? (·.name == name)
-      let found ← (j.getObjValAs? Nat "found").toOption
-      let missed ← (j.getObjValAs? Nat "missed").toOption
-      let alarms ← (j.getObjValAs? Nat "false_alarms").toOption
-      let kinds := ((j.getObjValAs? (List String) "found_kinds").toOption).getD []
-      return (i, a, found, missed, alarms, (kinds.filter (· == "shared blind spot")).length)
-    let previous := saved.filterMap savedResult
+    let saved ← if ← resultsPath.pathExists then IO.FS.readFile resultsPath else pure ""
+    let history ← IO.ofExcept ((SpecTools.SyntheticRun.runHistory keys.length arms saved).mapError
+      fun e => s!"{resultsPath}: {e}")
     -- A variant whose person-prose writing failed (`prose`'s LEFT_OUT) is not run.
     let leftOut ← keys.zipIdx.filterMapM fun (_, i) => do
       if ← (System.FilePath.mk outDir / s!"v{i}" / "LEFT_OUT").pathExists then pure (some i)
       else pure none
     unless leftOut.isEmpty do IO.println s!"variants left out by prose: {leftOut}"
-    let jobs : List (List Plant × Nat × SpecTools.SyntheticRun.Arm) :=
-      keys.zipIdx.flatMap fun (k, i) => if leftOut.contains i then [] else arms.filterMap fun a =>
-        if previous.any (fun (j, b, _) => j == i && b == a) then none else some (k, i, a)
-    if !previous.isEmpty then
-      IO.println s!"{previous.length} results already in {resultsPath}; {jobs.length} runs left"
+    let jobs : List (List Plant × Nat × SpecTools.SyntheticRun.Arm) ← keys.zipIdx.flatMapM
+      fun (k, i) => arms.filterMapM fun a => do
+        let effect := SpecTools.Model.nextEffect (!leftOut.contains i)
+          (history.attempts.getD (i, a.name) .unattempted)
+        if effect == .retry then IO.println s!"v{i} {a.name}: retrying a recorded failure"
+        return if effect.schedules then some (k, i, a) else none
+    if !history.scores.isEmpty then
+      IO.println s!"{history.scores.length} results already in {resultsPath}; {jobs.length} runs left"
     let out ← IO.FS.Handle.mk resultsPath .append
+    if !jobs.isEmpty && !saved.isEmpty && !saved.endsWith "\n" then
+      out.putStrLn ""
+      out.flush
     let stdout ← IO.getStdout
     let mut totals : List (SpecTools.SyntheticRun.Arm × Nat × Nat × Nat) :=
-      previous.map fun (_, a, f, m, fa, _) => (a, f, m, fa)
+      history.scores.map fun score => (score.arm, score.found, score.missed, score.falseAlarms)
     let mut blind : List (SpecTools.SyntheticRun.Arm × Nat) :=
-      previous.map fun (_, a, _, _, _, b) => (a, b)
+      history.scores.map fun score => (score.arm, score.blindSpots)
     -- `width` runs at a time, the next starting as soon as one ends, so a slow run holds only its
     -- own slot. Each run is stopped after 600 s: the slowest measured on Opus took 140 s (a ledger
     -- run on a 30-rule variant), and an agent stuck on a wait of its own makes no progress.
@@ -786,6 +780,7 @@ def synthetic (args : List String) : IO UInt32 := do
     -- Each run's agent and tools usage, and its score by presentation, this invocation's runs only.
     let mut used : List (SpecTools.SyntheticRun.Arm × SpecTools.Usage.Usage × SpecTools.Usage.Usage) := []
     let mut byPres : List (SpecTools.SyntheticRun.Arm × List (String × Nat × Nat × Nat)) := []
+    let mut failed := false
     while !pending.isEmpty || !running.isEmpty do
       while running.size < width do
         match pending with
@@ -807,6 +802,7 @@ def synthetic (args : List String) : IO UInt32 := do
         used := (a, agentUsage, toolsUsage) :: used
         match r with
         | .error e =>
+          failed := true
           IO.println s!"v{i} {arm}: failed: {e}"
           out.putStrLn s!"\{\"variant\": {i}, \"arm\": \"{arm}\", \"error\": {e.quote}, {usageAndChecks}}"
           out.flush
@@ -846,7 +842,7 @@ def synthetic (args : List String) : IO UInt32 := do
       let bar := SpecTools.Score.barText (blindOf .ledger) (blindOf .baseline) (alarms led)
         (alarms base) led.length
       IO.println s!"bar: {bar}"
-    return 0
+    return if failed then 1 else 0
   | "compare" :: directories =>
     if directories.isEmpty then
       IO.eprintln "usage: spec-tools synthetic compare DIR ..."

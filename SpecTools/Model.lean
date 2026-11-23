@@ -213,6 +213,35 @@ def routeAllowed (allowed : List Backend) (backend : Backend) : Bool :=
   allowed.any fun candidate =>
     decide (candidate.harness = backend.harness ∧ candidate.model = backend.model)
 
+inductive AttemptStatus where
+  | unattempted
+  | failed
+  | succeeded
+  deriving DecidableEq, BEq, Inhabited
+
+inductive EffectDecision where
+  | refuse
+  | start
+  | retry
+  | reuse
+  deriving DecidableEq, BEq
+
+/-- Decide before scheduling a process. A recorded success can be reused in the same operation. -/
+def nextEffect (permitted : Bool) (prior : AttemptStatus) : EffectDecision :=
+  if !permitted then .refuse
+  else match prior with
+    | .unattempted => .start
+    | .failed => .retry
+    | .succeeded => .reuse
+
+def EffectDecision.schedules : EffectDecision → Bool
+  | .start | .retry => true
+  | .refuse | .reuse => false
+
+/-- A published success stays authoritative when older failures are replayed. -/
+def AttemptStatus.observe (prior : AttemptStatus) (success : Bool) : AttemptStatus :=
+  if success || prior == .succeeded then .succeeded else .failed
+
 /-- What to run for `question`, or why nothing may run: a backend the project doesn't allow, a schema
 outside the subset, a prompt over `maxPromptBytes`. -/
 def plan (allowed : List Backend) (backend : Backend) (question : Question)

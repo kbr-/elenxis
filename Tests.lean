@@ -123,6 +123,61 @@ def auditCase (dir : System.FilePath) (name body : String) : IO (UInt32 × Strin
 def has (text needle : String) : Bool := (text.splitOn needle).length > 1
 
 open Lean in
+/-- Exercise the fixture refusal and resume through the compiled CLI and real child processes. -/
+def testEffectProtocol : IO Unit := IO.FS.withTempDir fun dir => do
+  let bin := (← IO.currentDir) / ".lake/build/bin/spec-tools"
+  let config := dir / "backend.json"
+  let calls := dir / "calls"
+  let fail := dir / "fail"
+  let receipt := dir / "receipt.json"
+  let batch := dir / "batch"
+  let script := "printf 'attempt\\n' >> \"$1\"; if test -e \"$2\"; then exit 42; fi; " ++
+    "printf '%s\\n' '{\"findings\":[]}'"
+  IO.FS.writeFile config (Json.mkObj [
+    ("adapter", toJson "command"), ("command", toJson "sh"), ("model", toJson "local/effects"),
+    ("dataGoesTo", toJson "local"), ("args", toJson [
+      "-c", script, "effect-adapter", calls.toString, fail.toString])]).compress
+  let run (args : Array String) (cwd : Option System.FilePath := none) :=
+    IO.Process.output {
+      cmd := bin.toString, args, cwd,
+      env := #[("SPEC_TOOLS_BACKEND", some config.toString), ("SPEC_TOOLS_HOST", none)] }
+  let generated ← run #["synthetic", "gvariants", "11", "1", "1", "1", batch.toString]
+  ensure (generated.exitCode == 0) (generated.stdout ++ generated.stderr)
+  let denied ← run #["fixture-check", "gaps", receipt.toString] (some (batch / "v0"))
+  ensure (denied.exitCode == 2 && !(← receipt.pathExists) &&
+    !(← (batch / "v0" / "check-events.jsonl").pathExists) && !(← calls.pathExists))
+    "disallowed fixture check left effects"
+  let execute := run #["synthetic", "run", batch.toString, "default", "default", "baseline"]
+  let journal := batch / "results-baseline.jsonl"
+  IO.FS.writeFile fail ""
+  let failed ← execute
+  let failedJournal ← IO.FS.readFile journal
+  ensure (failed.exitCode == 1 && has failed.stdout "failed" && has failedJournal "\"error\"" &&
+    (← IO.FS.readFile calls) == "attempt\n") (failed.stdout ++ failed.stderr ++ failedJournal)
+  IO.FS.removeFile fail
+  let repeated ← execute
+  let repeatedJournal ← IO.FS.readFile journal
+  ensure (repeated.exitCode == 0 && has repeated.stdout "retrying a recorded failure" &&
+    repeatedJournal.startsWith failedJournal && has repeatedJournal "\"findings\": []" &&
+    (← IO.FS.readFile calls) == "attempt\nattempt\n") (repeated.stdout ++ repeated.stderr ++ repeatedJournal)
+  let reused ← execute
+  ensure (reused.exitCode == 0 && has reused.stdout "0 runs left" &&
+    (← IO.FS.readFile journal) == repeatedJournal && (← IO.FS.readFile calls) == "attempt\nattempt\n")
+    (reused.stdout ++ reused.stderr)
+  IO.FS.writeFile journal (repeatedJournal ++ "{\n")
+  let corrupt ← execute
+  ensure (corrupt.exitCode != 0 && has corrupt.stderr "Invalid saved result" &&
+    (← IO.FS.readFile calls) == "attempt\nattempt\n") (corrupt.stdout ++ corrupt.stderr)
+  let success := (repeatedJournal.splitOn "\n").filter (!·.trimAscii.isEmpty) |>.getLast!
+  IO.FS.writeFile journal (repeatedJournal ++ success ++ "\n")
+  let duplicate ← execute
+  let actualCalls := (← IO.FS.readFile calls).splitOn "\n" |>.filter (!·.isEmpty)
+  ensure (duplicate.exitCode != 0 && has duplicate.stderr "Duplicate success" &&
+    actualCalls == ["attempt", "attempt"]) (duplicate.stdout ++ duplicate.stderr)
+  IO.println s!"effect exits: denied {denied.exitCode}, failed {failed.exitCode}, retry {repeated.exitCode}, reuse {reused.exitCode}, corrupt {corrupt.exitCode}, duplicate {duplicate.exitCode}; adapter starts {actualCalls.length}"
+  IO.println "PASS: effect protocol CLI (refusal, recorded failure, retry, reuse, corrupt journal)"
+
+open Lean in
 /-- A saved retry contributes both usage receipts and needs exactly one success per keyed arm. -/
 def testPairedJournals : IO Unit := IO.FS.withTempDir fun dir => do
   let key := dir / "key.jsonl"
@@ -747,7 +802,7 @@ def main : IO Unit := do
   -- the one global, set after all of them end.
   let groups ← [("command adapter", testCommandAdapter), ("usage", testUsage), ("prose", testProse),
       ("owners", testOwners), ("tool preparation", testPrepareReports),
-      ("paired journals", testPairedJournals),
+      ("paired journals", testPairedJournals), ("effect protocol", testEffectProtocol),
       ("requirement audits", testRequirementAudits), ("finished process", testFinishedProcess),
       ("overrun", testOverrun), ("full codex prompt", testFullCodexPrompt),
       ("draft review", testDraftReview), ("approved contracts", testApprovedContracts),

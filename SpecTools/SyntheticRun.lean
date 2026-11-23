@@ -345,7 +345,8 @@ def checkExecutable (root : String) : String := root ++ "/.lake/build/bin/spec-t
 the CLI and retain its actual status and both output streams. -/
 def runLockedCheck (profile : OwnerCheck.Profile) (sub : String) (receipt : System.FilePath) :
     IO UInt32 := do
-  unless OwnerCheck.admitted profile sub none do return 2
+  let effect := nextEffect (OwnerCheck.admitted profile sub none) .unattempted
+  unless effect.schedules do return 2
   let work ← IO.currentDir
   let executable ← match profile with
     | .project => pure (← IO.appPath).toString
@@ -371,6 +372,11 @@ def runLockedCheck (profile : OwnerCheck.Profile) (sub : String) (receipt : Syst
         s!"{sub}: exit {response.exitCode}\n{response.stdout}{response.stderr}")
   IO.FS.writeFile receipt (Json.mkObj [("ok", toJson ok), ("report", toJson report)]).compress
   return 0
+
+theorem runLockedCheck_refused (profile : OwnerCheck.Profile) (sub : String)
+    (receipt : System.FilePath) (denied : OwnerCheck.admitted profile sub none = false) :
+    runLockedCheck profile sub receipt = pure 2 := by
+  simp [runLockedCheck, denied, nextEffect, EffectDecision.schedules]
 
 /-- Serve fixture checks on the machine holding the original variant and the Lean build. -/
 def serveChecks (profile : OwnerCheck.Profile) (launcher executable : String) : IO UInt32 := do
@@ -451,6 +457,47 @@ def prepareReports (executable : String) (work : System.FilePath)
     let report := if check == "audit" || check == "contracts" then auditDigest output.stdout else output.stdout
     return s!"## {check}\n{report}"
   return String.intercalate "\n\n" (← checks.mapM run)
+
+structure RunScore where
+  arm : Arm
+  found : Nat
+  missed : Nat
+  falseAlarms : Nat
+  blindSpots : Nat
+
+structure RunHistory where
+  attempts : Std.HashMap (Nat × String) AttemptStatus := {}
+  scores : List RunScore := []
+
+/-- Replay the row journal before scheduling, keeping exactly one score per variant and arm. -/
+def runHistory (variants : Nat) (arms : List Arm) (text : String) : Except String RunHistory := do
+  let mut history : RunHistory := {}
+  for line in (text.splitOn "\n").filter (!·.trimAscii.isEmpty) do
+    let row ← (Json.parse line).mapError fun e => s!"Invalid saved result: {e}"
+    let i ← row.getObjValAs? Nat "variant"
+    let name ← row.getObjValAs? String "arm"
+    let some arm := arms.find? (·.name == name)
+      | throw s!"Result {i}/{name} belongs to another arm"
+    unless i < variants do throw s!"Result {i}/{name} falls outside this batch"
+    let key := (i, name)
+    let prior := history.attempts.getD key .unattempted
+    if (row.getObjVal? "error").isOk then
+      let _ ← row.getObjValAs? String "error"
+      if (row.getObjVal? "found").isOk then
+        throw s!"Result {i}/{name} contains both a failure and a score"
+      history := { history with attempts := history.attempts.insert key (prior.observe false) }
+    else
+      if prior == .succeeded then throw s!"Duplicate success for {i}/{name}"
+      let found ← row.getObjValAs? Nat "found"
+      let missed ← row.getObjValAs? Nat "missed"
+      let alarms ← row.getObjValAs? Nat "false_alarms"
+      let kinds := ((row.getObjValAs? (List String) "found_kinds").toOption).getD []
+      let score : RunScore := ⟨arm, found, missed, alarms,
+        (kinds.filter (· == "shared blind spot")).length⟩
+      history := {
+        attempts := history.attempts.insert key (prior.observe true)
+        scores := score :: history.scores }
+  return history
 
 private def prepareProjectModelReports (root : String) (work : System.FilePath) (arm : Arm)
     (backend : Backend) : ExceptT String IO String := do

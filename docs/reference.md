@@ -280,7 +280,12 @@ checks and accepts no tool arguments.
   `baseline`. For exact generated prose and supported Lean conditions, the mechanical gaps check can
   witness differing scopes or confirm the same condition. Its witness search materializes the
   product of the bounded value sets for the fields involved. A numeric field contributes the larger
-  cutoff plus one values, and a flag-only field contributes two.
+  cutoff plus one values, and a flag-only field contributes two. Resume a batch with the same
+  command after it stops. The journal reuses each saved success by variant and arm, preserves
+  earlier failures, and attempts failed variants again. A failed attempt makes the command exit
+  nonzero. A corrupt or duplicate record stops scheduling. Run one writer per journal and use a
+  fresh directory when changing the fixtures or model settings. An interruption after a process
+  starts may require another call if its success never reached the journal.
 - `spec-tools synthetic compare DIR ...` compares the saved `tools` and `confirmed` journals on each
   directory's key. Use the same frozen fixtures for both runs and keep key variant IDs in order
   starting at zero. A missing successful result, a lost baseline hit, or a confirmed finding on an
