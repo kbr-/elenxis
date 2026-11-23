@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "findings": [
+    {
+      "evidenceId": "empty-output",
+      "location": {"rule": 1, "part": "main"},
+      "property": "permutation",
+      "kind": "too weak",
+      "explanation": "The empty output is ordered and drops all three input elements.",
+      "formal": {
+        "observation": "SortingExample.droppedInput",
+        "theoremName": "SortingExample.missingPermutation"
+      }
+    },
+    {
+      "evidenceId": "eleven-elements",
+      "location": {"rule": 1, "part": "main"},
+      "property": "length-cap",
+      "kind": "extra",
+      "explanation": "The eleven-element sorted permutation is rejected by the extra length limit.",
+      "formal": {
+        "observation": "SortingExample.longSorted",
+        "theoremName": "SortingExample.unnecessaryCap"
+      }
+    }
+  ]
+}

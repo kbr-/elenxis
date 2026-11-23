@@ -6,6 +6,10 @@ child's haircut, then reads a note that gives the limit as four. She also says t
 “a few” unpaid visits should call the salon, leaving the exact threshold open. Both cases call for a
 decision from the owner before the booking rules are finalized.
 
+Run `lake env lean examples/owners/salon-call/Interpretations.lean` from the repository root to
+check the distinction at two no-shows. This example formalizes both readings of the children's
+haircut rule. The owner still has to choose the limit.
+
 The benchmark generates variants of a Lean specification, a Python implementation and property tests
 for this dialogue. Some variants deliberately share a blind spot across all three artifacts. For
 example, variant 3 marks the staff exception to the no-show rule for evening bookings as a planted

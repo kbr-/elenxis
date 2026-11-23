@@ -309,6 +309,18 @@ number given without saying whether that number itself is refused.
 
 The hand-written loans fixture is in `fixtures/loans`.
 
+## Lean demonstrations
+
+Build with `lake build` and run these from the repository root. For a Lean-only run, leave
+`SPEC_TOOLS_BACKEND` unset.
+
+| Example | Command | Checked evidence |
+| --- | --- | --- |
+| Age limit | `lake env lean examples/age-limit/Wrong.lean` and `lake env lean examples/age-limit/Fixed.lean` | The original rule approves a 16-year-old. The corrected rule refuses them and approves an 18-year-old. The audit checks the premise witnesses. |
+| Sorting | `lake env lean examples/sorting/Countermodels.lean` | The weak postcondition admits an empty output, and the length cap rejects a valid sorted permutation. The score journal checks both directions. |
+| Refund | `lake env lean examples/refund/Refund.lean` | The audit distinguishes an ordinary proved bound from a theorem with checked inconsistent premises. |
+| Salon booking | `lake env lean examples/owners/salon-call/Interpretations.lean` | Two readings of the synthetic conversation decide the same booking differently. The owner chooses the rule. |
+
 ## Running
 
 ```bash

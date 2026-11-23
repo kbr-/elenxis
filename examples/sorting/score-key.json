@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "plants": [
+    {
+      "id": 1,
+      "location": {"rule": 1, "part": "main"},
+      "property": "permutation",
+      "kind": "too weak"
+    },
+    {
+      "id": 2,
+      "location": {"rule": 1, "part": "main"},
+      "property": "length-cap",
+      "kind": "extra"
+    }
+  ],
+  "formalBindings": [
+    {
+      "property": "permutation",
+      "reference": "SortingExample.sortedPermutation",
+      "candidate": "SortingExample.orderedOnly",
+      "direction": "admitsExtra"
+    },
+    {
+      "property": "length-cap",
+      "reference": "SortingExample.sortedPermutation",
+      "candidate": "SortingExample.capped",
+      "direction": "rejectsRequired"
+    }
+  ]
+}

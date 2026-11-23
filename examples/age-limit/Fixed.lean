@@ -33,6 +33,9 @@ def ledger : List SpecTools.Ledger.Row := [
 
 end AgeLimit
 
+example : AgeLimit.decide 16 = .refused := AgeLimit.refuses_minors 16 (by decide)
+example : AgeLimit.decide 18 = .approved := by decide
+
 #eval SpecTools.Audit.run AgeLimit.ledger `AgeLimit
 
 -- With `SPEC_TOOLS_BACKEND` naming a backend configuration, the gaps against `loans.md` too.

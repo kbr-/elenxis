@@ -67,6 +67,9 @@ too weak: minors: The statement only covers ages below 16 (age < 16). The clause
 the formalization wrong, so `Fixed.lean` sets the limit to 18 in the decision and in its theorem.
 The same command on it prints `0 gaps, 0 proposals refused`.
 
+The Lean-only runs also check the decision at age 16 in both versions and approval at age 18 in the
+corrected version. [Commands for the Lean demonstrations](docs/reference.md#lean-demonstrations)
+
 The outputs above are those of one run each, on Opus (`claude-opus-5-5`) at medium reasoning effort
 through Claude Code ([`examples/backend.json`](examples/backend.json)). A model's wording varies
 from run to run, and so can its findings; the audit's lines don't.
@@ -129,6 +132,11 @@ example=examples/sorting
 "$cli" draft-review codex gpt-6.2-sol "$example/prompt.txt" "$example/inventory.json" "$example/too-strong.json"
 ```
 
+Run `lake env lean examples/sorting/Countermodels.lean` to check both distinctions without a model.
+The first proof shows that the ordered-only predicate admits the empty output for `[2, 1, 2]`. The
+second shows that the length cap rejects an eleven-element sorted permutation. The command verifies
+both named theorems against the expected direction in the example's score key.
+
 ### Worked example: a salon booking call
 
 In a fictional first call about online bookings, the salon owner gives two different no-show limits
@@ -136,6 +144,10 @@ for children's haircuts and leaves the unpaid-visit threshold open. The benchmar
 kinds of ambiguity alongside rules deliberately missed by the Lean specification, Python
 implementation and tests. The example includes the dialogue, scoring key, measured results and
 commands to reproduce them. [Salon's first booking call](examples/owners/salon-call/README.md)
+
+The Lean example checks one concrete consequence of the two no-show limits. At two no-shows, one
+reading refuses online booking and the other allows it. [Checked
+interpretations](examples/owners/salon-call/Interpretations.lean)
 
 ## What Lean checks, and what the model checks
 
