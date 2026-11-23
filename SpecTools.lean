@@ -16,6 +16,7 @@ import SpecTools.ClausesProofs
 import SpecTools.Gaps
 import SpecTools.GapsProofs
 import SpecTools.GapsRun
+import SpecTools.DraftHook
 import SpecTools.Tests
 import SpecTools.TestsProofs
 import SpecTools.Replay

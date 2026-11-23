@@ -8,21 +8,78 @@ structure Submission where
   text : String
   deriving BEq, Repr
 
+inductive PatchLine where
+  | add (path : String)
+  | boundary
+  | payload (text : String)
+  | other
+
+def classifyLine (line : String) : PatchLine :=
+  if line.startsWith "*** Add File: " then .add (line.drop 14).toString
+  else if line.startsWith "*** " then .boundary
+  else if line.startsWith "+" then .payload (line.drop 1).toString
+  else .other
+
+def PatchLine.addPath : PatchLine → Option String
+  | .add path => some path
+  | _ => none
+
+/-- Close the current addition at the next section header or at the end of input. -/
+def collectAdditions (current : Option Submission) : List PatchLine → List Submission
+  | [] => current.toList
+  | .add path :: rest => current.toList ++ collectAdditions (some ⟨path, ""⟩) rest
+  | .boundary :: rest => current.toList ++ collectAdditions none rest
+  | .payload text :: rest => collectAdditions
+      (current.map fun item => { item with text := item.text ++ text ++ "\n" }) rest
+  | .other :: rest => collectAdditions current rest
+
 /-- Extract complete Add File bodies; update hunks belong to later repair rounds. -/
-def additions (patch : String) : List Submission := Id.run do
-  let mut result := []
-  let mut current : Option Submission := none
-  for line in patch.splitOn "\n" do
-    if line.startsWith "*** Add File: " then
-      if let some previous := current then result := result ++ [previous]
-      current := some ⟨(line.drop 14).toString, ""⟩
-    else if line.startsWith "*** " then
-      if let some previous := current then result := result ++ [previous]
-      current := none
-    else if line.startsWith "+" then
-      current := current.map fun item => { item with text := item.text ++ (line.drop 1).toString ++ "\n" }
-  if let some previous := current then result := result ++ [previous]
-  return result
+def additions (patch : String) : List Submission :=
+  collectAdditions none ((patch.splitOn "\n").map classifyLine)
+
+private theorem collect_payload (item : Submission) (body : List String) (rest : List PatchLine) :
+    collectAdditions (some item) (body.map PatchLine.payload ++ rest) =
+      collectAdditions (some { item with
+        text := body.foldl (fun text line => text ++ line ++ "\n") item.text }) rest := by
+  induction body generalizing item with
+  | nil => rfl
+  | cons line body ih =>
+    simpa [collectAdditions, List.foldl_cons] using
+      ih { item with text := item.text ++ line ++ "\n" }
+
+theorem collect_add_section (path : String) (body : List String) (rest : List PatchLine) :
+    collectAdditions none (.add path :: (body.map PatchLine.payload ++ .boundary :: rest)) =
+      ⟨path, body.foldl (fun text line => text ++ line ++ "\n") ""⟩ ::
+        collectAdditions none rest := by
+  simp only [collectAdditions, Option.toList_none, List.nil_append]
+  rw [collect_payload]
+  rfl
+
+private theorem collect_paths (current : Option Submission) (lines : List PatchLine) :
+    (collectAdditions current lines).map Submission.path =
+      current.toList.map Submission.path ++ lines.filterMap PatchLine.addPath := by
+  induction lines generalizing current with
+  | nil => simp [collectAdditions]
+  | cons line rest ih =>
+    cases current <;> cases line <;>
+      simp [collectAdditions, List.filterMap_cons, PatchLine.addPath, ih]
+
+theorem additions_paths (patch : String) :
+    (additions patch).map Submission.path =
+      ((patch.splitOn "\n").map classifyLine).filterMap PatchLine.addPath := by
+  simpa [additions] using collect_paths none ((patch.splitOn "\n").map classifyLine)
+
+theorem additions_without_add_headers (patch : String)
+    (headers : ∀ line ∈ patch.splitOn "\n", line.startsWith "*** Add File: " = false) :
+    additions patch = [] := by
+  apply (List.map_eq_nil_iff (f := Submission.path)).mp
+  rw [additions_paths, List.filterMap_map, List.filterMap_eq_nil_iff]
+  intro line member
+  simp only [Function.comp_apply, classifyLine, headers line member, Bool.false_eq_true,
+    ite_false]
+  split
+  · rfl
+  · split <;> rfl
 
 def field (j : Json) (key : String) : String :=
   (j.getObjValAs? String key).toOption.getD ""

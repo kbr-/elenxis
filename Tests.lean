@@ -1,12 +1,4 @@
 import SpecTools
-import SpecTools.DraftHook
-
-open SpecTools.DraftHook in
-#guard additions "*** Begin Patch\n*** Add File: tasks/t/spec/Coverage.draft.json\n+[]\n*** End Patch" ==
-  [⟨"tasks/t/spec/Coverage.draft.json", "[]\n"⟩]
-
-open SpecTools.DraftHook in
-#guard additions "*** Begin Patch\n*** Update File: tasks/t/spec/Coverage.draft.json\n+[]\n*** End Patch" == []
 
 /-!
 Tests of what meets the world: the live runner starting real processes. The pure core's properties
