@@ -236,46 +236,42 @@ refusal bound. From the generated directory, use `spec-tools check proofs`, `che
 `check counterexamples` to build the corresponding module. Fixture MCP advertises the same three
 checks and accepts no tool arguments.
 
-### Optional cross-language target
+### Batches and planted variants
 
-Append `--target python` to `synthetic generate` to export the original cross-language fixture,
-including `Loans.lean`, `loans.py` and its property tests. This target uses the legacy layout. The
-historical planted experiments below use that layout. In a configured historical variant,
-`spec-tools check --target python integration` runs its adapter. Starting fixture MCP with
-`--target python` selects the legacy tools, including `integration`.
-
+- `spec-tools synthetic gplants SEED N DIR` writes one Lean project for each applicable plant shape
+  and a project with an omitted theorem. `spec-tools synthetic control DIR ...` compiles and audits
+  the supplied projects.
 - `spec-tools synthetic gvariants SEED N COUNT EMPTY DIR [blind [hard]]` writes a batch of COUNT
   variants of N rules, the first EMPTY with no plant; `blind` gives each three *shared blind spots*:
-  a prose clause the Lean, the Python and its tests all leave out (an exception dropped from all
-  three; an exception written for one rule's twin and not the rule; a sum checked on its first
-  measure alone), so the artifacts agree with each other and only the prose shows the gap. The key
-  names each plant's ledger row and each rule's *presentation*, the way a person's prose states it:
-  plain, spread (the limit and its exception in different sections), defined term (a group or
-  quantity defined elsewhere), example only (a worked case), two wordings, or folded (two rules in
-  one sentence), drawn from all six, or from spread, defined term and example only with `hard`.
-- `spec-tools synthetic prose DIR [MODEL]` rewrites each variant's `loans.md` as a library's manager
-  would write it to staff, each rule in its presentation, with the configured backend; the template
-  stays as `loans.template.md`. A document is kept only when two extractions of its rules, each
-  blind to the other and to the rule list, give the rule list back exactly; otherwise it is written
-  again, up to three times, and a variant failing all three gets `LEFT_OUT`, which `run` skips. Each
-  variant's prompt, discards and usage go to its `prose.json`.
+  a prose clause the Lean artifacts leave out (a dropped exception, an exception written for a twin
+  rule, or a sum that uses only its first measure). The key names each plant's ledger row and each
+  rule's *presentation*, the way a person's prose states it: plain, spread (the limit and its
+  exception in different sections), defined term (a group or quantity defined elsewhere), example
+  only (a worked case), two wordings, or folded (two rules in one sentence), drawn from all six, or
+  from spread, defined term and example only with `hard`.
+- `spec-tools synthetic prose DIR [MODEL]` rewrites each variant's requirements as a library's
+  manager would write them to staff, with the configured backend. The original Lean fixture prose
+  stays as `requirements.template.md`. A document is kept only when two extractions of its rules,
+  each blind to the other and to the rule list, give the rule list back exactly; otherwise it is
+  written again, up to three times, and a variant failing all three gets `LEFT_OUT`, which `run`
+  skips. Each variant's prompt, discards and usage go to its `prose.json`.
 - `spec-tools synthetic run DIR AGENT-MODEL TOOL-MODEL [ARM]` gives each variant to an agent: the
-  `baseline` arm with the files alone, the `ledger` arm offered the tools, the `workflow` arm with
-  the ledger arm's prompt alone, and the `tools` arm with the audit, tests and gaps reports supplied
-  before it starts. The `confirmed` arm supplies audit, tests, gaps and clauses before the agent
-  starts, with three independent readings for gaps. A failed preparatory check prevents that
-  variant's agent invocation. The default run includes `ledger` and `baseline`. For exact generated
-  prose and supported Lean conditions, the mechanical gaps check can witness differing scopes or
-  confirm the same condition. Its witness search materializes the product of the bounded value sets
-  for the fields involved. A numeric field contributes the larger cutoff plus one values, and a
-  flag-only field contributes two.
+  `baseline` arm with the files alone, the `ledger` arm offered the tools, the `workflow` arm with a
+  clause-by-clause prompt, and the `tools` arm with the audit, counterexamples and gaps reports
+  supplied before it starts. The `confirmed` arm adds clauses and reads gaps three times. A failed
+  preparatory check prevents that variant's agent invocation. The default run includes `ledger` and
+  `baseline`. For exact generated prose and supported Lean conditions, the mechanical gaps check can
+  witness differing scopes or confirm the same condition. Its witness search materializes the
+  product of the bounded value sets for the fields involved. A numeric field contributes the larger
+  cutoff plus one values, and a flag-only field contributes two.
 - `spec-tools synthetic compare DIR ...` compares the saved `tools` and `confirmed` journals on each
   directory's key. Use the same frozen fixtures for both runs and keep key variant IDs in order
   starting at zero. A missing successful result, a lost baseline hit, or a confirmed finding on an
   intact control fails the comparison. Scoring uses successful attempts. The usage report includes
   every attempt, including failed attempts and any checks the agent invoked.
 - `spec-tools synthetic gapsrun SEED N DIR MODEL` runs `gaps` alone on each variant, scored by the
-  row it names.
+  row it names. On a Lean variant it compiles the ledger and checks the saved requirements against
+  the imported declarations.
 - A finding names the ledger row of the rule it concerns, and a plant is found by a finding naming
   its rule's row, whatever it quotes; results saved without rows are scored by their quotes. `run`
   and `gapsrun` print the planted, found and false alarms per presentation when the key has them.
@@ -284,6 +280,18 @@ historical planted experiments below use that layout. In a configured historical
   counts measure agreement with the saved key at that level.
 - `generate`, `gplants`, `gvariants` and the owners' commands take `vocab=NAME` for the domain's
   words: `library` (the default), `salon`, `tailor` or `bakery`.
+
+### Optional cross-language target
+
+Append `--target python` to `synthetic generate`, `gplants`, `gvariants` or `owners-variants` to
+export the cross-language layout with `Loans.lean`, `loans.py` and its property tests. Saved legacy
+variants have `loans.md` as their requirements, and their `tools` and `confirmed` arms include
+external integration reports. In a configured historical variant,
+`spec-tools check --target python integration` runs its adapter. Starting fixture MCP with
+`--target python` advertises the legacy tools, including `integration`.
+
+The historical `synthetic each FIXTURE DIR` and `synthetic SEED COUNT EMPTY FIXTURE DIR` commands
+edit the original cross-language fixture and also require `--target python`.
 
 Use the saved fixture and key or the producer revision when replaying a historical run. Typed
 premise evidence changes the generated Lean source and the audit seen by the agent. Use
@@ -310,10 +318,10 @@ number given without saying whether that number itself is refused.
   booking brief. The journal records completed turns and usage. Repeat the command with the same
   brief and backend to continue an interrupted call. A completed `draft.md` can be supplied to
   `owners-write` for review and fidelity checks.
-- `spec-tools synthetic owners-variants DIR SEED COUNT EMPTY vocab=NAME` writes COUNT variants with
-  the owner's text as their prose, the first EMPTY without plants, the others three shared blind
-  spots on rules with no flaw; the key names the blind spots and the flaws by row, so a finding on a
-  flaw's row counts as an imperfection found and no false alarm.
+- `spec-tools synthetic owners-variants DIR SEED COUNT EMPTY vocab=NAME` writes COUNT Lean projects
+  with the owner's text as their requirements, the first EMPTY without plants, the others three
+  shared blind spots on rules with no flaw; the key names the blind spots and the flaws by row, so a
+  finding on a flaw's row counts as an imperfection found and no false alarm.
 - `spec-tools synthetic owners-table DIR [COUNT [codex-input]]` prints the five rows from the saved
   results: `gaps` alone on the variants with blind spots, `gaps` on those without, and the baseline,
   ledger and tools arms. With a positive `COUNT`, require a successful score from each variant in

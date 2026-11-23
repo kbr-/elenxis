@@ -283,7 +283,7 @@ See [the reference on synthetic experiments](docs/reference.md#the-synthetic-eva
 the repository root with an empty `DIR`:
 
 ```bash
-spec-tools synthetic gvariants 20261107 30 20 0 DIR blind
+spec-tools synthetic gvariants 20261107 30 20 0 DIR blind --target python
 SPEC_TOOLS_BACKEND=$PWD/examples/backend.json spec-tools synthetic run DIR claude-opus-5-5 claude-opus-5-5
 SPEC_TOOLS_BACKEND=$PWD/examples/backend.json spec-tools synthetic run DIR claude-opus-5-5 claude-opus-5-5 tools
 SPEC_TOOLS_BACKEND=$PWD/examples/backend.json spec-tools synthetic gapsrun 20261107 30 DIR claude-opus-5-5

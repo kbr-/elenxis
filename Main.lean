@@ -45,34 +45,57 @@ def batchVocab (outDir : String) : IO SpecTools.Generated.Vocab := do
   | some v => return v
   | none => throw (IO.userError s!"{f} names {name}, no domain")
 
+private def syntheticTarget (args : List String) :
+    Except String (SpecTools.OwnerCheck.Profile × List String) :=
+  match args.reverse with
+  | target :: "--target" :: rest => do
+    let command := rest.getLastD ""
+    unless ["generate", "gplants", "gvariants", "owners-variants", "each"].contains command ||
+        command.toNat?.isSome do
+      throw "--target is available on synthetic generators"
+    match target with
+    | "lean" => .ok (.project, rest.reverse)
+    | "python" => .ok (.pythonLegacy, rest.reverse)
+    | _ => .error s!"unknown synthetic target {target}; use lean or python"
+  | _ => .ok (.project, args)
+
+private def syntheticWriter (profile : SpecTools.OwnerCheck.Profile) :
+    IO (System.FilePath → List SpecTools.Generated.View → IO Unit) := do
+  let root ← IO.currentDir
+  let other : SpecTools.OwnerCheck.Profile := if profile == .project then .pythonLegacy else .project
+  let toolchain ← if profile == .project then IO.FS.readFile (root / "lean-toolchain") else pure ""
+  return fun dir views => do
+    if ← (dir / SpecTools.SyntheticRun.requirementsFile other).pathExists then
+      throw (IO.userError s!"{dir} holds a different fixture format; choose an empty destination")
+    let files := match profile with
+      | .project => SpecTools.Generated.leanFiles views root.toString toolchain
+      | .pythonLegacy => SpecTools.Targets.Python.files views
+    IO.FS.createDirAll dir
+    for (file, content) in files do
+      IO.FS.writeFile (dir / file) content
+
 open SpecTools.Synthetic in
 def synthetic (args : List String) : IO UInt32 := do
   let (vocab, args) ← match splitVocab args with
     | .ok r => pure r
     | .error e => IO.eprintln e; return 2
+  let (profile, args) ← match syntheticTarget args with
+    | .ok r => pure r
+    | .error e => IO.eprintln e; return 2
+  let shapes := if profile == .project then SpecTools.Generated.leanShapes else SpecTools.Generated.shapes
   match args with
-  | ["generate", seeds, ns, outDir]
-  | ["generate", seeds, ns, outDir, "--target", _] =>
+  | ["generate", seeds, ns, outDir] =>
     -- The complete generated fixture of N rules from SEED, for each seed and N of the comma-separated
     -- lists, in OUT-DIR/sSEED-nN: the controls generated variants are made from.
     let some seeds := (seeds.splitOn ",").mapM String.toNat? | IO.eprintln "SEEDS are numbers"; return 2
     let some ns := (ns.splitOn ",").mapM String.toNat? | IO.eprintln "NS are numbers"; return 2
-    let target := args[5]?.getD "lean"
-    unless target == "lean" || target == "python" do
-      IO.eprintln s!"unknown synthetic target {target}; use lean or python"
-      return 2
-    let root ← IO.currentDir
-    let toolchain ← if target == "lean" then IO.FS.readFile (root / "lean-toolchain") else pure ""
+    let write ← syntheticWriter profile
     for seed in seeds do
       for n in ns do
         let rs := SpecTools.Generated.rulesOf seed n vocab
         let dir := System.FilePath.mk outDir / s!"s{seed}-n{n}"
-        IO.FS.createDirAll dir
         let views := rs.map SpecTools.Generated.View.plain
-        let files := if target == "python" then SpecTools.Targets.Python.files views
-          else SpecTools.Generated.leanFiles views root.toString toolchain
-        for (f, text) in files do
-          IO.FS.writeFile (dir / f) text
+        write dir views
         let flagged := (rs.filter (·.flag.isSome)).length
         let sums := (rs.filter (·.measures.length > 1)).length
         IO.println s!"{dir}: {rs.length} rules ({flagged} with an exception, {sums} over two measures), {rs.length + flagged} clauses"
@@ -86,23 +109,20 @@ def synthetic (args : List String) : IO UInt32 := do
     let rs := all.take n
     let extra := all.getLastD default
     let plain := rs.map SpecTools.Generated.View.plain
+    let write ← syntheticWriter profile
     let mut key : List String := []
-    for (shape, i) in SpecTools.Generated.shapes.zipIdx do
+    for (shape, i) in shapes.zipIdx do
       let cs := SpecTools.Generated.candidates rs extra shape
       if cs.isEmpty then IO.eprintln s!"{shape}: no rule allows it"; return 1
       let p := cs[SpecTools.Synthetic.draw (SpecTools.Synthetic.next (seed + i)) cs.length]!
       let dir := System.FilePath.mk outDir / s!"p{i}"
-      IO.FS.createDirAll dir
-      for (f, text) in SpecTools.Targets.Python.files (p.apply plain) do IO.FS.writeFile (dir / f) text
+      write dir (p.apply plain)
       key := key ++ [s!"\{\"variant\": {i}, \"shape\": {shape.quote}, \"plants\": [\{\"kind\": {p.kind.quote}, \"clause\": {p.clause.quote}}]}"]
     let dir := System.FilePath.mk outDir / "omitted"
-    IO.FS.createDirAll dir
     let r := rs.headD default
-    for (f, text) in SpecTools.Targets.Python.files (SpecTools.Generated.onRule r.id
-        (fun v => { v with omitTheorem := true }) plain) do
-      IO.FS.writeFile (dir / f) text
+    write dir (SpecTools.Generated.onRule r.id (fun v => { v with omitTheorem := true }) plain)
     IO.FS.writeFile (System.FilePath.mk outDir / "key.jsonl") ("\n".intercalate key ++ "\n")
-    IO.println s!"{SpecTools.Generated.shapes.length} single-plant variants and the control `omitted` (rule r{r.id}) in {outDir}"
+    IO.println s!"{shapes.length} single-plant variants and the control `omitted` (rule r{r.id}) in {outDir}"
     return 0
   | ["gvariants", seed, n, count, empty, outDir]
   | ["gvariants", seed, n, count, empty, outDir, "blind"]
@@ -120,6 +140,7 @@ def synthetic (args : List String) : IO UInt32 := do
     let some empty := empty.toNat? | IO.eprintln "EMPTY is a number"; return 2
     let all := SpecTools.Generated.rules seed (n + 1) vocab
     let rs := all.take n
+    let write ← syntheticWriter profile
     IO.FS.createDirAll outDir
     IO.FS.writeFile (System.FilePath.mk outDir / "vocab") (vocab.name ++ "\n")
     let mut key : List String := []
@@ -127,10 +148,9 @@ def synthetic (args : List String) : IO UInt32 := do
       let (vs, ps) := if blindOnly then
           SpecTools.Generated.gvariant rs (all.getLastD default) seed i empty
             SpecTools.Generated.blindShapes (some 3)
-        else SpecTools.Generated.gvariant rs (all.getLastD default) seed i empty
+        else SpecTools.Generated.gvariant rs (all.getLastD default) seed i empty shapes
       let dir := System.FilePath.mk outDir / s!"v{i}"
-      IO.FS.createDirAll dir
-      for (f, text) in SpecTools.Targets.Python.files vs do IO.FS.writeFile (dir / f) text
+      write dir vs
       IO.FS.writeFile (dir / "prose-rules.json")
         (Lean.Json.arr ((vs.filterMap (·.prose)).map SpecTools.Prose.ruleJson).toArray).compress
       let plants := ps.map fun p =>
@@ -166,6 +186,9 @@ def synthetic (args : List String) : IO UInt32 := do
     for batch in batches do
       let tasks ← batch.mapM fun (i, shown) => IO.asTask do
         let dir := System.FilePath.mk outDir / s!"v{i}"
+        let profile ← SpecTools.SyntheticRun.fixtureProfile dir
+        let requirements := dir / SpecTools.SyntheticRun.requirementsFile profile
+        let template := dir / SpecTools.SyntheticRun.templateFile profile
         let rulesText ← IO.FS.readFile (dir / "prose-rules.json")
         let some rules := (Lean.Json.parse rulesText).toOption.bind (·.getArr?.toOption) |>.bind
             (·.toList.mapM SpecTools.Prose.ruleOfJson)
@@ -174,10 +197,10 @@ def synthetic (args : List String) : IO UInt32 := do
         let w ← SpecTools.Prose.writeFaithful SpecTools.Model.liveRunner [backend] backend rules
           shown scratch 600000
         IO.FS.removeDirAll scratch
-        unless ← (dir / "loans.template.md").pathExists do
-          IO.FS.writeFile (dir / "loans.template.md") (← IO.FS.readFile (dir / "loans.md"))
+        unless ← template.pathExists do
+          IO.FS.writeFile template (← IO.FS.readFile requirements)
         match w.document with
-        | some d => IO.FS.writeFile (dir / "loans.md") d
+        | some d => IO.FS.writeFile requirements d
         | none => IO.FS.writeFile (dir / "LEFT_OUT") ("\n".intercalate w.discarded ++ "\n")
         IO.FS.writeFile (dir / "prose.json") (Lean.Json.mkObj [
           ("kept", Lean.toJson w.document.isSome), ("writings", Lean.toJson w.writings),
@@ -309,6 +332,7 @@ def synthetic (args : List String) : IO UInt32 := do
     let all := SpecTools.Generated.ownerRules seed (SpecTools.Owners.ruleCount + 1) vocab
     let rs := all.take SpecTools.Owners.ruleCount
     let flaws := SpecTools.Owners.imperfections seed rs vocab.flawKinds
+    let write ← syntheticWriter profile
     IO.FS.writeFile (dir / "vocab") (vocab.name ++ "\n")
     let flawPlants := flaws.map fun i =>
       let p := SpecTools.Owners.flawPlant rs i
@@ -318,10 +342,10 @@ def synthetic (args : List String) : IO UInt32 := do
       let (vs, ps) := SpecTools.Owners.ownerVariant rs (all.getLastD default) (flaws.map (·.rule))
         seed i empty
       let vdir := dir / s!"v{i}"
-      IO.FS.createDirAll vdir
-      for (f, t) in SpecTools.Targets.Python.files vs do IO.FS.writeFile (vdir / f) t
-      IO.FS.writeFile (vdir / "loans.template.md") (← IO.FS.readFile (vdir / "loans.md"))
-      IO.FS.writeFile (vdir / "loans.md") text
+      write vdir vs
+      let requirements := vdir / SpecTools.SyntheticRun.requirementsFile profile
+      IO.FS.writeFile (vdir / SpecTools.SyntheticRun.templateFile profile) (← IO.FS.readFile requirements)
+      IO.FS.writeFile requirements text
       let plants := ps.map fun p =>
         let row := match p.touches.head? with
           | some id => s!", \"row\": {(SpecTools.Generated.rowId ⟨id, "", [], 0, none⟩).quote}"
@@ -563,7 +587,8 @@ def synthetic (args : List String) : IO UInt32 := do
     let mut split : List (Bool × Nat × Nat × Nat × Nat × Nat) := []
     for batch in batches do
       let tasks ← batch.mapM fun ((k, i) : List String × Nat) => IO.asTask do
-        let dir := System.FilePath.mk outDir / s!"v{i}"
+        let dir ← IO.FS.realPath (System.FilePath.mk outDir / s!"v{i}")
+        let profile ← SpecTools.SyntheticRun.fixtureProfile dir
         -- The variant's `gaps` call records its usage here; a rerun starts it afresh.
         let usagePath := dir / "gaps-usage.jsonl"
         if ← usagePath.pathExists then IO.FS.removeFile usagePath
@@ -571,9 +596,9 @@ def synthetic (args : List String) : IO UInt32 := do
         -- the variables into the arguments the launcher keeps).
         let passed ← SpecTools.Model.backendEnvironment.filterMapM fun k => do
           return (← IO.getEnv k).map (s!"{k}=" ++ ·)
-        let inv := (SpecTools.SyntheticRun.leanOn root.toString dir.toString #[("SPEC_TOOLS_GAPS", some model),
-          ("SPEC_TOOLS_DIR", some dir.toString), ("SPEC_TOOLS_USAGE", some usagePath.toString)]).viaArgs passed
-        let out ← IO.Process.output { cmd := inv.cmd, args := inv.args, cwd := some inv.cwd, env := inv.env }
+        let out ← SpecTools.SyntheticRun.runVariantGaps profile root.toString dir
+          #[("SPEC_TOOLS_GAPS", some model), ("SPEC_TOOLS_DIR", some dir.toString),
+            ("SPEC_TOOLS_USAGE", some usagePath.toString)] passed
         IO.FS.writeFile (dir / "gaps.txt") (out.stdout ++ out.stderr)
         return (k, i, out, ← SpecTools.Usage.readRecorded usagePath)
       for t in tasks do
@@ -638,22 +663,30 @@ def synthetic (args : List String) : IO UInt32 := do
     let mut failed := false
     for batch in batches do
       let tasks ← batch.mapM fun (dir : String) => IO.asTask do
-        -- What `spec-tools check tests` runs, which asks no model.
-        let some inv := SpecTools.SyntheticRun.checkInvocation root.toString dir "" "tests"
-          | throw (IO.userError "check tests has no invocation")
-        let inv := inv.viaArgs []
-        let out ← IO.Process.output { cmd := inv.cmd, args := inv.args, cwd := some inv.cwd, env := inv.env }
+        let profile ← SpecTools.SyntheticRun.fixtureProfile (System.FilePath.mk dir)
+        let out ← match profile with
+          | .project => IO.Process.output { cmd := "lake", args := #["build"], cwd := some dir }
+          | .pythonLegacy => do
+            let some inv := SpecTools.SyntheticRun.checkInvocation root.toString dir "" "tests"
+              | throw (IO.userError "legacy integration has no invocation")
+            let inv := inv.viaArgs []
+            IO.Process.output { cmd := inv.cmd, args := inv.args, cwd := some inv.cwd, env := inv.env }
         IO.FS.writeFile (System.FilePath.mk dir / "control.txt") (out.stdout ++ out.stderr)
-        return (dir, out)
+        return (dir, profile, out)
       for t in tasks do
-        let (dir, out) ← IO.ofExcept t.get
+        let (dir, profile, out) ← IO.ofExcept t.get
         let summary := (out.stdout.splitOn "\n").filter fun l =>
           (l.splitOn " rows: ").length > 1 || (l.splitOn " guards, ").length > 1
-        IO.println s!"{dir}: exit {out.exitCode}; {"; ".intercalate summary}"
-        if out.exitCode != 0 || summary.length != 2 then failed := true
+        let label := if profile == .project then "Lean project" else "legacy Python integration"
+        IO.println s!"{dir}: {label}; exit {out.exitCode}; {"; ".intercalate summary}"
+        let expected := if profile == .project then 1 else 2
+        if out.exitCode != 0 || summary.length != expected then failed := true
     return if failed then 1 else 0
   | ["each", fixtureDir, outDir] =>
     -- One variant per plant, to check each plant on its own.
+    if profile != .pythonLegacy then
+      IO.eprintln "synthetic each edits legacy fixtures; use gplants for Lean or append --target python"
+      return 2
     let fixture ← fixtureFiles.mapM fun (f : String) => do
       return (f, ← IO.FS.readFile (System.FilePath.mk fixtureDir / f))
     for (p, i) in SpecTools.LoansPlants.catalogue.zipIdx do
@@ -866,6 +899,9 @@ def synthetic (args : List String) : IO UInt32 := do
     return 0
   | [seed, count, empty, fixtureDir, outDir] =>
     let some seed := seed.toNat? | IO.eprintln "SEED is a number"; return 2
+    if profile != .pythonLegacy then
+      IO.eprintln "this syntax edits legacy fixtures; use gvariants for Lean or append --target python"
+      return 2
     let some count := count.toNat? | IO.eprintln "COUNT is a number"; return 2
     let some empty := empty.toNat? | IO.eprintln "EMPTY is a number"; return 2
     let fixture ← fixtureFiles.mapM fun (f : String) => do
@@ -884,7 +920,7 @@ def synthetic (args : List String) : IO UInt32 := do
     IO.FS.writeFile (System.FilePath.mk outDir / "key.jsonl") ("\n".intercalate key ++ "\n")
     IO.println s!"{count} variants in {outDir}, the key in {outDir}/key.jsonl"
     return 0
-  | _ => IO.eprintln "usage: spec-tools synthetic SEED COUNT EMPTY FIXTURE-DIR OUT-DIR"; return 2
+  | _ => IO.eprintln "usage: spec-tools synthetic generate|gplants|gvariants|owners-variants|…"; return 2
 
 open SpecTools.Model in
 def clauses (args : List String) : IO UInt32 := do

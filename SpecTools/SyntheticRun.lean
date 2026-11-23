@@ -15,6 +15,36 @@ open Lean SpecTools.Model SpecTools.Score SpecTools.Synthetic
 
 def files : List String := ["loans.md", "Loans.lean", "loans.py", "test_loans.py"]
 
+def requirementsFile : OwnerCheck.Profile → String
+  | .project => Generated.requirementsFile
+  | .pythonLegacy => "loans.md"
+
+def templateFile : OwnerCheck.Profile → String
+  | .project => "requirements.template.md"
+  | .pythonLegacy => "loans.template.md"
+
+def fixtureFormat (project legacy : Bool) : Except String OwnerCheck.Profile :=
+  match project, legacy with
+  | true, false => .ok .project
+  | false, true => .ok .pythonLegacy
+  | true, true => .error "both Lean and legacy requirements files are present"
+  | false, false => .error "missing requirements.md or loans.md"
+
+theorem fixtureFormat_project_iff (project legacy : Bool) :
+    fixtureFormat project legacy = .ok .project ↔ project = true ∧ legacy = false := by
+  cases project <;> cases legacy <;> simp [fixtureFormat]
+
+theorem fixtureFormat_legacy_iff (project legacy : Bool) :
+    fixtureFormat project legacy = .ok .pythonLegacy ↔ project = false ∧ legacy = true := by
+  cases project <;> cases legacy <;> simp [fixtureFormat]
+
+def fixtureProfile (dir : System.FilePath) : IO OwnerCheck.Profile := do
+  let project ← (dir / requirementsFile .project).pathExists
+  let legacy ← (dir / requirementsFile .pythonLegacy).pathExists
+  match fixtureFormat project legacy with
+  | .ok format => return format
+  | .error message => throw (IO.userError s!"{dir}: {message}")
+
 def task : String :=
   "This directory holds requirements (loans.md), a Lean model of them with a ledger of rows, \
   each a requirement and the theorems establishing it (Loans.lean), a Python implementation \
@@ -92,6 +122,25 @@ def Arm.prompt (arm : Arm) (check : String) (reports : String := "") : String :=
     "Use their reports to check what the prose requires and what the artifacts establish. " ++
     "Verify each reported finding against the files.\n\n" ++ reports ++ "\n\n" ++ answerFormat
 
+def Arm.projectChecks (arm : Arm) : List String :=
+  if arm.preparedChecks.isEmpty then [] else ["contracts", "counterexamples"]
+
+def Arm.projectPrompt (arm : Arm) (check reports : String) (bound : Bool) : String :=
+  let task := "Compare requirements.md with the Lean specification, executable implementation, " ++
+    "proof obligations, ledger and counterexamples. Report unsupported clauses, weak or strong " ++
+    "contracts, inconsistent premises, and behavior the prose leaves undecided."
+  let instruction := if bound then
+      "Run the Elenxis MCP contracts, proofs and counterexamples checks as needed. Read their output."
+    else if arm == .ledger then
+      s!"Use `{check} contracts`, `{check} proofs` and `{check} counterexamples` as needed."
+    else if arm == .workflow then
+      "Work clause by clause against the ledger, proof obligations and implementation."
+    else if !reports.isEmpty then "Check each report against the corresponding declarations.\n" ++ reports
+    else ""
+  task ++ "\n\n" ++ instruction ++ "\n\n" ++
+    "In findings, quote the clause and name its gap kind and ledger row in Ledger.lean. " ++
+    "For a missing row, give the affected requirement's rule id. Return an empty list when there are no findings."
+
 /-- The audit's report without its proved rows and their statements, which the files hold. -/
 def auditDigest (out : String) : String :=
   "\n".intercalate ((out.splitOn "\n").filter fun l =>
@@ -124,6 +173,18 @@ theorem viaArgs_moves_env :
 /-- `lake env lean` on the variant's model, from the tools' root, with `env` set. -/
 def leanOn (root dir : String) (env : Array (String × Option String)) : Invocation :=
   ⟨"lake", #["env", "lean", dir ++ "/Loans.lean"], env, root⟩
+
+/-- Run Gaps on the declarations and prose of the saved fixture's own layout. -/
+def runVariantGaps (profile : OwnerCheck.Profile) (root : String) (dir : System.FilePath)
+    (env : Array (String × Option String)) (passed : List String) : IO IO.Process.Output := do
+  if profile == .project then
+    let build ← IO.Process.output { cmd := "lake", args := #["build", "Ledger"], cwd := some dir }
+    if build.exitCode != 0 then return build
+  let invocation := match profile with
+    | .pythonLegacy => leanOn root dir.toString env
+    | .project => ⟨"lake", #["env", "lean", "GapsCheck.lean"], env, dir.toString⟩
+  let inv := invocation.viaArgs passed
+  IO.Process.output { cmd := inv.cmd, args := inv.args, cwd := some inv.cwd, env := inv.env }
 
 /-- The file in a variant's directory the tools `check` runs record their calls' usage in. -/
 def usageFile (dir : String) : String := dir ++ "/usage.jsonl"
@@ -185,6 +246,9 @@ def runProjectCheck (sub : String) : IO UInt32 := do
   unless ← (dir / (target ++ ".lean")).pathExists do
     IO.eprintln s!"check: {target}.lean is missing from the Lean project"
     return 2
+  let log ← IO.FS.Handle.mk (dir / "check.log") .append
+  log.putStrLn sub
+  log.flush
   let child ← IO.Process.spawn { cmd := "lake", args := #["build", target], cwd := some dir }
   child.wait
 
@@ -337,7 +401,7 @@ def serveChecks (profile : OwnerCheck.Profile) (launcher executable : String) : 
 private def remoteLedger (backend : Backend) (arm : Arm) : IO Bool := do
   return backend.harness == .codex && arm == .ledger && (← IO.getEnv "SPEC_TOOLS_HOST").isSome
 
-private def fixtureToolArgs (work : System.FilePath) (root : String) (timeoutMs : Nat) :
+private def fixtureToolArgs (profile : OwnerCheck.Profile) (work : System.FilePath) (root : String) (timeoutMs : Nat) :
     IO (Except String (Array String)) := do
   let host := (← IO.getEnv "SPEC_TOOLS_CHECK_HOST").getD ""
   let launcher := (← IO.getEnv "SPEC_TOOLS_CHECK_LAUNCHER").getD ""
@@ -350,9 +414,9 @@ private def fixtureToolArgs (work : System.FilePath) (root : String) (timeoutMs 
   let executable := checkExecutable root
   let command := s!"cd {shellQuote work.toString} && exec " ++ " ".intercalate
     ((["timeout", toString seconds, "env"] ++ env ++
-      [executable, "fixture-mcp", launcher, executable, "--target", "python"]).map shellQuote)
+      [executable, "fixture-mcp", launcher, executable] ++ profile.options).map shellQuote)
   let args := toJson #["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "--", host, command]
-  let approvals := OwnerCheck.Profile.pythonLegacy.names.toArray.flatMap fun check =>
+  let approvals := profile.names.toArray.flatMap fun check =>
     #["-c", s!"mcp_servers.elenxis.tools.{check}.approval_mode=\"approve\""]
   return .ok (#["-c", "mcp_servers.elenxis.command=\"/usr/bin/ssh\"",
     "-c", "mcp_servers.elenxis.args=" ++ args.compress, "-c", "mcp_servers.elenxis.required=true",
@@ -360,30 +424,53 @@ private def fixtureToolArgs (work : System.FilePath) (root : String) (timeoutMs 
     "-c", s!"mcp_servers.elenxis.tool_timeout_sec={seconds}"] ++ approvals)
 
 /-- The command an agent runs the spec tools with. -/
-def checkCommand (root : String) : String := checkExecutable root ++ " check --target python"
+def checkCommand (root : String) (profile : OwnerCheck.Profile := .pythonLegacy) : String :=
+  String.intercalate " " ([checkExecutable root, "check"] ++ profile.options)
 
 /-- The tools of an arm: reading and the tests for all, `spec-tools check` for the ledger's and the
 tools arm. -/
-def armTools (arm : Arm) (root : String) : List String :=
-  ["Read", "Glob", "Grep", "Bash(python3 -m pytest *)"] ++
-    (if arm == .ledger || !arm.preparedChecks.isEmpty then [s!"Bash({checkCommand root} *)"] else [])
+def armTools (arm : Arm) (root : String) (profile : OwnerCheck.Profile := .pythonLegacy) : List String :=
+  ["Read", "Glob", "Grep"] ++
+    (if profile == .pythonLegacy then ["Bash(python3 -m pytest *)"] else []) ++
+    (if arm == .ledger || !arm.preparedChecks.isEmpty then [s!"Bash({checkCommand root profile} *)"] else [])
 
 /-- Run the named preparatory checks. A failed invocation ends preparation with its diagnostic. -/
 def prepareReports (executable : String) (work : System.FilePath)
-    (checks : List String := Arm.tools.preparedChecks) (readings : Nat := 1) :
+    (checks : List String := Arm.tools.preparedChecks) (readings : Nat := 1)
+    (profile : OwnerCheck.Profile := .pythonLegacy) :
     ExceptT String IO String := do
   let run (check : String) : ExceptT String IO String := do
     let result ← liftM <| (IO.Process.output
-      { cmd := executable, args := #["check", "--target", "python", check], cwd := some work,
+      { cmd := executable, args := (["check"] ++ profile.options ++ [check]).toArray, cwd := some work,
         env := #[("SPEC_TOOLS_GAP_READINGS", some (toString readings))] }).toBaseIO
     let output ← match result with
       | .ok output => pure output
       | .error error => throw s!"preparing {check} with {executable}: {error}"
     if output.exitCode != 0 then
       throw s!"preparing {check}: exit {output.exitCode}\n{output.stdout}{output.stderr}"
-    let report := if check == "audit" then auditDigest output.stdout else output.stdout
+    let report := if check == "audit" || check == "contracts" then auditDigest output.stdout else output.stdout
     return s!"## {check}\n{report}"
   return String.intercalate "\n\n" (← checks.mapM run)
+
+private def prepareProjectModelReports (root : String) (work : System.FilePath) (arm : Arm)
+    (backend : Backend) : ExceptT String IO String := do
+  unless arm == .tools || arm == .confirmed do return ""
+  let readings := if arm == .confirmed then "3" else "1"
+  let config := (work / toolBackendFile).toString
+  let gaps ← runVariantGaps .project root work #[("SPEC_TOOLS_BACKEND", some config),
+    ("SPEC_TOOLS_GAPS", some backend.model), ("SPEC_TOOLS_GAP_READINGS", some readings),
+    ("SPEC_TOOLS_DIR", some work.toString), ("SPEC_TOOLS_USAGE", some (usageFile work.toString))] []
+  if gaps.exitCode != 0 then
+    throw s!"preparing gaps: exit {gaps.exitCode}\n{gaps.stdout}{gaps.stderr}"
+  let report := "\n\n## gaps\n" ++ gaps.stdout
+  if arm != .confirmed then return report
+  let clauses ← IO.Process.output {
+    cmd := checkExecutable root, cwd := some work,
+    args := #["clauses", "configured", backend.model, Generated.requirementsFile],
+    env := #[("SPEC_TOOLS_BACKEND", some config), ("SPEC_TOOLS_USAGE", some (usageFile work.toString))]}
+  if clauses.exitCode != 0 then
+    throw s!"preparing clauses: exit {clauses.exitCode}\n{clauses.stdout}{clauses.stderr}"
+  return report ++ "\n\n## clauses\n" ++ clauses.stdout
 
 /-- One arm's run on one variant: its findings and the `check` commands it ran, or why there are
 none; what its agent used; and what its tools used (the tools arm's reports and every `check` the
@@ -391,12 +478,14 @@ agent ran). -/
 def runArm (backend : Backend) (variantDir : System.FilePath) (arm : Arm) (root : String)
     (toolBackend : Backend) (timeoutMs : Nat) :
     IO (Except String (List Finding × List String) × Usage.Usage × Usage.Usage × Array Json) := do
+  let profile ← fixtureProfile variantDir
   let work := (← IO.FS.createTempDir) / "variant"
   let bound ← remoteLedger backend arm
-  let transport ← if bound then fixtureToolArgs work root timeoutMs else pure (.ok #[])
+  let transport ← if bound then fixtureToolArgs profile work root timeoutMs else pure (.ok #[])
   let .ok toolArgs := transport | return (transport.map (fun _ => ([], [])), {}, {}, #[])
   IO.FS.createDirAll work
-  for f in files do IO.FS.writeFile (work / f) (← IO.FS.readFile (variantDir / f))
+  let artifactFiles := if profile == .project then Generated.projectFiles else files
+  for f in artifactFiles do IO.FS.writeFile (work / f) (← IO.FS.readFile (variantDir / f))
   if arm == .ledger || !arm.preparedChecks.isEmpty then
     IO.FS.writeFile (work / configFile)
       (Json.mkObj [("root", Json.str root), ("model", Json.str toolBackend.model)]).compress
@@ -411,22 +500,30 @@ def runArm (backend : Backend) (variantDir : System.FilePath) (arm : Arm) (root 
   if copyRequirements then
     IO.FS.writeFile (work / structuredRequirements)
       (← IO.FS.readFile (variantDir / structuredRequirements))
+  let prepared := if profile == .project then arm.projectChecks else arm.preparedChecks
+  let prepare : ExceptT String IO String := do
+    let formal ← prepareReports (checkExecutable root) work prepared readings profile
+    if profile == .pythonLegacy then return formal
+    let model ← prepareProjectModelReports root work arm toolBackend
+    return formal ++ model
   let reports ← try
-    (prepareReports (checkExecutable root) work arm.preparedChecks readings).run
+    prepare.run
   finally
     if copyRequirements then IO.FS.removeFile (work / structuredRequirements)
   match reports with
   | .error why => return (.error why, {}, ← Usage.readRecorded (usageFile work.toString), #[])
   | .ok reports =>
-    if !arm.preparedChecks.isEmpty && (← (work / "check.log").pathExists) then
+    if !prepared.isEmpty && (← (work / "check.log").pathExists) then
       IO.FS.removeFile (work / "check.log")
-    let prompt := if bound then task ++ "\n\n" ++
+    let prompt := if profile == .project then
+      arm.projectPrompt (checkCommand root profile) reports bound
+      else if bound then task ++ "\n\n" ++
       "Use the Elenxis MCP tools on the fixture. Audit checks proof status, integration checks the \
       named tests, gaps compares prose to the ledger and clauses extracts the prose's claims. Select \
       checks as needed. Verify each finding against the files.\n\n" ++ answerFormat
       else arm.prompt (checkCommand root) reports
     let question : Question := { prompt, schema := findingsSchema, timeoutMs }
-    let inv := agentInvocation backend question (armTools arm root) work
+    let inv := agentInvocation backend question (armTools arm root profile) work
     let inv := { inv with args := (inv.args.extract 0 1) ++ toolArgs ++ inv.args.extract 1 inv.args.size }
     let ran ← liveRunner inv (readBackFiles backend.harness) timeoutMs
     let log := work / "check.log"

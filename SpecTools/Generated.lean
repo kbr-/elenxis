@@ -326,14 +326,23 @@ def leanImplementation : String :=
   "theorem refused_of (r : Rule) (q : Req) (h : r ∈ rules) (hf : fires r q = true) :\n" ++
   "    refused q = true := List.any_eq_true.mpr ⟨r, h, hf⟩\n\n"
 
+def requirementsFile : String := "requirements.md"
+
+def projectModules : List String :=
+  ["Spec", "Implementation", "ProofObligations", "Ledger", "Counterexamples"]
+
+def projectFiles : List String :=
+  requirementsFile :: (projectModules.map (· ++ ".lean")) ++
+    ["GapsCheck.lean", "lakefile.toml", "lean-toolchain"]
+
 /-- A generated project uses the local Elenxis library without a network dependency. -/
 def leanFiles (views : List View) (root toolchain : String) : List (String × String) :=
   let rules := views.map (·.model)
   let config := "name = \"GeneratedLoans\"\ndefaultTargets = [\"Ledger\", \"Counterexamples\"]\n\n" ++
     s!"[[require]]\nname = \"Elenxis\"\npath = {root.quote}\n\n" ++
-    String.join (["Spec", "Implementation", "ProofObligations", "Ledger", "Counterexamples"].map fun name =>
+    String.join (projectModules.map fun name =>
       s!"[[lean_lib]]\nname = {name.quote}\n\n")
-  [("requirements.md", prose views),
+  [(requirementsFile, prose views),
    ("Spec.lean", "namespace Loans\n\n" ++ leanModel rules ++
      "def requiresRefusal (q : Req) : Prop := ∃ r, r ∈ rules ∧ fires r q = true\n\nend Loans\n"),
    ("Implementation.lean", "import Spec\n\nnamespace Loans\n\n" ++
@@ -356,6 +365,12 @@ def leanFiles (views : List View) (root toolchain : String) : List (String × St
        s!"theorem raisedBoundCounterexample : fires r{rule.id} atBound = true ∧\n" ++
        s!"    fires \{ r{rule.id} with bound := {rule.bound + 1} } atBound = false := by decide\n\n").getD
        "" ++ "end Loans\n"),
+   ("GapsCheck.lean", "import Ledger\nimport SpecTools.GapsRun\n\n" ++
+     "#eval show Lean.Elab.Command.CommandElabM Unit from do\n" ++
+     "  let some model ← IO.getEnv \"SPEC_TOOLS_GAPS\" | return\n" ++
+     s!"  let prose ← IO.FS.readFile {requirementsFile.quote}\n" ++
+     "  let backend ← SpecTools.Model.selectedBackend \"configured\" model\n" ++
+     "  SpecTools.Gaps.run Loans.ledger prose backend\n"),
    ("lakefile.toml", config),
    ("lean-toolchain", toolchain)]
 
@@ -381,6 +396,9 @@ def shapes : List String := ["uncovered", "too weak", "vacuous", "extra", "undec
 
 /-- The shapes of a shared blind spot. -/
 def blindShapes : List String := shapes.drop 7
+
+def leanShapes : List String :=
+  shapes.filter fun shape => shape != "missing test" && shape != "weak test"
 
 /-- The plants of shape `shape` the rules `rs` allow, with `extra` the rule beyond the list. -/
 def candidates (rs : List Rule) (extra : Rule) (shape : String) : List GPlant :=
