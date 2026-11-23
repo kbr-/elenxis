@@ -510,6 +510,42 @@ def testProse : IO Unit := do
     s!"a failed writer call didn't count as a failed writing: {afterFailure.discarded}"
   IO.println "PASS: person prose adapter (kept, rewritten, left out, failed call)"
 
+open Lean in
+/-- Saved owner journals with a changed draft or reordered rounds fail before model dispatch. -/
+def checkOwnerResumeRefusals (draft journal reordered : String) : IO Unit :=
+  IO.FS.withTempDir fun dir => do
+    let saved := dir / "saved"
+    let output := dir / "output"
+    let calls := dir / "calls"
+    let config := dir / "backend.json"
+    let draftFile := dir / "draft.md"
+    let seed := 42
+    let vocab := SpecTools.Generated.Vocab.salon
+    let rules := SpecTools.Generated.ownerRules seed SpecTools.Owners.ruleCount vocab
+    let flaws := SpecTools.Owners.imperfections seed rules vocab.flawKinds
+    IO.FS.createDirAll saved
+    IO.FS.writeFile (saved / "brief.txt")
+      (SpecTools.Owners.writerPrompt vocab .prose rules flaws "")
+    IO.FS.writeFile (saved / "writing.json") (Json.mkObj [
+      ("seed", toJson seed), ("form", "prose"), ("vocab", toJson vocab.name),
+      ("usage", SpecTools.Usage.asJson {})]).compress
+    IO.FS.writeFile config (Json.mkObj [
+      ("adapter", "command"), ("command", "sh"), ("model", "local/owner"),
+      ("dataGoesTo", "local"), ("args", toJson [
+        "-c", "touch \"$1\"; exit 7", "owner-adapter", calls.toString])]).compress
+    for (text, steps, diagnostic) in [
+        ("Different draft", journal, "the review journal belongs to a different initial draft"),
+        (draft, reordered, "the review journal has an invalid completed round")] do
+      IO.FS.writeFile draftFile text
+      IO.FS.writeFile (saved / "steps.jsonl") steps
+      let result ← IO.Process.output {
+        cmd := "lake", args := #["exe", "spec-tools", "synthetic", "owners-write", output.toString,
+          toString seed, "prose", "", "default", draftFile.toString, saved.toString, "vocab=salon"],
+        env := #[("SPEC_TOOLS_BACKEND", some config.toString)] }
+      ensure (result.exitCode != 0 && has result.stderr diagnostic) (result.stdout ++ result.stderr)
+      ensure (!(← calls.pathExists) && !(← output.pathExists))
+        "an invalid owner journal started the backend or created an output directory"
+
 /-- The owners' loop through the command adapter: five review rounds each
 followed by a revision, a round whose review finds nothing among them, then one more review and
 the fidelity check; one clear rule read wrong, or a flaw read as stated, sends the text back; four
@@ -576,6 +612,8 @@ def testOwners : IO Unit := do
     row s!"start 1: revised after review {i + 1}" lastRevision
   let failureRow := row "start 1: review 5 failed" lastRevision
   let journal := "\n".intercalate (initial :: revisions ++ [failureRow])
+  let reordered := "\n".intercalate (initial :: revisions.reverse ++ [failureRow])
+  let refusalJob ← IO.asTask (checkOwnerResumeRefusals draft journal reordered)
   let saved ← IO.ofExcept (SpecTools.Owners.decodeReviewPrefix draft journal { calls := 9 })
   let jobs ← [("kept", run [exact, exact]),
       ("judge revisions", run [exact, exact] ["70", "89"]),
@@ -648,10 +686,7 @@ def testOwners : IO Unit := do
   ensure (resumed.text.isSome && calls == 10 && resumed.usage.calls == 19 &&
     resumed.steps.length == 6 && ((prompts.headD "").splitOn lastRevision).length == 2)
     "resuming a four-round prefix did not start at review five"
-  let reordered := "\n".intercalate (initial :: revisions.reverse ++ [failureRow])
-  ensure (!(SpecTools.Owners.decodeReviewPrefix "Different draft" journal {}).isOk &&
-    !(SpecTools.Owners.decodeReviewPrefix draft reordered {}).isOk)
-    "a changed draft or out-of-order review journal was accepted"
+  IO.ofExcept refusalJob.get
   IO.println "PASS: owner adapter (review, fidelity, retry limits, supplied draft, resume)"
 
 /-- A failing preparation supplies its diagnostic and never runs the checks that follow it. -/
