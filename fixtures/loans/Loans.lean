@@ -1,6 +1,7 @@
 import SpecTools.Audit
 import SpecTools.GapsRun
 import SpecTools.Tests
+import SpecTools.Replay
 
 /-!
 The synthetic fixture's Lean model of `loans.md`: each operation returns the new state, or none for
@@ -25,7 +26,7 @@ structure Loan where
   member : Nat
   due : Nat
   renewals : Nat
-  deriving DecidableEq, Repr
+  deriving DecidableEq, Repr, Lean.ToJson, Lean.FromJson
 
 structure State where
   loans : List Loan
@@ -33,6 +34,7 @@ structure State where
   holds : List (Nat × Nat)
   fines : List (Nat × Nat)
   premium : List Nat
+  deriving DecidableEq, Lean.ToJson, Lean.FromJson
 
 def State.fine (s : State) (m : Nat) : Nat := (s.fines.lookup m).getD 0
 def State.membership (s : State) (m : Nat) : Membership := if m ∈ s.premium then .premium else .standard
@@ -367,6 +369,41 @@ def rows : List Row := [
 
 def ledger : List Row := rows.map fun r => { r with tests := pythonTest r.id }
 
+inductive Operation where
+  | borrow (member copy today : Nat)
+  | renew (member copy today : Nat)
+  | giveBack (copy today : Nat)
+  | hold (member copy : Nat)
+  | pay (member amount : Nat)
+
+def operationJson (name : String) (fields : List (String × Nat)) : Lean.Json :=
+  Lean.Json.mkObj (("kind", Lean.toJson name) ::
+    fields.map fun (key, value) => (key, Lean.toJson value))
+
+instance : Lean.ToJson Operation where
+  toJson
+    | .borrow m c t => operationJson "borrow" [("member", m), ("copy", c), ("today", t)]
+    | .renew m c t => operationJson "renew" [("member", m), ("copy", c), ("today", t)]
+    | .giveBack c t => operationJson "return" [("copy", c), ("today", t)]
+    | .hold m c => operationJson "hold" [("member", m), ("copy", c)]
+    | .pay m a => operationJson "pay" [("member", m), ("amount", a)]
+
+def replayStep (s : State) : Operation → Option State
+  | .borrow m c t => borrow s m c t
+  | .renew m c t => renew s m c t
+  | .giveBack c t => some (giveBack s c t)
+  | .hold m c => placeHold s m c
+  | .pay m a => some (pay s m a)
+
+/-- Fines are keyed by member and premium status is membership in a set. -/
+def replaySnapshot (s : State) : State :=
+  { s with fines := s.fines.mergeSort (fun l r => l.1 < r.1 || (l.1 == r.1 && l.2 ≤ r.2))
+           premium := s.premium.eraseDups.mergeSort }
+
+def replayTrace : SpecTools.Replay.Trace State Operation :=
+  ⟨empty, .borrow 1 7 0,
+    [.borrow 2 7 1, .renew 1 7 11, .hold 2 7, .giveBack 7 35, .pay 1 4, .borrow 2 7 36]⟩
+
 end Loans
 
 #eval SpecTools.Audit.run Loans.ledger `Loans
@@ -376,11 +413,16 @@ def fixtureDir : IO String := return (← IO.getEnv "SPEC_TOOLS_DIR").getD "fixt
 def adapterPath : IO String :=
   return (← IO.getEnv "SPEC_TOOLS_ADAPTER").getD "../../adapters/python_guards.py"
 
+def replayAdapterPath : IO String :=
+  return (← IO.getEnv "SPEC_TOOLS_REPLAY_ADAPTER").getD "../../adapters/loans_replay.py"
+
 -- With `SPEC_TOOLS_TESTS` set, the Python tests against the guards of `loans.py`.
 #eval show IO Unit from do
   if (← IO.getEnv "SPEC_TOOLS_TESTS").isSome then
-    SpecTools.Tests.run Loans.ledger (← adapterPath) "loans.py" "test_loans.py"
-      (cwd := some (← fixtureDir))
+    let dir ← fixtureDir
+    SpecTools.Tests.run Loans.ledger (← adapterPath) "loans.py" "test_loans.py" (cwd := some dir)
+      (replay := SpecTools.Replay.run Loans.replayTrace Loans.replayStep Loans.replaySnapshot
+        (← replayAdapterPath) dir)
 
 -- With `SPEC_TOOLS_GAPS` set to a model, the gaps against `loans.md` too (a live call), on the
 -- backend `SPEC_TOOLS_BACKEND` configures, with that model.

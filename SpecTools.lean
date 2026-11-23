@@ -18,6 +18,7 @@ import SpecTools.GapsProofs
 import SpecTools.GapsRun
 import SpecTools.Tests
 import SpecTools.TestsProofs
+import SpecTools.Replay
 import SpecTools.Synthetic
 import SpecTools.SyntheticProofs
 import SpecTools.LoansPlants

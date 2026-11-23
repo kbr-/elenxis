@@ -44,10 +44,11 @@ def parse (lines : List String) : Except String (List String × List GuardResult
                failed := ← j.getObjValAs? (List String) "failed" }
     return (defined, guards)
 
-/-- Run the adapter on `module` and `testFile` for every test the rows name, and print the
-findings; fails when there is one. -/
-def run (rows : List Row) (adapter module testFile : String) (cwd : Option String := none) :
-    IO Unit := do
+/-- Run an executable fixture's optional replay and the guard adapter on every test the rows
+name. A disagreement or guard finding fails the check. -/
+def run (rows : List Row) (adapter module testFile : String) (cwd : Option String := none)
+    (replay : IO Unit := pure ()) : IO Unit := do
+  replay
   let tests := (rows.flatMap (·.tests)).eraseDups
   let out ← IO.Process.output
     { cmd := "python3", args := #[adapter, module, testFile] ++ tests.toArray, cwd := cwd }

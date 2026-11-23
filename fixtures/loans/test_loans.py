@@ -246,11 +246,15 @@ def test_three_holds(s, m):  # three-holds
     assert place_hold(full, m, SPARE + 50 + MAX_HOLDS) is None
 
 
-@given(STATES, MEMBERS)
-def test_hold_limit(s, m):  # hold-limit
+@given(STATES, MEMBERS, st.integers(0, MAX_HOLDS - 1))
+def test_hold_limit(s, m, held_count):  # hold-limit
     base = with_loan(standard(clean(s, m), m), Loan(SPARE, other(m), FAR))
-    assert place_hold(loans_of(base, m, MAX_LOANS - 1), m, SPARE) is not None
-    assert place_hold(loans_of(base, m, MAX_LOANS), m, SPARE) is None
+    for i in range(held_count):
+        copy = SPARE + 30 + i
+        base = with_loan(base, Loan(copy, other(m), FAR))
+        base = replace(base, holds=((copy, m),) + base.holds)
+    assert place_hold(loans_of(base, m, MAX_LOANS - held_count - 1), m, SPARE) is not None
+    assert place_hold(loans_of(base, m, MAX_LOANS - held_count), m, SPARE) is None
 
 
 @given(STATES, MEMBERS, st.integers(0, 50))

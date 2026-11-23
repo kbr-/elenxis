@@ -91,6 +91,15 @@ doesn't define, and a guard of the implementation whose removal no test notices.
 (`adapters/python_guards.py`) replaces each disjunct of a refusing `if` (and each term of a sum
 inside one) by `False` (or `0`) in a copy and runs the named tests with pytest.
 
+An executable fixture can supply the optional `replay` action to `Tests.run`. The loans fixture
+sends the same initial state and operation sequence to its Lean and Python implementations. Replay
+compares acceptance and the resulting state at each step, reports the first difference, and fails on
+an incomplete or invalid response. Run the check from the Elenxis project directory:
+
+```sh
+SPEC_TOOLS_TESTS=1 lake env lean fixtures/loans/Loans.lean
+```
+
 ## Review before writing the specification
 
 Use `spec-tools draft-check INVENTORY DRAFT` to check the complete source inventory locally. Both

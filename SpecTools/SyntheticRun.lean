@@ -127,7 +127,8 @@ def checkInvocation (root dir model sub : String) : Option Invocation :=
   | some .audit => some (leanOn root dir #[])
   | some .tests => some (leanOn root dir #[("SPEC_TOOLS_GUARD_WORKERS", some "3"),
     ("SPEC_TOOLS_TESTS", some "1"), ("SPEC_TOOLS_DIR", some dir),
-    ("SPEC_TOOLS_ADAPTER", some (root ++ "/adapters/python_guards.py"))])
+    ("SPEC_TOOLS_ADAPTER", some (root ++ "/adapters/python_guards.py")),
+    ("SPEC_TOOLS_REPLAY_ADAPTER", some (root ++ "/adapters/loans_replay.py"))])
   | some .gaps => some (leanOn root dir #[("SPEC_TOOLS_GAPS", some model),
     ("SPEC_TOOLS_DIR", some dir), ("SPEC_TOOLS_USAGE", some (usageFile dir))])
   | some .clauses =>
