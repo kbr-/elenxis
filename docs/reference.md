@@ -214,6 +214,8 @@ number given without saying whether that number itself is refused.
   state it, its flaw included. Every step's text and reader's list go to `steps.jsonl`, the kept
   text to `text.md`. An optional `DRAFT-FILE` supplies the first text for one start of the same
   review and fidelity process. Pass an empty string for `NOTES-FILE` to use the draft without notes.
+  A final optional `REVIEW-DIR` resumes an incomplete review from its saved consecutive rounds.
+  Supply the same draft, seed, form and vocabulary and use a fresh destination.
 - `spec-tools synthetic owners-variants DIR SEED COUNT EMPTY vocab=NAME` writes COUNT variants with
   the owner's text as their prose, the first EMPTY without plants, the others three shared blind
   spots on rules with no flaw; the key names the blind spots and the flaws by row, so a finding on a

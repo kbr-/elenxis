@@ -377,6 +377,36 @@ structure Step where
   notes : List String
   deriving Repr, Inhabited
 
+/-- A supplied draft and the consecutive completed rounds saved before a review call failed. -/
+structure ReviewPrefix where
+  steps : List Step
+  usage : Usage.Usage
+
+def decodeReviewPrefix (draft journal : String) (usage : Usage.Usage) :
+    Except String ReviewPrefix := do
+  let steps ← (journal.splitOn "\n" |>.filter (!·.trimAscii.isEmpty)).mapM fun line => do
+    let json ← Json.parse line
+    let what ← json.getObjValAs? String "step"
+    let text ← json.getObjValAs? String "text"
+    let notes ← json.getObjValAs? (List String) "notes"
+    pure (⟨what, text, notes⟩ : Step)
+  let initial :: _ := steps | throw "the review journal is empty"
+  unless initial.what == "start 1: supplied draft" && initial.text == draft do
+    throw "the review journal belongs to a different initial draft"
+  let complete := steps.dropLast
+  let revisions := complete.drop 1
+  unless revisions.length < reviewRounds && (revisions.zipIdx.all fun (step, index) =>
+      step.what == s!"start 1: revised after review {index + 1}" && !step.text.trimAscii.isEmpty) do
+    throw "the review journal has an invalid completed round"
+  let some previous := complete.getLast? | throw "the journal contains no complete draft"
+  let some stopped := steps.getLast? | throw "the journal contains no failed round"
+  let next := revisions.length + 1
+  unless stopped.text == previous.text &&
+      (stopped.what == s!"start 1: review {next} failed" ||
+        stopped.what == s!"start 1: revision {next} failed") do
+    throw "the journal does not stop at an incomplete review round"
+  return ⟨complete, usage⟩
+
 /-- The held-out judge's prompt, which the loop's revisions never see: is the text an owner's (or a
 real call) or a model's imitation? Its wording is the one whose verdicts on three owners' posts of
 12 to 14 years ago were "owner" (the task's theory). -/
@@ -699,10 +729,10 @@ failing, start again, up to `maxStarts` starts. A failed call fails the start it
 def writeOwner (runner : Runner) (allowed : List Backend) (backend : Backend) (v : Vocab)
     (form : Form) (rs : List Rule) (flaws : List Imperfection) (notes : String)
     (scratch : System.FilePath) (timeoutMs : Nat) (judgeRounds : Nat := judgeRounds)
-    (startingText : Option String := none) :
+    (startingText : Option String := none) (reviewPrefix : Option ReviewPrefix := none) :
     IO Writing := do
   let brief := writerPrompt v form rs flaws notes
-  let used ← IO.mkRef ({} : Usage.Usage)
+  let used ← IO.mkRef ((reviewPrefix.map (·.usage)).getD {})
   let calls ← IO.mkRef (0 : Nat)
   let ask (tool prompt : String) (schema : Json) : IO (Except Failure Outcome) := do
     let n ← calls.modifyGet fun c => (c + 1, c + 1)
@@ -711,14 +741,15 @@ def writeOwner (runner : Runner) (allowed : List Backend) (backend : Backend) (v
     let (r, u) ← Usage.askRecorded tool runner allowed backend { prompt, schema, timeoutMs } dir
     used.modify (· + u)
     return r
-  let mut steps : List Step := []
+  let mut steps : List Step := (reviewPrefix.map (·.steps)).getD []
   let mut faultLog : List (List String) := []
   let mut lastTells : List String := []
   let mut lastVerdict : Option Bool := none
-  let starts := if startingText.isSome then 1 else maxStarts
+  let starts := if startingText.isSome || reviewPrefix.isSome then 1 else maxStarts
   for start in List.range starts do
     let label := s!"start {start + 1}"
-    let mut text ← match startingText with
+    let prior := reviewPrefix.bind fun saved => saved.steps.getLast?.map (·.text)
+    let mut text ← match prior.orElse (fun _ => startingText) with
       | some draft => pure draft
       | none =>
         match documentOf (← ask "owner-writer" brief Prose.documentSchema) with
@@ -727,9 +758,11 @@ def writeOwner (runner : Runner) (allowed : List Backend) (backend : Backend) (v
           steps := steps ++ [⟨s!"{label}: writing failed", "", [e]⟩]
           continue
     let action := if startingText.isSome then "supplied draft" else "written"
-    steps := steps ++ [⟨s!"{label}: {action}", text, []⟩]
+    if reviewPrefix.isNone then
+      steps := steps ++ [⟨s!"{label}: {action}", text, []⟩]
     let mut broken := false
-    for round in List.range reviewRounds do
+    let completed := (reviewPrefix.map fun saved => saved.steps.length - 1).getD 0
+    for round in (List.range reviewRounds).drop completed do
       match tellsOf (← ask "owner-reviewer" (reviewerPrompt v form text) tellsSchema) with
       | .error e =>
         steps := steps ++ [⟨s!"{label}: review {round + 1} failed", text, [e]⟩]
@@ -812,6 +845,10 @@ structure RunResult where
 def tokensOf (u : Usage.Usage) (codexInput : Bool := false) : Nat :=
   u.input.known + u.output.known +
     (if codexInput then 0 else u.cacheWrite.known + u.cacheRead.known)
+
+/-- All Codex totals use the inclusive input counter regardless of the cache counters. -/
+theorem tokensOf_codex (u : Usage.Usage) :
+    tokensOf u true = u.input.known + u.output.known := by simp [tokensOf]
 
 example :
     let usage : Usage.Usage :=

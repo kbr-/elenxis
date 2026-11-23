@@ -458,6 +458,7 @@ def testOwners : IO Unit := do
   let backend : Backend := ⟨.codex, "test-model", "test", none⟩
   let run (readings : List String) (judges : List String := []) (rounds : Nat := 3)
       (startingText : Option String := none)
+      (reviewPrefix : Option SpecTools.Owners.ReviewPrefix := none)
       : IO (SpecTools.Owners.Writing × Nat × List String) := do
     let r ← IO.mkRef readings
     let js ← IO.mkRef judges
@@ -489,7 +490,7 @@ def testOwners : IO Unit := do
         { exitCode := 0, stdout := "", stderr := "", readBack := [("answer.json", a)], millis := 1 }
     let dir ← IO.FS.createTempDir
     let w ← SpecTools.Owners.writeOwner runner [backend] backend v .prose rules flaws "" dir 10000
-      (judgeRounds := rounds) (startingText := startingText)
+      (judgeRounds := rounds) (startingText := startingText) (reviewPrefix := reviewPrefix)
     IO.FS.removeDirAll dir
     return (w, ← calls.get, ← reviewerPrompts.get)
   let (kept, calls, rprompts) ← run [exact, exact]
@@ -550,6 +551,23 @@ def testOwners : IO Unit := do
     importFailed.faults.length == SpecTools.Owners.fidelityRounds + 1 &&
     !(importFailed.steps.any fun s => s.what.startsWith "start 2"))
     s!"a supplied draft that exhausted fidelity made {calls} calls; steps: {importFailed.steps.map (·.what)}"
+  let row (step text : String) := (Lean.Json.mkObj [("step", Lean.toJson step),
+    ("text", Lean.toJson text), ("notes", Lean.Json.arr #[])]).compress
+  let lastRevision := "The fourth completed review changed this line."
+  let initial := row "start 1: supplied draft" draft
+  let revisions := (List.range 4).map fun i =>
+    row s!"start 1: revised after review {i + 1}" lastRevision
+  let failureRow := row "start 1: review 5 failed" lastRevision
+  let journal := "\n".intercalate (initial :: revisions ++ [failureRow])
+  let saved ← IO.ofExcept (SpecTools.Owners.decodeReviewPrefix draft journal { calls := 9 })
+  let (resumed, calls, prompts) ← run [exact, exact] [] 0 (some draft) (some saved)
+  ensure (resumed.text.isSome && calls == 10 && resumed.usage.calls == 19 &&
+    resumed.steps.length == 6 && ((prompts.headD "").splitOn lastRevision).length == 2)
+    "resuming a four-round prefix did not start at review five"
+  let reordered := "\n".intercalate (initial :: revisions.reverse ++ [failureRow])
+  ensure (!(SpecTools.Owners.decodeReviewPrefix "Different draft" journal {}).isOk &&
+    !(SpecTools.Owners.decodeReviewPrefix draft reordered {}).isOk)
+    "a changed draft or out-of-order review journal was accepted"
   IO.println "PASS: owners (five rounds, kept, sent back for a rule and for a flaw, started again, failed)"
 
 /-- A failing preparation supplies its diagnostic and never runs the checks that follow it. -/

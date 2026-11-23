@@ -187,7 +187,8 @@ def synthetic (args : List String) : IO UInt32 := do
   | ["owners-write", outDir, seed, form]
   | ["owners-write", outDir, seed, form, _]
   | ["owners-write", outDir, seed, form, _, _]
-  | ["owners-write", outDir, seed, form, _, _, _] =>
+  | ["owners-write", outDir, seed, form, _, _, _]
+  | ["owners-write", outDir, seed, form, _, _, _, _] =>
     -- An owner's text for the test in OUT-DIR (SpecTools.Owners): `ruleCount` rules of the vocab= domain
     -- from SEED, their flaws, written as `prose` or a `conversation`, five review rounds, the
     -- fidelity check; with NOTES-FILE, notes on real first calls for a conversation, and MODEL the
@@ -209,6 +210,23 @@ def synthetic (args : List String) : IO UInt32 := do
       return text
     let rs := SpecTools.Generated.ownerRules seed SpecTools.Owners.ruleCount vocab
     let flaws := SpecTools.Owners.imperfections seed rs vocab.flawKinds
+    let reviewPrefix ← (args[7]? : Option String).mapM fun path => do
+      if ← (System.FilePath.mk outDir).pathExists then
+        throw (IO.userError "a resumed review needs a fresh output directory")
+      let dir := System.FilePath.mk path
+      let record ← IO.ofExcept (Lean.Json.parse (← IO.FS.readFile (dir / "writing.json")))
+      unless (record.getObjValAs? Nat "seed").toOption == some seed &&
+          (record.getObjValAs? String "form").toOption == some form.name &&
+          (record.getObjValAs? String "vocab").toOption == some vocab.name do
+        throw (IO.userError "the review journal belongs to a different seed, form or vocabulary")
+      let savedBrief ← IO.FS.readFile (dir / "brief.txt")
+      unless savedBrief == SpecTools.Owners.writerPrompt vocab form rs flaws notes do
+        throw (IO.userError "the brief has changed since the saved review")
+      let rawUsage ← IO.ofExcept (record.getObjVal? "usage")
+      let some usage := SpecTools.Usage.fromJson? rawUsage
+        | throw (IO.userError "the previous review usage is missing")
+      IO.ofExcept (SpecTools.Owners.decodeReviewPrefix (startingText.getD "")
+        (← IO.FS.readFile (dir / "steps.jsonl")) usage)
     let dir := System.FilePath.mk outDir
     IO.FS.createDirAll dir
     -- The calls run in a neutral temporary directory: a model sees its working directory, and the
@@ -216,7 +234,7 @@ def synthetic (args : List String) : IO UInt32 := do
     -- Their records are copied into the test's directory after.
     let scratch ← IO.FS.createTempDir
     let w ← SpecTools.Owners.writeOwner SpecTools.Model.liveRunner [backend] backend vocab form rs
-      flaws notes scratch 900000 (startingText := startingText)
+      flaws notes scratch 900000 (startingText := startingText) (reviewPrefix := reviewPrefix)
     let copied ← IO.Process.output { cmd := "cp", args := #["-a", scratch.toString, (dir / "calls").toString] }
     if copied.exitCode != 0 then IO.eprintln s!"the calls' records were not copied: {copied.stderr}"
     else IO.FS.removeDirAll scratch
