@@ -202,7 +202,16 @@ score a run's findings against the key: how many planted gaps are found, and the
   the ledger arm's prompt alone, and the `tools` arm with the audit, tests and gaps reports supplied
   before it starts. The `confirmed` arm supplies audit, tests, gaps and clauses before the agent
   starts, with three independent readings for gaps. A failed preparatory check prevents that
-  variant's agent invocation. The default run includes `ledger` and `baseline`.
+  variant's agent invocation. The default run includes `ledger` and `baseline`. For exact generated
+  prose and supported Lean conditions, the mechanical gaps check can witness differing scopes or
+  confirm the same condition. Its witness search materializes the product of the bounded value sets
+  for the fields involved. A numeric field contributes the larger cutoff plus one values, and a
+  flag-only field contributes two.
+- `spec-tools synthetic compare DIR ...` compares the saved `tools` and `confirmed` journals on each
+  directory's key. Use the same frozen fixtures for both runs and keep key variant IDs in order
+  starting at zero. A missing successful result, a lost baseline hit, or a confirmed finding on an
+  intact control fails the comparison. The report includes agent usage and all recorded check usage,
+  including checks the agent invoked.
 - `spec-tools synthetic gapsrun SEED N DIR MODEL` runs `gaps` alone on each variant, scored by the
   row it names.
 - A finding names the ledger row of the rule it concerns, and a plant is found by a finding naming

@@ -6,7 +6,7 @@ open Lean Score Synthetic
 structure Result where
   findings : List Finding := []
   agent : Usage.Usage := {}
-  preparation : Usage.Usage := {}
+  tools : Usage.Usage := {}
 
 private def decoded (source : String) : Except String (List Json) :=
   ((source.splitOn "\n").filter (!·.trimAscii.isEmpty)).mapM Json.parse
@@ -18,7 +18,8 @@ private def readKey (source : String) : Except String (List (Nat × List Plant))
     let [plants] := SyntheticRun.keyPlants record.compress | throw s!"Invalid key for v{id}"
     return (id, plants)
   let ids := keys.map (·.1)
-  if ids.isEmpty || ids.eraseDups != ids then throw "The key needs distinct variant IDs"
+  if ids.isEmpty || ids != List.range ids.length then
+    throw "The key needs variant IDs in order starting at zero"
   return keys
 
 private def readArm (arm : String) (ids : List Nat) (source : String) :
@@ -34,10 +35,10 @@ private def readArm (arm : String) (ids : List Nat) (source : String) :
       throw s!"Invalid finding in v{id} {arm}"
     let some agent := (record.getObjVal? "usage").toOption.bind Usage.fromJson? |
       throw s!"Invalid agent usage in v{id} {arm}"
-    let some preparation := (record.getObjVal? "tools_usage").toOption.bind Usage.fromJson? |
-      throw s!"Invalid preparation usage in v{id} {arm}"
+    let some tools := (record.getObjVal? "tools_usage").toOption.bind Usage.fromJson? |
+      throw s!"Invalid tool usage in v{id} {arm}"
     if (results.lookup id).isSome then throw s!"Duplicate success for v{id} {arm}"
-    results := (id, ⟨findings, agent, preparation⟩) :: results
+    results := (id, ⟨findings, agent, tools⟩) :: results
   for id in ids do
     if (results.lookup id).isNone then throw s!"Missing successful result for v{id} {arm}"
   return results
@@ -63,7 +64,7 @@ private def summarize (arm : String) (scores : List Score) (results : List (Nat 
   [s!"{arm}: hits {(scores.map (·.found.length)).sum}, " ++
       s!"misses {(scores.map (·.missed.length)).sum}, alarms {(scores.map (·.falseAlarms)).sum}",
     Usage.line (Usage.total (results.map (·.2.agent))) s!"{arm} agent",
-    Usage.line (Usage.total (results.map (·.2.preparation))) s!"{arm} preparation"]
+    Usage.line (Usage.total (results.map (·.2.tools))) s!"{arm} checks"]
 
 structure Comparison where
   variants : Nat
@@ -122,6 +123,7 @@ private def hitSecond : Finding := ⟨"second clause", "weak", some "r1"⟩
 #guard lostPlants plants [hitFirst] [hitFirst, hitSecond] == []
 #guard lostPlants plants [hitFirst] [hitSecond] == [0]
 #guard (readArm "tools" [0] "").isOk == false
+#guard !(readKey "{\"variant\":1,\"plants\":[]}\n{\"variant\":0,\"plants\":[]}").isOk
 
 end Controls
 

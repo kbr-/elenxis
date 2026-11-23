@@ -1,4 +1,5 @@
 import SpecTools
+import SpecTools.FiniteGapsTests
 import SpecTools.AdversarialTests
 import SpecTools.DraftHook
 
@@ -383,6 +384,25 @@ def testUsage : IO Unit := do
   ensure (plain.exitCode == 0 && (← (dir / "ran").pathExists)) "the untraced run didn't run"
   ensure ((← traceDir.readDir).size == 1 && (← IO.FS.readFile traces[0]!) == traced)
     "a trace written though none was asked for"
+  let parallelFile := dir / "ParallelGaps.lean"
+  IO.FS.writeFile parallelFile ("import SpecTools.GapsRun\n" ++
+    "#eval SpecTools.Gaps.run [] (String.ofList (List.replicate 100003 'a')) " ++
+    "{ harness := .command \"sh\" [\"-c\", \"printf '{\\\"gaps\\\":[]}'\"], model := \"m\", " ++
+    "dataGoesTo := \"local\" }\n")
+  let parallelTrace := dir / "parallel-trace"
+  let parallel ← IO.Process.output {
+    cmd := "lake", args := #["env", "lean", parallelFile.toString]
+    env := #[("SPEC_TOOLS_TRACE", some parallelTrace.toString),
+      ("SPEC_TOOLS_GAP_READINGS", some "8")] }
+  ensure (parallel.exitCode == 0) s!"parallel gaps failed: {parallel.stdout}{parallel.stderr}"
+  let #[traceFile] ← parallelTrace.readDir |
+    throw (IO.userError "parallel readings did not share one process trace")
+  let lines := ((← IO.FS.readFile traceFile.path).splitOn "\n").filter (!·.isEmpty)
+  let records ← IO.ofExcept (lines.mapM Lean.Json.parse)
+  let prompts ← IO.ofExcept (records.mapM (·.getObjValAs? String "prompt"))
+  let expectedPrompt := String.ofList (List.replicate 100003 'a')
+  ensure (prompts.length == 8 && prompts.all (fun prompt => has prompt expectedPrompt))
+    "parallel gap traces lost or mixed records"
   IO.FS.removeDirAll dir
   IO.FS.removeDirAll dir2
   IO.println "PASS: usage (Claude Code, Codex, adapter file, unreported, gaps line, record, trace)"

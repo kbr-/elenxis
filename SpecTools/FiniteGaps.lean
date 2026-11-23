@@ -115,6 +115,7 @@ private def natLiteral (e : Expr) : Option Nat := do
   let value ← if let .lit (.natVal _) := e then some e else do
     let args ← arguments ``OfNat.ofNat 3 e
     guard (args[0]!.isConstOf ``Nat)
+    guard (args[2]! == mkApp (mkConst ``instOfNatNat) args[1]!)
     args[1]?
   match value with
   | .lit (.natVal n) => some n
@@ -132,6 +133,8 @@ private def sumFields (q : Expr) : Expr → Option (List String)
     | none => do
       let args ← arguments ``HAdd.hAdd 4 op
       guard ((args.extract 0 3).all (·.isConstOf ``Nat))
+      let addition ← arguments ``instHAdd 2 args[3]!
+      guard (addition[0]!.isConstOf ``Nat && addition[1]!.isConstOf ``instAddNat)
       return (← sumFields q left) ++ (← sumFields q right)
   | _ => none
 

@@ -1,4 +1,5 @@
 import SpecTools.Model
+import Std.Sync.Mutex
 
 /-!
 Recording a call's usage and trace, outside any specification:
@@ -29,12 +30,19 @@ def traceFile : IO (Option IO.FS.Handle) := do
   let path := System.FilePath.mk dir / s!"calls-{← IO.Process.getPID}.jsonl"
   return some (← IO.FS.Handle.mk path .append)
 
+private initialize journalLock : Std.Mutex Unit ← Std.Mutex.new ()
+
+private def appendRecord (handle : IO.FS.Handle) (record : Json) : IO Unit := do
+  let line := record.compress
+  journalLock.atomically do
+    handle.putStrLn line
+    handle.flush
+
 /-- Append `u` to the file `SPEC_TOOLS_USAGE` names, if set. -/
 def recordUsage (tool : String) (u : Usage) : IO Unit := do
   let some path ← IO.getEnv "SPEC_TOOLS_USAGE" | return
   let h ← IO.FS.Handle.mk path .append
-  h.putStrLn (Json.mkObj [("tool", Json.str tool), ("usage", asJson u)]).compress
-  h.flush
+  appendRecord h (Json.mkObj [("tool", Json.str tool), ("usage", asJson u)])
 
 /-- The records a usage file holds, totalled; an absent file holds none. -/
 def readRecorded (path : System.FilePath) : IO Usage := do
@@ -54,10 +62,9 @@ def askRecorded (tool : String) (runner : Runner) (allowed : List Backend) (back
     let answer := match result with
       | .ok o => Json.mkObj [("answer", o.answer)]
       | .error f => Json.mkObj [("failure", Json.str f.describe)]
-    h.putStrLn (Json.mkObj [("time", Json.str (toString (← IO.monoMsNow))), ("tool", Json.str tool),
+    appendRecord h (Json.mkObj [("time", Json.str (toString (← IO.monoMsNow))), ("tool", Json.str tool),
       ("backend", Json.str (brief backend)), ("prompt", Json.str question.prompt),
-      ("schema", question.schema), ("result", answer), ("usage", asJson u)]).compress
-    h.flush
+      ("schema", question.schema), ("result", answer), ("usage", asJson u)])
   return (result, u)
 
 end SpecTools.Usage
