@@ -14,6 +14,88 @@ theorem onRule_other (id index : Nat) (change : View → View) (views : List Vie
     (onRule id change views)[index]? = some other := by
   simp [onRule, atIndex, different]
 
+/-- An original view outside every selected plant survives the complete variant. -/
+theorem plantFold_preserves (plants : List GPlant) (views : List View) (index : Nat) (view : View)
+    (present : views[index]? = some view)
+    (untouched : ∀ plant ∈ plants, view.model.id ∉ plant.touches) :
+    (plants.foldl (fun vs p => p.apply vs) views)[index]? = some view := by
+  induction plants generalizing views with
+  | nil => exact present
+  | cons plant rest ih =>
+    exact ih (plant.apply views)
+      (plant.preserves views index view present (untouched plant (by simp)))
+      (fun p hp => untouched p (List.mem_cons_of_mem _ hp))
+
+theorem gvariant_preserves (rs : List Rule) (extra : Rule) (seed index empty : Nat)
+    (shapes : List String) (perVariant : Option Nat) (position : Nat) (view : View)
+    (present : (rs.map View.plain)[position]? = some view)
+    (untouched : ∀ p ∈ (gvariant rs extra seed index empty shapes perVariant).2,
+      view.model.id ∉ p.touches) :
+    ((gvariant rs extra seed index empty shapes perVariant).1)[position]? = some view :=
+  plantFold_preserves _ _ _ _ present untouched
+
+theorem borrowedTheoremFor_spec (rs : List Rule) (r : Rule) (borrowed : Nat)
+    (selected : borrowedTheoremFor rs r = some borrowed) :
+    borrowed ≠ r.id ∧ ∃ other ∈ rs, other.id = borrowed := by
+  dsimp [borrowedTheoremFor] at selected
+  split at selected
+  · rename_i eligible
+    simp only [Option.some.injEq] at selected
+    subst borrowed
+    simpa using eligible
+  · contradiction
+
+theorem borrowedTheoremFor_singleton (r : Rule) :
+    borrowedTheoremFor [r] r = none := by
+  by_cases zero : r.id = 0 <;> simp [borrowedTheoremFor, Nat.mod_one, zero, Ne.symm]
+
+theorem extra_requires_fresh_id (rs : List Rule) (extra : Rule)
+    (existing : ∃ r ∈ rs, r.id = extra.id) :
+    candidates rs extra "extra" = [] := by
+  have found : rs.any (·.id == extra.id) = true := by simpa using existing
+  simp [candidates, found]
+
+open SpecTools.FiniteGaps in
+/-- At a request that qualifies for the original exception, dropping it adds a refusal. -/
+theorem droppedException_extra (rule : Rule) (request : Request) (flag : String)
+    (named : rule.flag = some flag) (active : 0 < request.get flag)
+    (kind : request.kind = rule.kind) (bound : rule.bound ≤ (rule.measures.map request.get).sum) :
+    compareAt rule.scope ({ rule with flag := none } : Rule).scope request =
+      some .extraRefusal := by
+  apply (extra_refusal _ _ _).mpr
+  exact ⟨exempt_request _ _ flag (by simp [Rule.scope, named]) active,
+    by simp [Rule.scope, Scope.holds, kind, bound]⟩
+
+open SpecTools.FiniteGaps in
+/-- A prose-only twin exception excludes a refusal still made by the unflagged model. -/
+theorem twinException_extra (rule : Rule) (request : Request) (flag : String)
+    (unflagged : rule.flag = none) (active : 0 < request.get flag)
+    (kind : request.kind = rule.kind) (bound : rule.bound ≤ (rule.measures.map request.get).sum) :
+    compareAt ({ rule with flag := some flag } : Rule).scope rule.scope request =
+      some .extraRefusal := by
+  apply (extra_refusal _ _ _).mpr
+  exact ⟨exempt_request _ _ flag rfl active, by simp [Rule.scope, Scope.holds, unflagged, kind, bound]⟩
+
+open SpecTools.FiniteGaps in
+/-- When the total reaches the cutoff through omitted measures, the single-measure plant misses it. -/
+theorem omittedMeasure_missing (rule : Rule) (request : Request) (first : String)
+    (refused : rule.scope.holds request = true) (firstBelow : request.get first < rule.bound) :
+    compareAt rule.scope ({ rule with measures := [first] } : Rule).scope request =
+      some .missingRefusal :=
+  (missing_refusal _ _ _).mpr ⟨refused,
+    by simp [Rule.scope, Scope.holds, Nat.not_le_of_lt firstBelow]⟩
+
+open SpecTools.FiniteGaps in
+/-- A first-measure refusal still fires the original sum when it includes that first measure. -/
+theorem omittedMeasure_weakening (rule : Rule) (request : Request) (first : String)
+    (rest : List String) (measures : rule.measures = first :: rest)
+    (refused : ({ rule with measures := [first] } : Rule).scope.holds request = true) :
+    rule.scope.holds request = true := by
+  simp only [Rule.scope, Scope.holds, Bool.and_eq_true, List.map_cons, List.map_nil,
+    List.sum_cons, List.sum_nil, Nat.add_zero, Option.all_none, and_true, measures] at *
+  rcases refused with ⟨⟨kind, bound⟩, flag⟩
+  exact ⟨⟨kind, decide_eq_true (Nat.le_trans (of_decide_eq_true bound) (Nat.le_add_right _ _))⟩, flag⟩
+
 open SpecTools.FiniteGaps in
 /-- Raising a refusal bound cannot create a refusal anywhere in the request domain. -/
 theorem raisedBound_weakening (rule : Rule) (request : Request)

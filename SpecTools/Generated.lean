@@ -289,12 +289,15 @@ def leanTheorems (v : View) : String :=
 
 def rowId (r : Rule) : String := s!"r{r.id}"
 
+private def View.hasRuleTheoremBinding (view : View) : Bool :=
+  !view.omitTheorem || view.borrowsTheorem.isSome
+
 def leanRows (vs : List View) : String :=
   let row (v : View) : List String :=
     let r := v.prose.getD v.model
     let j := v.borrowsTheorem.getD r.id
     -- A theorem left out with none borrowed leaves the row naming none: the audit's "not stated".
-    let named := if v.omitTheorem && v.borrowsTheorem.isNone then "theorems := []"
+    let named := if !v.hasRuleTheoremBinding then "theorems := []"
       else
         let subject := v.borrowsTheorem.bind
           (fun id => vs.find? (fun candidate => candidate.model.id == id))
@@ -350,8 +353,10 @@ def leanFiles (views : List View) (root toolchain : String) : List (String × St
    ("ProofObligations.lean", "import Implementation\n\nnamespace Loans\n\n" ++
      "theorem refused_iff (q : Req) : refused q = true ↔ requiresRefusal q :=\n" ++
      "  List.any_eq_true\n\n" ++
-     "theorem refused_of (r : Rule) (q : Req) (h : r ∈ rules) (hf : fires r q = true) :\n" ++
-     "    refused q = true := (refused_iff q).mpr ⟨r, h, hf⟩\n\n" ++
+     (if views.any View.hasRuleTheoremBinding then
+       "theorem refused_of (r : Rule) (q : Req) (h : r ∈ rules) (hf : fires r q = true) :\n" ++
+       "    refused q = true := (refused_iff q).mpr ⟨r, h, hf⟩\n\n"
+     else "") ++
      "\n\n".intercalate (views.map leanTheorems) ++ "\n\nend Loans\n"),
    ("Ledger.lean", "import SpecTools.Audit\nimport ProofObligations\n\n" ++
      "namespace Loans\nopen SpecTools.Ledger\n\n" ++
@@ -384,11 +389,36 @@ structure GPlant where
   clause : String
   touches : List Nat
   apply : List View → List View
+  preserves : ∀ (views : List View) (index : Nat) (view : View),
+    views[index]? = some view → view.model.id ∉ touches → (apply views)[index]? = some view
 
-instance : Inhabited GPlant := ⟨{ kind := "", clause := "", touches := [], apply := id }⟩
+instance : Inhabited GPlant :=
+  ⟨{ kind := "", clause := "", touches := [], apply := id, preserves := fun _ _ _ h _ => h }⟩
 
 def onRule (id : Nat) (f : View → View) (vs : List View) : List View :=
   vs.map fun v => if v.model.id == id then f v else v
+
+private def GPlant.edit (kind clause : String) (rule : Rule) (dependencies : List Nat)
+    (change : View → View) : GPlant where
+  kind := kind
+  clause := clause
+  touches := rule.id :: dependencies
+  apply := onRule rule.id change
+  preserves := by
+    intro views index view present untouched
+    have different : view.model.id ≠ rule.id :=
+      fun equal => untouched (by simp [equal])
+    simp [onRule, present, different]
+
+private def GPlant.extend (rule : Rule) : GPlant where
+  kind := "extra"
+  clause := ruleSentence rule
+  touches := [rule.id]
+  apply := fun views => views ++ [{ (View.plain rule) with prose := none }]
+  preserves := by
+    intro views index view present _
+    rw [List.getElem?_append_left (List.getElem?_eq_some_iff.mp present).choose]
+    exact present
 
 /-- The ten shapes a plant takes: the seven kinds, then the three shapes of a shared blind spot. -/
 def shapes : List String := ["uncovered", "too weak", "vacuous", "extra", "undecided",
@@ -400,62 +430,58 @@ def blindShapes : List String := shapes.drop 7
 def leanShapes : List String :=
   shapes.filter fun shape => shape != "missing test" && shape != "weak test"
 
+/-- A borrowed theorem must belong to an existing, distinct rule in the fixture. -/
+def borrowedTheoremFor (rs : List Rule) (r : Rule) : Option Nat :=
+  let j := (r.id + 1) % rs.length
+  if j != r.id && rs.any (·.id == j) then some j else none
+
 /-- The plants of shape `shape` the rules `rs` allow, with `extra` the rule beyond the list. -/
 def candidates (rs : List Rule) (extra : Rule) (shape : String) : List GPlant :=
-  let n := rs.length
   -- A plant changes one clause, the one its key names: the extra rule carries no exception, and
   -- undecided removes a rule with none, so no second clause changes with it.
   let extra := { extra with flag := none }
   let blind := "shared blind spot"
   match shape with
   | "uncovered" => rs.map fun r =>
-      let j := (r.id + 1) % n
-      { kind := "uncovered", clause := ruleSentence r, touches := [r.id, j],
-        apply := onRule r.id fun v => { v with omitTheorem := true, borrowsTheorem := some j } }
+      let borrowed := borrowedTheoremFor rs r
+      GPlant.edit "uncovered" (ruleSentence r) r borrowed.toList
+        fun v => { v with omitTheorem := true, borrowsTheorem := borrowed }
   | "too weak" => rs.map fun r =>
-      { kind := "too weak", clause := ruleSentence r, touches := [r.id],
-        apply := onRule r.id fun v => { v with theorem_ := { r with bound := r.bound + 1 } } }
+      GPlant.edit "too weak" (ruleSentence r) r []
+        fun v => { v with theorem_ := { r with bound := r.bound + 1 } }
   | "vacuous" => rs.map fun r =>
-      { kind := "vacuous", clause := ruleSentence r, touches := [r.id],
-        apply := onRule r.id fun v => { v with vacuous := true } }
+      GPlant.edit "vacuous" (ruleSentence r) r [] fun v => { v with vacuous := true }
   | "extra" =>
-    [{ kind := "extra", clause := ruleSentence extra, touches := [extra.id],
-       apply := fun vs => vs ++ [{ (View.plain extra) with prose := none }] }]
+      if rs.any (·.id == extra.id) then [] else [GPlant.extend extra]
   | "undecided" => (rs.filter (·.flag.isNone)).map fun r =>
-      { kind := "undecided", clause := ruleSentence r, touches := [r.id],
-        apply := onRule r.id fun v => { v with prose := none } }
+      GPlant.edit "undecided" (ruleSentence r) r [] fun v => { v with prose := none }
   | "missing test" => rs.map fun r =>
-      { kind := "missing test", clause := ruleSentence r, touches := [r.id],
-        apply := onRule r.id fun v => { v with testRenamed := true } }
+      GPlant.edit "missing test" (ruleSentence r) r [] fun v => { v with testRenamed := true }
   | "weak test" => rs.map fun r =>
-      { kind := "weak test", clause := ruleSentence r, touches := [r.id],
-        apply := onRule r.id fun v => { v with testBelow := true } }
+      GPlant.edit "weak test" (ruleSentence r) r [] fun v => { v with testBelow := true }
   | "exception dropped" => rs.filterMap fun r => r.flag.map fun f =>
       let r' := { r with flag := none }
-      { kind := blind, clause := flagSentence r f, touches := [r.id],
-        apply := onRule r.id fun v =>
-          { v with model := r', python := r', test := some r', theorem_ := r' } }
+      GPlant.edit blind (flagSentence r f) r [] fun v =>
+        { v with model := r', python := r', test := some r', theorem_ := r' }
   | "twin exception" => rs.filterMap fun r =>
       -- The prose gives r the exception of a flagged twin (another kind on the same measure).
       if r.flag.isSome then none else
       (rs.find? fun t => t.flag.isSome && t.kind != r.kind && t.measures.head? == r.measures.head?).bind
         fun t => t.flag.map fun f =>
-          { kind := blind, clause := flagSentence r f, touches := [r.id, t.id],
-            apply := onRule r.id fun v => { v with prose := some { r with flag := some f } } }
+          GPlant.edit blind (flagSentence r f) r [t.id]
+            fun v => { v with prose := some { r with flag := some f } }
   | "sum on one measure" => rs.filterMap fun r =>
       match r.measures with
       | m :: _ :: _ =>
         let r' := { r with measures := [m] }
-        some { kind := blind, clause := ruleSentence r, touches := [r.id],
-               apply := onRule r.id fun v =>
-                 { v with model := r', python := r', test := some r', theorem_ := r' } }
+        some (GPlant.edit blind (ruleSentence r) r [] fun v =>
+          { v with model := r', python := r', test := some r', theorem_ := r' })
       | _ => none
   -- Every artifact holds the limit one higher than the prose: they agree with one another.
   | "limit moved" => rs.map fun r =>
       let r' := { r with bound := r.bound + 1 }
-      { kind := blind, clause := ruleSentence r, touches := [r.id],
-        apply := onRule r.id fun v =>
-          { v with model := r', python := r', test := some r', theorem_ := r' } }
+      GPlant.edit blind (ruleSentence r) r [] fun v =>
+        { v with model := r', python := r', test := some r', theorem_ := r' }
   | _ => []
 
 /-! Scoring `gaps` by row: a gap names a ledger row (`rK` or `rK-exempt`), a plant a clause; both
