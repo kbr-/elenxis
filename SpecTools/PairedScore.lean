@@ -127,21 +127,4 @@ def compare (key tools confirmed : String) : Except String Comparison := do
     reports.reverse ++ summarize "tools" baselineScores baseline ++
     summarize "confirmed" candidateScores candidate⟩
 
-section Controls
-#guard (readArm "tools" [0] "").isOk == false
-#guard !(readKey "{\"variant\":1,\"plants\":[]}\n{\"variant\":0,\"plants\":[]}").isOk
-
-private def attempt (failed : Bool) : String :=
-  let usage := Usage.asJson { calls := 1 }
-  let result := if failed then ("error", Json.str "exit 1") else ("findings", Json.arr #[])
-  (Json.mkObj [("variant", toJson (0 : Nat)), ("arm", toJson "tools"),
-    ("usage", usage), ("tools_usage", usage), result]).compress
-
-#guard ((readArm "tools" [0] (attempt true ++ "\n" ++ attempt false)).toOption.map
-  (fun journal => (journal.results.length, journal.agent.calls, journal.tools.calls))) ==
-  some (1, 2, 2)
-#guard !(readArm "tools" [0] (attempt true)).isOk
-
-end Controls
-
 end SpecTools.PairedScore

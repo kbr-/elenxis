@@ -130,6 +130,49 @@ def auditCase (dir : System.FilePath) (name body : String) : IO (UInt32 × Strin
 
 def has (text needle : String) : Bool := (text.splitOn needle).length > 1
 
+open Lean in
+/-- A saved retry contributes both usage receipts and needs exactly one success per keyed arm. -/
+def testPairedJournals : IO Unit := IO.FS.withTempDir fun dir => do
+  let key := dir / "key.jsonl"
+  let tools := dir / "results-tools.jsonl"
+  let confirmed := dir / "results-confirmed.jsonl"
+  let keyRow (variant : Nat) :=
+    (Json.mkObj [("variant", toJson variant), ("plants", Json.arr #[])]).compress ++ "\n"
+  let attempt (arm : String) (agentCalls toolCalls : Nat) (outcome : String × Json) :=
+    (Json.mkObj [("variant", toJson (0 : Nat)), ("arm", toJson arm),
+      ("usage", SpecTools.Usage.asJson { calls := agentCalls }),
+      ("tools_usage", SpecTools.Usage.asJson { calls := toolCalls }), outcome]).compress ++ "\n"
+  let success := ("findings", Json.arr #[])
+  let failed := attempt "tools" 2 3 ("error", Json.str "exit 1")
+  let completed := attempt "tools" 5 7 success
+  let run := IO.Process.output {
+    cmd := "lake", args := #["exe", "spec-tools", "synthetic", "compare", dir.toString] }
+  IO.FS.writeFile key (keyRow 0)
+  IO.FS.writeFile confirmed (attempt "confirmed" 11 13 success)
+  IO.FS.writeFile tools (failed ++ completed)
+  let accepted ← run
+  ensure (accepted.exitCode == 0 && has accepted.stdout
+    "1 paired variants, 1 controls, 0 lost hits, 0 confirmed control alarms, acceptance met")
+    (accepted.stdout ++ accepted.stderr)
+  for (calls, label) in [(7, "tools agent attempts"), (10, "tools checks across attempts"),
+      (11, "confirmed agent attempts"), (13, "confirmed checks across attempts")] do
+    ensure ((accepted.stdout.splitOn "\n").any fun line =>
+      line.startsWith s!"usage: {calls} calls;" && has line label) accepted.stdout
+  for (rows, error) in [("", "Missing successful result for v0 tools"),
+      (failed, "Missing successful result for v0 tools"),
+      (completed ++ completed, "Duplicate success for v0 tools")] do
+    IO.FS.writeFile tools rows
+    let refused ← run
+    ensure (refused.exitCode == 2 && has refused.stderr error && !has refused.stdout "acceptance")
+      (refused.stdout ++ refused.stderr)
+  IO.FS.writeFile tools completed
+  IO.FS.writeFile key (keyRow 1 ++ keyRow 0)
+  let reordered ← run
+  ensure (reordered.exitCode == 2 &&
+    has reordered.stderr "The key needs variant IDs in order starting at zero" &&
+    !has reordered.stdout "acceptance") (reordered.stdout ++ reordered.stderr)
+  IO.println "PASS: paired journal CLI (retry usage, missing and duplicate results, key order)"
+
 def testToolchain : IO Unit := do
   for fixture in ["FiniteScope", "AdversarialAdmission"] do
     let result ← IO.Process.output {
@@ -699,6 +742,7 @@ def main : IO Unit := do
   -- the one global, set after all of them end.
   let groups ← [("command adapter", testCommandAdapter), ("usage", testUsage), ("prose", testProse),
       ("owners", testOwners), ("tool preparation", testPrepareReports),
+      ("paired journals", testPairedJournals),
       ("requirement audits", testRequirementAudits), ("finished process", testFinishedProcess),
       ("overrun", testOverrun), ("full codex prompt", testFullCodexPrompt),
       ("draft review", testDraftReview), ("approved contracts", testApprovedContracts),
