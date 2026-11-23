@@ -17,7 +17,9 @@ A proved theorem can cover only part of a requirement, rely on impossible hypoth
 rule the user never requested. An entire requirement can also be missing from the specification.
 Those gaps matter even when the proofs compile and the tests pass.
 
-## A one-minute demo (synthetic)
+## Examples
+
+### A one-minute demo (synthetic)
 
 [`examples/age-limit`](examples/age-limit) is a synthetic demonstration, designed for this README.
 The requirement, `loans.md`:
@@ -67,15 +69,7 @@ The outputs above are those of one run each, on Opus (`claude-opus-5-5`) at medi
 through Claude Code ([`examples/backend.json`](examples/backend.json)). A model's wording varies
 from run to run, and so can its findings; the audit's lines don't.
 
-## Worked example: a salon booking call
-
-In a fictional first call about online bookings, the salon owner gives two different no-show limits
-for children's haircuts and leaves the unpaid-visit threshold open. The benchmark tests for both
-kinds of ambiguity alongside rules deliberately missed by the Lean specification, Python
-implementation and tests. The example includes the dialogue, scoring key, measured results and
-commands to reproduce them. [Salon's first booking call](examples/owners/salon-call/README.md)
-
-## Sorting in Lean 4 (synthetic)
+### Sorting in Lean 4 (synthetic)
 
 With the prompt `Sorting spec in Lean 4`, `spec-tools ask` generated this Lean postcondition in its
 `lean` field. Lean accepted the definition.
@@ -132,6 +126,14 @@ example=examples/sorting
 "$cli" draft-review codex gpt-6.2-sol "$example/prompt.txt" "$example/inventory.json" "$example/too-weak.json"
 "$cli" draft-review codex gpt-6.2-sol "$example/prompt.txt" "$example/inventory.json" "$example/too-strong.json"
 ```
+
+### Worked example: a salon booking call
+
+In a fictional first call about online bookings, the salon owner gives two different no-show limits
+for children's haircuts and leaves the unpaid-visit threshold open. The benchmark tests for both
+kinds of ambiguity alongside rules deliberately missed by the Lean specification, Python
+implementation and tests. The example includes the dialogue, scoring key, measured results and
+commands to reproduce them. [Salon's first booking call](examples/owners/salon-call/README.md)
 
 ## What Lean checks, and what the model checks
 
