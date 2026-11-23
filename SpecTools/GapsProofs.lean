@@ -42,22 +42,45 @@ example : (verdict (fun n => if n == `t then some { statement := "", axioms := [
 /-- Witness: a proposal naming a row the ledger lacks. -/
 example : ∀ r ∈ [({ id := "r", clause := "c" } : Row)], r.id ≠ "s" := by decide
 
+theorem mergeReadings_wrong_count (rows : List Row) (count : Nat)
+    (readings : List (List Proposal)) (wrong : readings.length ≠ count) :
+    ∃ message, mergeReadings rows count readings = .error message := by
+  have refused : (decide (count = 0) || readings.length != count) = true := by simp [wrong]
+  unfold mergeReadings
+  rw [ite_eq_left refused]
+  exact ⟨_, rfl⟩
+
+theorem mergeReadings_majority (rows : List Row) (count : Nat)
+    (readings : List (List Proposal)) (parsed : List (List Gap)) (result : List Gap)
+    (parses : readings.mapM (List.mapM (accept rows)) = .ok parsed)
+    (merged : mergeReadings rows count readings = .ok result) :
+    ∀ key, (∃ gap ∈ result, gap.key = key) ↔
+      (∃ gap ∈ parsed.flatten, gap.key = key) ∧ count < 2 * votes key parsed := by
+  unfold mergeReadings at merged
+  split at merged
+  · cases merged
+  · rw [parses] at merged
+    have resultEq := Except.ok.inj merged
+    rw [← resultEq]
+    intro key
+    constructor
+    · rintro ⟨gap, member, same⟩
+      obtain ⟨candidate, _, emitted⟩ := List.mem_filterMap.mp member
+      split at emitted
+      · rename_i majority
+        have sameCandidate : gap.key = candidate := by simpa using List.find?_some emitted
+        refine ⟨⟨gap, List.mem_of_find?_eq_some emitted, same⟩, ?_⟩
+        rw [← same, sameCandidate]
+        exact (majority_iff count candidate parsed).mp majority
+      · simp at emitted
+    · rintro ⟨⟨gap, source, same⟩, majority⟩
+      have inKeys : key ∈ (parsed.flatten.map Gap.key).eraseDups :=
+        List.mem_eraseDups.mpr (List.mem_map.mpr ⟨gap, source, same⟩)
+      have allowed := (majority_iff count key parsed).mpr majority
+      cases found : parsed.flatten.find? (fun g => g.key == key) with
+      | none => exact False.elim ((List.find?_eq_none.mp found) gap source (by simp [same]))
+      | some representative =>
+        exact ⟨representative, List.mem_filterMap.mpr ⟨key, inKeys, by simp [allowed, found]⟩,
+          by simpa using List.find?_some found⟩
+
 end SpecTools.Gaps
-
-section ConfirmationControls
-open SpecTools.Gaps SpecTools.Ledger
-
-private def readingRow : Row := { id := "limit", clause := "Refuse at the limit." }
-private def weakReading : Proposal := ⟨"too weak", "limit", "A boundary case is missing."⟩
-private def extraReading : Proposal := ⟨"extra", "limit", "An extra premise is required."⟩
-
-#guard (mergeReadings [readingRow] 3 [[weakReading, weakReading], [extraReading], []]).toOption ==
-  some []
-#guard ((mergeReadings [readingRow] 3 [[weakReading], [weakReading], []]).toOption.map
-  (List.map Gap.key)) == some [("limit", .tooWeak)]
-#guard (mergeReadings [readingRow] 5 [[weakReading], [weakReading], [], [], []]).toOption == some []
-#guard ((mergeReadings [readingRow] 5 [[weakReading], [weakReading], [weakReading], [], []]).toOption.map
-  (List.map Gap.key)) == some [("limit", .tooWeak)]
-#guard !(mergeReadings [readingRow] 3 [[weakReading], [weakReading]]).isOk
-
-end ConfirmationControls

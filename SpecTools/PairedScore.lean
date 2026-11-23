@@ -47,17 +47,31 @@ def lostPlants (plants : List Plant) (baseline candidate : List Finding) : List 
   plants.zipIdx.filterMap fun (plant, index) =>
     if baseline.any (names · plant) && !candidate.any (names · plant) then some index else none
 
+theorem lostPlants_iff (plants : List Plant) (baseline candidate : List Finding) (index : Nat) :
+    index ∈ lostPlants plants baseline candidate ↔
+      ∃ plant, plants[index]? = some plant ∧ baseline.any (names · plant) = true ∧
+        candidate.any (names · plant) = false := by
+  constructor
+  · intro member
+    obtain ⟨⟨plant, position⟩, source, chosen⟩ := List.mem_filterMap.mp member
+    by_cases hit : baseline.any (names · plant) = true
+    · cases retained : candidate.any (names · plant)
+      · have same : position = index := by simpa [hit, retained] using chosen
+        exact ⟨plant, same ▸ List.mem_zipIdx_iff_getElem?.mp source, hit, retained⟩
+      · simp [hit, retained] at chosen
+    · simp [hit] at chosen
+  · rintro ⟨plant, source, hit, lost⟩
+    exact List.mem_filterMap.mpr
+      ⟨(plant, index), List.mem_zipIdx_iff_getElem?.mpr source, by simp [hit, lost]⟩
+
 theorem lostPlants_covered (plants : List Plant) (baseline candidate : List Finding)
     (noLoss : ∀ plant ∈ plants, baseline.any (names · plant) = true →
       candidate.any (names · plant) = true) : lostPlants plants baseline candidate = [] := by
   apply List.eq_nil_iff_forall_not_mem.mpr
   intro index found
-  obtain ⟨⟨plant, i⟩, source, selected⟩ := List.mem_filterMap.mp found
-  have inPlants := List.mem_iff_getElem?.mpr ⟨i, List.mem_zipIdx_iff_getElem?.mp source⟩
-  by_cases hit : baseline.any (names · plant) = true
-  · have kept := noLoss plant inPlants hit
-    simp [hit, kept] at selected
-  · simp [hit] at selected
+  obtain ⟨plant, source, hit, lost⟩ := (lostPlants_iff plants baseline candidate index).mp found
+  have retained := noLoss plant (List.mem_iff_getElem?.mpr ⟨index, source⟩) hit
+  simp [retained] at lost
 
 private def summarize (arm : String) (scores : List Score) (journal : Journal) :
     List String :=
@@ -76,6 +90,12 @@ structure Comparison where
 def acceptance (comparisons : List Comparison) : Bool :=
   (comparisons.map (·.controls)).sum > 0 &&
     comparisons.all fun result => result.losses == 0 && result.controlAlarms == 0
+
+theorem acceptance_iff (comparisons : List Comparison) :
+    acceptance comparisons = true ↔
+      0 < (comparisons.map (·.controls)).sum ∧
+        ∀ comparison ∈ comparisons, comparison.losses = 0 ∧ comparison.controlAlarms = 0 := by
+  simp [acceptance]
 
 /-- Compare complete journals on the same key, including the identities of the retained plants. -/
 def compare (key tools confirmed : String) : Except String Comparison := do
@@ -107,21 +127,7 @@ def compare (key tools confirmed : String) : Except String Comparison := do
     reports.reverse ++ summarize "tools" baselineScores baseline ++
     summarize "confirmed" candidateScores candidate⟩
 
-#guard acceptance [⟨2, 0, 0, 0, []⟩, ⟨1, 1, 0, 0, []⟩]
-#guard !acceptance [⟨2, 0, 0, 0, []⟩]
-#guard !acceptance [⟨2, 1, 1, 0, []⟩]
-#guard !acceptance [⟨2, 1, 0, 1, []⟩]
-
 section Controls
-
-private def plants : List Plant :=
-  [⟨"weak", "first clause", [], some "r0"⟩, ⟨"weak", "second clause", [], some "r1"⟩]
-
-private def hitFirst : Finding := ⟨"first clause", "weak", some "r0"⟩
-private def hitSecond : Finding := ⟨"second clause", "weak", some "r1"⟩
-
-#guard lostPlants plants [hitFirst] [hitFirst, hitSecond] == []
-#guard lostPlants plants [hitFirst] [hitSecond] == [0]
 #guard (readArm "tools" [0] "").isOk == false
 #guard !(readKey "{\"variant\":1,\"plants\":[]}\n{\"variant\":0,\"plants\":[]}").isOk
 

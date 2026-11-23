@@ -91,24 +91,24 @@ def decode [FromJson Snapshot] (count : Nat) (raw : String) :
     if records.length = count then .ok records
     else .error s!"expected {count} observations, got {records.length}"
 
-theorem decode_length [FromJson Snapshot] (count : Nat) (raw : String)
-    (records : List (Observation Snapshot)) (h : decode count raw = .ok records) :
-    records.length = count := by
-  unfold decode at h
+theorem decode_ok_iff [FromJson Snapshot] (count : Nat) (raw : String)
+    (records : List (Observation Snapshot)) :
+    decode count raw = .ok records ↔
+      (Json.parse raw).bind fromJson? = .ok records ∧ records.length = count := by
+  unfold decode
   cases parsed : ((Json.parse raw).bind fromJson? : Except String (List (Observation Snapshot))) with
-  | error message => simp [parsed] at h
+  | error message => simp
   | ok result =>
     by_cases hs : result.length = count
-    · simp [parsed, hs] at h
-      subst records
-      exact hs
-    · simp [parsed, hs] at h
+    · simp [hs]
+      grind
+    · simp [hs]
+      grind
 
-#guard (decode (Snapshot := Nat) 1 "[").isOk == false
-#guard (decode (Snapshot := Nat) 1 "[{\"accepted\":true}]").isOk == false
-#guard (decode (Snapshot := Nat) 1 "[]").isOk == false
-#guard (decode (Snapshot := Nat) 0 "[{\"accepted\":true,\"state\":1}]").isOk == false
-#guard (decode (Snapshot := Nat) 1 "[{\"accepted\":true,\"state\":1}]").isOk
+theorem decode_length [FromJson Snapshot] (count : Nat) (raw : String)
+    (records : List (Observation Snapshot)) (h : decode count raw = .ok records) :
+    records.length = count :=
+  ((decode_ok_iff count raw records).mp h).2
 
 def run [ToJson State] [ToJson Operation] [DecidableEq Snapshot]
     [ToJson Snapshot] [FromJson Snapshot] (tr : Trace State Operation)

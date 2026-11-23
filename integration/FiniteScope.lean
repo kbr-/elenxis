@@ -1,6 +1,8 @@
 import SpecTools.FiniteGaps
 import Lean.Elab.Command
 
+/-! Exercise extraction from declarations elaborated by the actual Lean toolchain. -/
+
 namespace Loans
 
 structure Req where

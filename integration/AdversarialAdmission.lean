@@ -61,14 +61,7 @@ def expectRefusal (label : String) (action : CommandElabM Unit) : CommandElabM U
 
 axiom unsupportedRefutation : ¬ meaning noOp
 
-/-- error: AdversarialFixture.conformance: no cheapest-wrong-model refutation supplied -/
-#guard_msgs in
-adversarial_claim ({ entry with attacks := [] } : SemanticEntry) in
-theorem shouldNeverElaborate : True := True.intro
-
 run_cmd do
-  if (← getEnv).contains `AdversarialFixture.shouldNeverElaborate then
-    throwError "The rejected claim elaborated its body before admission"
   let before ← get
   let unrelated ← `(command|
     adversarial_claim entry in

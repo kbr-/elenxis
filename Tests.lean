@@ -1,6 +1,4 @@
 import SpecTools
-import SpecTools.FiniteGapsTests
-import SpecTools.AdversarialTests
 import SpecTools.DraftHook
 
 open SpecTools.DraftHook in
@@ -122,6 +120,18 @@ def auditCase (dir : System.FilePath) (name body : String) : IO (UInt32 × Strin
   return (out.exitCode, out.stdout ++ out.stderr)
 
 def has (text needle : String) : Bool := (text.splitOn needle).length > 1
+
+def testToolchain : IO Unit := do
+  for fixture in ["FiniteScope", "AdversarialAdmission"] do
+    let result ← IO.Process.output {
+      cmd := "lake", args := #["env", "lean", s!"integration/{fixture}.lean"] }
+    ensure (result.exitCode == 0) (result.stdout ++ result.stderr)
+  let rejection ← IO.Process.output {
+    cmd := "lake", args := #["env", "lean", "integration/RejectedClaim.lean"] }
+  let messages := rejection.stdout ++ rejection.stderr
+  ensure (rejection.exitCode != 0 && has messages "no cheapest-wrong-model refutation supplied" &&
+    !has messages "A refused declaration must not elaborate its body") messages
+  IO.println "PASS: Lean toolchain (scope extraction, admission, refusal before body elaboration)"
 
 def testApprovedContracts : IO Unit := do
   let dir ← scratch "approved-contracts"
@@ -667,7 +677,7 @@ def main : IO Unit := do
       ("requirement audits", testRequirementAudits), ("finished process", testFinishedProcess),
       ("overrun", testOverrun), ("full codex prompt", testFullCodexPrompt),
       ("draft review", testDraftReview), ("approved contracts", testApprovedContracts),
-      ("audit", testAudit)].mapM fun (name, action) => timed name action
+      ("audit", testAudit), ("Lean toolchain", testToolchain)].mapM fun (name, action) => timed name action
   let outcomes := groups.map (·.get)
   for outcome in outcomes do IO.ofExcept outcome
   IO.println "PASS: audit (pass, unchanged, changed, missing, unclaimed, axiom, vacuous)"
