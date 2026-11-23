@@ -27,12 +27,12 @@ theorem refuses_minors (age : Nat) (h : age < 16) : decide age = .refused := by
   simp [decide, h]
 
 /-- The hypothesis can hold: a 15-year-old applicant. -/
-theorem minor_exists : ∃ age : Nat, age < 16 := ⟨15, by decide⟩
+theorem minor_exists : ∃ age : Nat, ∃ _h : age < 16, True := ⟨15, by decide, trivial⟩
 
 def ledger : List SpecTools.Ledger.Row := [
   { id := "minors", source := "loans.md, 1",
     clause := "A loan is refused to an applicant under 18.",
-    theorems := [``refuses_minors], witnesses := [``minor_exists] } ]
+    theorems := [``refuses_minors], evidence := [⟨``refuses_minors, ``minor_exists, .inhabited⟩] } ]
 
 end AgeLimit
 

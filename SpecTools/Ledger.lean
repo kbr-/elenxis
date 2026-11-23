@@ -17,6 +17,22 @@ inductive Status where
   | accepted (decision : String)
   deriving Repr, BEq, Inhabited
 
+inductive EvidenceKind where
+  | inhabited
+  | inconsistent
+  deriving Repr, DecidableEq, Inhabited
+
+def EvidenceKind.label : EvidenceKind → String
+  | .inhabited => "inhabitation"
+  | .inconsistent => "contradiction"
+
+/-- A proposed proof about the premise domain of a particular theorem. -/
+structure EvidenceBinding where
+  subject : Name
+  proofName : Name
+  kind : EvidenceKind := .inhabited
+  deriving Repr, DecidableEq, Inhabited
+
 /-- One clause of the prose and what covers it. -/
 structure Row where
   id : String
@@ -26,12 +42,21 @@ structure Row where
   source : String := ""
   /-- Theorems establishing the clause. -/
   theorems : List Name := []
-  /-- Theorems exhibiting inputs that meet the clause's theorems' hypotheses. -/
+  /-- Legacy witness names, retained for declaration coverage. -/
   witnesses : List Name := []
   /-- Tests covering the clause in other languages, by name. -/
   tests : List String := []
   status : Status := .covered
+  /-- Claims about individual theorem premise domains, checked by the audit. -/
+  evidence : List EvidenceBinding := []
   deriving Repr, Inhabited
+
+abbrev CheckedEvidence := EvidenceBinding → Bool
+
+def hasEvidence (checked : CheckedEvidence) (bindings : List EvidenceBinding)
+    (subject : Name) (kind : EvidenceKind) : Bool :=
+  bindings.any fun binding =>
+    decide (binding.subject = subject) && decide (binding.kind = kind) && checked binding
 
 inductive StatementKind where
   | theoremStatement
@@ -65,8 +90,9 @@ inductive Verdict where
   | notStated
   /-- A theorem rests on an axiom outside the accepted three. -/
   | conditional (axioms : List Name)
-  /-- A theorem has hypotheses and the row gives no witness that they can hold. -/
+  /-- A theorem has premises without a checked certificate of inhabitation. -/
   | tooWeakOrVacuous
+  | inconsistentPremises
   | proved
   | specified
   | notProposition (name : Name)
@@ -77,7 +103,8 @@ def Verdict.label : Verdict → String
   | .missing n => s!"names {n}, which is no theorem"
   | .notStated => "not stated"
   | .conditional _ => "conditional"
-  | .tooWeakOrVacuous => "too weak or vacuous"
+  | .tooWeakOrVacuous => "unknown nonvacuity"
+  | .inconsistentPremises => "inconsistent premises"
   | .proved => "proved"
   | .specified => "specified (unproved)"
   | .notProposition n => s!"{n} is not a proposition"
@@ -97,8 +124,14 @@ def unaccepted (facts : Facts) (names : List Name) : List Name :=
     | some f => f.unacceptedAxioms
     | none => []).eraseDups
 
-/-- The row's verdict. -/
-def verdict (facts : Facts) (row : Row) : Verdict :=
+def premiseVerdict (facts : Facts) (row : Row) (checked : CheckedEvidence) : Verdict :=
+  let guarded := row.theorems.filter fun name => (facts name).any (·.hypotheses)
+  if guarded.any (hasEvidence checked row.evidence · .inconsistent) then .inconsistentPremises
+  else if guarded.all (hasEvidence checked row.evidence · .inhabited) then .proved
+  else .tooWeakOrVacuous
+
+/-- The row's verdict. A binding is evidence only after checking in the Lean environment. -/
+def verdict (facts : Facts) (row : Row) (checked : CheckedEvidence := fun _ => false) : Verdict :=
   match firstMissing facts (row.theorems ++ row.witnesses) with
   | some n => .missing n
   | none =>
@@ -112,9 +145,7 @@ def verdict (facts : Facts) (row : Row) : Verdict :=
       | [] =>
         if (row.theorems ++ row.witnesses).all
             (fun n => (facts n).any (·.kind == .theoremStatement)) then
-          if row.witnesses.isEmpty && row.theorems.any (fun n => (facts n).any (·.hypotheses)) then
-            .tooWeakOrVacuous
-          else .proved
+          premiseVerdict facts row checked
         else .specified
 
 inductive SpecificationFinding where
@@ -125,6 +156,7 @@ inductive SpecificationFinding where
   | unavailableBody (clause : String) (name : Name)
   | untrusted (clause : String) (name : Name) (axioms : List Name)
   | missingWitness (clause : String)
+  | inconsistentPremises (clause : String)
   | unprovedWitness (clause : String) (name : Name)
   | duplicate (clause : String)
   deriving Repr, DecidableEq
@@ -136,7 +168,8 @@ def SpecificationFinding.render : SpecificationFinding → String
   | .notProposition id name => s!"{id}: {name} is not a proposition"
   | .unavailableBody id name => s!"{id}: {name} has no inspectable safe requirement body"
   | .untrusted id name axioms => s!"{id}: {name} is conditional on {axioms}"
-  | .missingWitness id => s!"{id}: too weak or vacuous"
+  | .missingWitness id => s!"{id}: unknown nonvacuity"
+  | .inconsistentPremises id => s!"{id}: inconsistent premises"
   | .unprovedWitness id name => s!"{id}: witness {name} is not proved"
   | .duplicate id => s!"{id}: repeated clause identifier"
 
@@ -160,23 +193,30 @@ def repeatedIds (rows : List Row) : List String :=
 def witnessFinding (facts : Facts) (id : String) (name : Name) : Option SpecificationFinding :=
   if (facts name).any (·.kind == .requirement) then some (.unprovedWitness id name) else none
 
-def specificationFindings (facts : Facts) (rows : List Row) : List SpecificationFinding :=
+def specificationFindings (facts : Facts) (rows : List Row)
+    (checked : CheckedEvidence := fun _ => false) : List SpecificationFinding :=
   (if rows.isEmpty then [.emptyLedger] else []) ++
     (repeatedIds rows).map SpecificationFinding.duplicate ++
     rows.flatMap fun row =>
       (if row.theorems.isEmpty then [.unstated row.id] else []) ++
         (row.theorems ++ row.witnesses).eraseDups.filterMap (declarationFinding facts row.id) ++
         row.witnesses.eraseDups.filterMap (witnessFinding facts row.id) ++
-        (if verdict facts row == .tooWeakOrVacuous then [.missingWitness row.id] else [])
+        (match verdict facts row checked with
+          | .tooWeakOrVacuous => [.missingWitness row.id]
+          | .inconsistentPremises => [.inconsistentPremises row.id]
+          | _ => [])
 
-def specificationIssues (facts : Facts) (rows : List Row) : List String :=
-  (specificationFindings facts rows).map SpecificationFinding.render
+def specificationIssues (facts : Facts) (rows : List Row)
+    (checked : CheckedEvidence := fun _ => false) : List String :=
+  (specificationFindings facts rows checked).map SpecificationFinding.render
 
-def auditIssues (requirements : Bool) (facts : Facts) (rows : List Row) : List String :=
-  if requirements then specificationIssues facts rows else []
+def auditIssues (requirements : Bool) (facts : Facts) (rows : List Row)
+    (checked : CheckedEvidence := fun _ => false) : List String :=
+  if requirements then specificationIssues facts rows checked else []
 
-def validateRequirements (requirements : Bool) (facts : Facts) (rows : List Row) : Except String Unit :=
-  match auditIssues requirements facts rows with
+def validateRequirements (requirements : Bool) (facts : Facts) (rows : List Row)
+    (checked : CheckedEvidence := fun _ => false) : Except String Unit :=
+  match auditIssues requirements facts rows checked with
   | [] => .ok ()
   | issues => .error (String.intercalate "\n" issues)
 
@@ -185,26 +225,30 @@ def specificationSuffix (requirements : Bool) (specified : Nat) : String :=
 
 /-- The written theorems no row claims. -/
 def unclaimed (rows : List Row) (written : List Name) : List Name :=
-  let claimed := rows.flatMap fun r => r.theorems ++ r.witnesses
+  let claimed := rows.flatMap fun r => r.theorems ++ r.witnesses ++ r.evidence.map (·.proofName)
   written.filter (!claimed.contains ·)
 
 /-! Following changes: a row is re-judged only when its clause or a statement it names changed. -/
 
 /-- What a row's verdict depends on: its clause and the statements and axioms it names. -/
-def digestInput (facts : Facts) (row : Row) : String :=
-  let named := (row.theorems ++ row.witnesses).map fun n => match facts n with
-    | some f => s!"{n} : {f.statement} / {f.axioms} / {reprStr f.kind}"
+def digestInput (facts : Facts) (row : Row) (checked : CheckedEvidence := fun _ => false) : String :=
+  let named := (row.theorems ++ row.witnesses ++ row.evidence.map (·.proofName)).map fun n => match facts n with
+    | some f => s!"{n} : {f.statement} / {f.axioms} / {f.hypotheses} / {reprStr f.kind}"
     | none => s!"{n} missing"
-  String.intercalate "\n" (row.clause :: named)
+  let evidence := row.evidence.map fun binding => s!"{repr binding}: {checked binding}"
+  String.intercalate "\n" (row.clause :: named ++ evidence)
 
-def digest (facts : Facts) (row : Row) : UInt64 := hash (digestInput facts row)
+def digest (facts : Facts) (row : Row) (checked : CheckedEvidence := fun _ => false) : UInt64 :=
+  hash (digestInput facts row checked)
 
 /-- The rows whose digest differs from the one stored for their identifier. -/
-def toRejudge (stored : List (String × UInt64)) (facts : Facts) (rows : List Row) : List Row :=
-  rows.filter fun r => stored.lookup r.id != some (digest facts r)
+def toRejudge (stored : List (String × UInt64)) (facts : Facts) (rows : List Row)
+    (checked : CheckedEvidence := fun _ => false) : List Row :=
+  rows.filter fun r => stored.lookup r.id != some (digest facts r checked)
 
 /-- The digests to store after a run. -/
-def digests (facts : Facts) (rows : List Row) : List (String × UInt64) :=
-  rows.map fun r => (r.id, digest facts r)
+def digests (facts : Facts) (rows : List Row) (checked : CheckedEvidence := fun _ => false) :
+    List (String × UInt64) :=
+  rows.map fun r => (r.id, digest facts r checked)
 
 end SpecTools.Ledger

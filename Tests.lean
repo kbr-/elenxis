@@ -177,10 +177,11 @@ def testAudit : IO Unit := do
   let digest := dir / "digests.txt"
   let base := "theorem plain : 1 + 1 = 2 := rfl\n\
     theorem guarded (n : Nat) (h : 0 < n) : n ≠ 0 := by omega\n\
-    theorem witness : (0 < 1) := by decide\n"
+    theorem witness : ∃ n : Nat, ∃ _h : 0 < n, True := ⟨1, by decide, trivial⟩\n"
   let rows (clause : String) := s!"#eval SpecTools.Audit.run [
     \{ id := \"r1\", clause := \"{clause}\", theorems := [``plain] },
-    \{ id := \"r2\", clause := \"guarded\", theorems := [``guarded], witnesses := [``witness] }]
+    \{ id := \"r2\", clause := \"guarded\", theorems := [``guarded],
+      evidence := [⟨``guarded, ``witness, .inhabited⟩] }]
     `AuditCase (digestFile := some \"{digest}\")\n"
   -- The cases reading no digests run beside the three that share the digest file, in order.
   let missing ← IO.asTask <| auditCase dir "missing" (base ++ "#eval SpecTools.Audit.run [
@@ -193,7 +194,7 @@ def testAudit : IO Unit := do
     #eval SpecTools.Audit.run [{ id := \"r1\", clause := \"c\", theorems := [``guarded] }] `AuditCase\n")
   let (code, out) ← auditCase dir "pass" (base ++ rows "one plus one")
   ensure (code == 0 && has out "proved: r1" && has out "proved: r2" &&
-      has out "2 rows: 2 proved, 0 conditional, 0 too weak or vacuous, 0 not stated (2 judged)")
+      has out "2 rows: 2 proved, 0 conditional, 0 unknown nonvacuity, 0 inconsistent premises, 0 not stated (2 judged)")
     s!"a complete ledger passes, both rows proved:\n{out}"
   let (code, out) ← auditCase dir "again" (base ++ rows "one plus one")
   ensure (code == 0 && has out "unchanged: r1" && has out "(0 judged)")
@@ -211,8 +212,34 @@ def testAudit : IO Unit := do
   ensure (code == 0 && has out "conditional: r1" && has out "axioms: [myAxiom]")
     s!"an axiom outside the accepted three makes the row conditional:\n{out}"
   let (code, out) ← IO.ofExcept vacuous.get
-  ensure (code == 0 && has out "too weak or vacuous: r1")
+  ensure (code == 0 && has out "unknown nonvacuity: r1")
     s!"hypotheses without a witness are reported:\n{out}"
+  let (code, out) ← auditCase dir "typed" (base ++
+    "theorem impossible (h : False) : (1 : Nat) = 2 := False.elim h\n\
+    theorem irrelevant : True := True.intro\n\
+    theorem disjoint : ¬ (∃ _h : False, True) := fun ⟨h, _⟩ => h\n\
+    axiom assumption : ∃ n : Nat, ∃ _h : 0 < n, True\n\
+    theorem unchecked : ∃ n : Nat, ∃ _h : 0 < n, True := assumption\n\
+    #eval SpecTools.Audit.run [
+    { id := \"ordinary\", clause := \"plain\", theorems := [``plain] },
+    { id := \"legacy\", clause := \"impossible\", theorems := [``impossible],
+      witnesses := [``irrelevant] },
+    { id := \"wrong-type\", clause := \"impossible\", theorems := [``impossible],
+      evidence := [⟨``impossible, ``irrelevant, .inhabited⟩] },
+    { id := \"negative\", clause := \"impossible\", theorems := [``impossible],
+      evidence := [⟨``impossible, ``disjoint, .inconsistent⟩] },
+    { id := \"dependent\", clause := \"guarded\", theorems := [``guarded],
+      evidence := [⟨``guarded, ``witness, .inhabited⟩] },
+    { id := \"no-binding\", clause := \"guarded\", theorems := [``guarded] },
+    { id := \"untrusted\", clause := \"guarded\", theorems := [``guarded],
+      evidence := [⟨``guarded, ``unchecked, .inhabited⟩] },
+    { id := \"two-theorems\", clause := \"two domains\", theorems := [``guarded, ``impossible],
+      evidence := [⟨``guarded, ``witness, .inhabited⟩] }] `AuditCase\n")
+  ensure (code == 0 && has out "unknown nonvacuity: legacy:" &&
+    has out "unknown nonvacuity: wrong-type:" && has out "inconsistent premises: negative:" &&
+    has out "proved: dependent:" && has out "unknown nonvacuity: no-binding:" &&
+    has out "unknown nonvacuity: untrusted:" && has out "unknown nonvacuity: two-theorems:")
+    s!"the real Lean audit checks exact, row-local and trusted evidence:\n{out}"
 
 def testRequirementAudits : IO Unit := IO.FS.withTempDir fun dir => do
   let cases : List (String × String × Bool × List String) := [

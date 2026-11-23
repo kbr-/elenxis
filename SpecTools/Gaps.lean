@@ -2,9 +2,9 @@ import SpecTools.Ledger
 import SpecTools.Model
 
 /-!
-`gaps`: the four gaps between the prose and the formal statements. Lean decides what it can: a row
-whose theorems have hypotheses and no witness is too weak or vacuous with no model asked. A model
-proposes the rest (a clause no statement covers, a statement weaker than its clause, a case the
+`gaps`: the four gaps between the prose and the formal statements. Lean can report a checked
+contradiction in a theorem's premises. A model proposes the rest (a clause no statement covers,
+a statement weaker than its clause, a case the
 prose leaves undecided, a statement the prose doesn't ask for); a proposal naming a row the ledger
 lacks is refused as malformed. The core is pure; asking the model is a thin layer on `ask`.
 -/
@@ -43,11 +43,12 @@ structure Proposal where
   why : String
   deriving Repr, DecidableEq, Inhabited
 
-/-- The gaps Lean decides: rows judged too weak or vacuous. -/
-def decided (facts : Facts) (rows : List Row) : List Gap :=
+/-- The gaps Lean decides from a checked contradiction in the premises. -/
+def decided (facts : Facts) (rows : List Row)
+    (checked : CheckedEvidence := fun _ => false) : List Gap :=
   rows.filterMap fun r =>
-    if verdict facts r == .tooWeakOrVacuous then
-      some ⟨.tooWeak, r.id, "its theorems have hypotheses and no witness shows they can hold"⟩
+    if verdict facts r checked == .inconsistentPremises then
+      some ⟨.tooWeak, r.id, "checked evidence proves a theorem's premises inconsistent"⟩
     else none
 
 /-- A proposal as a gap, or why it is malformed: an unknown kind, or a row the ledger lacks. The
@@ -96,12 +97,13 @@ def mergeReadings (rows : List Row) (count : Nat) (readings : List (List Proposa
     if hasMajority count key parsed then candidates.find? (fun g => g.key == key)
     else none
 
-def gather (facts : Facts) (rows : List Row) (proposals : List Proposal) : Report :=
+def gather (facts : Facts) (rows : List Row) (proposals : List Proposal)
+    (checked : CheckedEvidence := fun _ => false) : Report :=
   let accepted := proposals.filterMap fun p => (accept rows p).toOption
   let refused := proposals.filterMap fun p => match accept rows p with
     | .error e => some e
     | .ok _ => none
-  let all := decided facts rows ++ accepted
+  let all := decided facts rows checked ++ accepted
   { byKind := fun k => all.filter (·.kind == k), refused }
 
 def proposalSchemaFor (rowIds : Option (List String)) : Json :=

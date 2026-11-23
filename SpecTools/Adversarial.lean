@@ -71,12 +71,7 @@ def requireProof (name : Name) (expected : Expr) : CommandElabM Unit := do
     throwError "{name}: evidence has the wrong type\nActual: {actual}\nRequired: {wanted}"
 
 def hypothesisType (statement : Expr) : MetaM Expr :=
-  forallTelescopeReducing statement fun binders _ => do
-    let mut result := mkConst ``True
-    for binder in binders.reverse do
-      let predicate ← mkLambdaFVars #[binder] result
-      result ← mkAppM ``Exists #[predicate]
-    return result
+  forallTelescopeReducing statement fun binders _ => Audit.existentialClosure binders
 
 def lawAt (entry : SemanticEntry) (implementation : Name) : CommandElabM Expr := do
   let law ← safeTerm entry.law

@@ -13,22 +13,23 @@ the facts as the audit does, asks the model for the gaps Lean can't decide, and 
 namespace SpecTools.Gaps
 open Lean Elab Command SpecTools.Ledger SpecTools.Model SpecTools.Audit
 
-def gapsPrompt (prose : String) (rows : List Row) (facts : Facts) : String :=
-  -- A row's witnesses are listed apart from its statements: a witness shows a statement's
-  -- hypotheses can hold, and judged as a statement of the clause it reads as an extra one.
+def gapsPrompt (prose : String) (rows : List Row) (facts : Facts) (checked : CheckedEvidence) : String :=
   let rowText := rows.map fun r =>
     let line (n : Name) : Option String := (facts n).map fun f =>
       s!"    {n} [{reprStr f.kind}] : {f.statement}"
     let stmts := r.theorems.eraseDups.filterMap line
-    let witnesses := (r.witnesses.eraseDups.filter (!r.theorems.contains ·)).filterMap line
+    let evidence := r.evidence.eraseDups.filterMap fun binding =>
+      if r.theorems.contains binding.subject && checked binding then
+        some s!"    {binding.kind.label} for {binding.subject}: {binding.proofName}"
+      else none
     s!"- {r.id}: {r.clause}\n" ++ "\n".intercalate stmts ++
-      (if witnesses.isEmpty then "" else
-        "\n  witnesses (not statements of the clause):\n" ++ "\n".intercalate witnesses)
+      (if evidence.isEmpty then "" else
+        "\n  checked premise evidence:\n" ++ "\n".intercalate evidence)
   "A requirement declaration states an unproved obligation; it does not establish its truth. \
   For those declarations, judge whether the proposition states the required behavior completely. \
   Below are requirements in prose and a ledger of rows, each row a clause with the Lean \
-  statements claimed to establish it, and under `witnesses` the facts showing those statements' \
-  hypotheses can hold; a witness is not a statement of the clause, so judge none as a gap. \
+  statements claimed to establish it. Checked premise evidence concerns their hypotheses. \
+  Compare the clause with its statements. Missing premise evidence alone establishes no gap. \
   Report each gap: `uncovered` (a clause of the prose no row \
   states, or a row whose statements don't establish its clause), `too weak` (a statement weaker \
   than its clause), `undecided` (a case the prose leaves open that the statements decide), \
@@ -71,7 +72,8 @@ private def generatedRequirements (prose : String) : IO (List Generated.Rule) :=
   if Generated.prose (rules.map Generated.View.plain) == prose then return rules
   return []
 
-private def verifyScopes (prose : String) (rows : List Row) (facts : Facts) :
+private def verifyScopes (prose : String) (rows : List Row) (facts : Facts)
+    (checked : CheckedEvidence) :
     CommandElabM Verified := do
   let required ← generatedRequirements prose
   if required.isEmpty then return {}
@@ -81,7 +83,7 @@ private def verifyScopes (prose : String) (rows : List Row) (facts : Facts) :
     for rule in required do
       let id := Generated.rowId rule
       let some row := rows.find? (·.id == id) | continue
-      unless verdict facts row == .proved && row.theorems.contains `Loans.refused_of do continue
+      unless verdict facts row checked == .proved && row.theorems.contains `Loans.refused_of do continue
       let declarations ← row.theorems.mapM fun name => do
         FiniteGaps.statementScope name
       let [(ruleName, statement)] := declarations.filterMap (fun candidate => candidate) | continue
@@ -99,8 +101,8 @@ private def verifyScopes (prose : String) (rows : List Row) (facts : Facts) :
 
 /-- Keep the proof-backed decisions alongside the independently confirmed proposals. -/
 private def withVerified (facts : Facts) (rows : List Row) (verification : Verified)
-    (confirmed : List Gap) : List Gap :=
-  let mechanical := verification.issues ++ decided facts rows
+    (confirmed : List Gap) (checked : CheckedEvidence) : List Gap :=
+  let mechanical := verification.issues ++ decided facts rows checked
   mechanical ++ confirmed.filter fun finding =>
     !(mechanical.any (fun known => known.key == finding.key)) &&
       !(verification.covered.contains finding.row &&
@@ -110,17 +112,18 @@ private def withVerified (facts : Facts) (rows : List Row) (verification : Verif
 def run (rows : List Row) (prose : String) (backend : Backend) (timeoutMs : Nat := 300000)
     (requirements : Bool := false) :
     CommandElabM Unit := do
-  let names := (rows.flatMap fun r => r.theorems ++ r.witnesses).eraseDups
-  let mut table : List (Name × Fact) := []
-  for n in names do
-    if let some f ← factOf n requirements then table := (n, f) :: table
-  let facts : Facts := fun n => table.lookup n
-  IO.ofExcept (validateRequirements requirements facts rows)
+  let (facts, checked) ← Audit.inspectRows rows requirements
+  IO.ofExcept (validateRequirements requirements facts rows checked)
+  for row in rows do
+    if verdict facts row checked == .tooWeakOrVacuous then
+      IO.println s!"unknown nonvacuity: {row.id}"
   let count ← configuredReadingCount
   let mechanicalOnly := (← IO.getEnv "SPEC_TOOLS_MECHANICAL_GAPS").isSome
-  let verification ← if count > 1 || mechanicalOnly then verifyScopes prose rows facts else pure {}
+  let verification ← if count > 1 || mechanicalOnly then verifyScopes prose rows facts checked else pure {}
   IO.println s!"Requirements check: {backend.describe}"
-  let question : Question := { prompt := gapsPrompt prose rows facts, schema := proposalSchema, timeoutMs }
+  let question : Question := {
+    prompt := gapsPrompt prose rows facts checked, schema := proposalSchema, timeoutMs
+  }
   let requested := if mechanicalOnly then 0 else count
   let tasks ← (List.replicate requested ()).mapM fun _ => IO.asTask (readGaps backend question)
   let readings ← tasks.mapM fun task => IO.ofExcept task.get
@@ -129,14 +132,14 @@ def run (rows : List Row) (prose : String) (backend : Backend) (timeoutMs : Nat 
     | .ok all => pure all
     | .error why => IO.println usageLine; throwError why
   let report ← if mechanicalOnly then
-      let gaps := withVerified facts rows verification []
+      let gaps := withVerified facts rows verification [] checked
       pure { byKind := fun k => gaps.filter (·.kind == k), refused := [] }
     else if count = 1 then
-      pure (gather facts rows (proposals.headD []))
+      pure (gather facts rows (proposals.headD []) checked)
     else
       match mergeReadings rows count proposals with
       | .ok confirmed =>
-        let gaps := withVerified facts rows verification confirmed
+        let gaps := withVerified facts rows verification confirmed checked
         pure { byKind := fun k => gaps.filter (·.kind == k), refused := [] }
       | .error why => IO.println usageLine; throwError why
   let mut total := 0

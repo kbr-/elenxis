@@ -28,13 +28,19 @@ order meets: `used = 0 ∧ used > 0` is false, so the kernel accepts any conclus
 theorem full_refund (paid used : Nat) (h : used = 0 ∧ used > 0) : refund paid used = paid := by
   omega
 
+theorem inconsistent_refund_premises :
+    ¬ (∃ _paid : Nat, ∃ used : Nat, ∃ _h : used = 0 ∧ used > 0, True) := by
+  intro ⟨_, used, ⟨zero, positive⟩, _⟩
+  omega
+
 def ledger : List SpecTools.Ledger.Row := [
   { id := "bounded", source := "refund.md, 1",
     clause := "A refund never exceeds the amount the customer paid.",
     theorems := [``refund_le_paid] },
   { id := "full", source := "refund.md, 2",
     clause := "A customer who used nothing gets back everything they paid.",
-    theorems := [``full_refund] } ]
+    theorems := [``full_refund],
+    evidence := [⟨``full_refund, ``inconsistent_refund_premises, .inconsistent⟩] } ]
 
 end Refund
 

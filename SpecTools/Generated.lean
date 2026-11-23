@@ -267,13 +267,18 @@ def leanTheorems (v : View) : String :=
   -- contradicting hypothesis.
   let ruleThm := s!"theorem fires_r{t.id} (q : Req) (hk : q.kind = \"{t.kind}\") (hb : {t.bound} ≤ {total t}){flagHyp}{vac} :\n    fires r{t.id} q = true := by\n  simp [fires, r{t.id}, hk{if t.flag.isSome then ", hf" else ""}]\n  all_goals omega"
   -- The witness meets every hypothesis of the rule's theorem: its kind, its bound and the flag unset.
-  let witFlag := match t.flag with | some f => s!" ∧ (w{t.id}).get \"{f}\" = 0" | none => ""
-  let wit := s!"theorem wit_r{t.id} : (w{t.id}).kind = \"{t.kind}\" ∧ {t.bound} ≤ {(total t).replace "q.get" s!"(w{t.id}).get"}{witFlag} := by decide"
+  let witFlag := match t.flag with | some f => s!"∃ _hf : q.get \"{f}\" = 0, " | none => ""
+  let flagProof := if t.flag.isSome then ", by decide" else ""
+  let wit := s!"theorem wit_r{t.id} :\n    ∃ q : Req, ∃ _hk : q.kind = \"{t.kind}\", ∃ _hb : {t.bound} ≤ {total t}, {witFlag}True :=\n  ⟨w{t.id}, by decide, by decide{flagProof}, trivial⟩"
   let witDef := s!"def w{t.id} : Req := ⟨\"{t.kind}\", [{", ".intercalate (t.measures.map fun m => s!"(\"{m}\", {t.bound})")}]⟩"
+  let model := v.model
+  let request := s!"(⟨\"{model.kind}\", [{", ".intercalate
+    (model.measures.map fun m => s!"(\"{m}\", {model.bound})")}]⟩ : Req)"
+  let refusedWitness := s!"theorem wit_refused_r{t.id} :\n    ∃ r : Rule, ∃ q : Req, ∃ _h : r ∈ rules, ∃ _hf : fires r q = true, True :=\n  ⟨r{t.id}, {request}, by decide, by decide, trivial⟩"
   let exc := match v.model.flag with
-    | some f => s!"\ntheorem exempt_r{t.id} (q : Req) (hf : 1 ≤ q.get \"{f}\") : fires r{t.id} q = false := by\n  have : q.get \"{f}\" ≠ 0 := by omega\n  simp [fires, r{t.id}, this]\ndef x{t.id} : Req := ⟨\"{t.kind}\", [(\"{f}\", 1)]⟩\ntheorem wit_x{t.id} : 1 ≤ (x{t.id}).get \"{f}\" := by decide"
+    | some f => s!"\ntheorem exempt_r{t.id} (q : Req) (hf : 1 ≤ q.get \"{f}\") : fires r{t.id} q = false := by\n  have : q.get \"{f}\" ≠ 0 := by omega\n  simp [fires, r{t.id}, this]\ndef x{t.id} : Req := ⟨\"{t.kind}\", [(\"{f}\", 1)]⟩\ntheorem wit_x{t.id} : ∃ q : Req, ∃ _hf : 1 ≤ q.get \"{f}\", True :=\n  ⟨x{t.id}, by decide, trivial⟩"
     | none => ""
-  (if v.omitTheorem then "" else "\n".intercalate [ruleThm, witDef, wit]) ++ exc
+  (if v.omitTheorem then "" else "\n".intercalate ([ruleThm, refusedWitness] ++ if v.vacuous then [] else [witDef, wit])) ++ exc
 
 def rowId (r : Rule) : String := s!"r{r.id}"
 
@@ -282,11 +287,16 @@ def leanRows (vs : List View) : String :=
     let r := v.prose.getD v.model
     let j := v.borrowsTheorem.getD r.id
     -- A theorem left out with none borrowed leaves the row naming none: the audit's "not stated".
-    let named := if v.omitTheorem && v.borrowsTheorem.isNone then "theorems := [], witnesses := []"
-      else s!"theorems := [``fires_r{j}, ``refused_of], witnesses := [``wit_r{j}]"
+    let named := if v.omitTheorem && v.borrowsTheorem.isNone then "theorems := []"
+      else
+        let subject := v.borrowsTheorem.bind
+          (fun id => vs.find? (fun candidate => candidate.model.id == id))
+        let vacuous := (subject.getD v).vacuous
+        let inhabitant := if vacuous then "" else s!"⟨``fires_r{j}, ``wit_r{j}, .inhabited⟩, "
+        s!"theorems := [``fires_r{j}, ``refused_of], evidence := [{inhabitant}⟨``refused_of, ``wit_refused_r{j}, .inhabited⟩]"
     let base := s!"  \{ id := \"{rowId r}\", clause := {(ruleSentence r).quote},\n    {named} }"
     match r.flag, v.model.flag with
-    | some f, some _ => [base, s!"  \{ id := \"{rowId r}-exempt\", clause := {(flagSentence r f).quote},\n    theorems := [``exempt_r{r.id}], witnesses := [``wit_x{r.id}] }"]
+    | some f, some _ => [base, s!"  \{ id := \"{rowId r}-exempt\", clause := {(flagSentence r f).quote},\n    theorems := [``exempt_r{r.id}], evidence := [⟨``exempt_r{r.id}, ``wit_x{r.id}, .inhabited⟩] }"]
     | _, _ => [base]
   ",\n".intercalate (vs.flatMap row)
 

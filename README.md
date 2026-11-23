@@ -1,9 +1,6 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/elenxis-dark.webp">
-    <img src="docs/elenxis.webp" alt="Elenxis: The proof checks. Does the spec?" width="600">
-  </picture>
-</p>
+<p align="center"> <picture> <source media="(prefers-color-scheme: dark)"
+srcset="docs/elenxis-dark.webp"> <img src="docs/elenxis.webp" alt="Elenxis: The proof checks. Does
+the spec?" width="600"> </picture> </p>
 
 # Elenxis
 
@@ -41,7 +38,7 @@ def decide (age : Nat) : Decision := if age < 16 then .refused else .approved
 theorem refuses_minors (age : Nat) (h : age < 16) : decide age = .refused := by
   simp [decide, h]
 
-theorem minor_exists : ∃ age : Nat, age < 16 := ⟨15, by decide⟩
+theorem minor_exists : ∃ age : Nat, ∃ _h : age < 16, True := ⟨15, by decide, trivial⟩
 ```
 
 **Lean accepts it.** `lake env lean examples/age-limit/Wrong.lean` runs the audit, which needs no
@@ -51,9 +48,10 @@ model:
 proved: minors: A loan is refused to an applicant under 18.
   AgeLimit.refuses_minors : ∀ (age : Nat), age < 16 → AgeLimit.decide age = AgeLimit.Decision.refused
     axioms: [propext]
-  AgeLimit.minor_exists : ∃ age, age < 16
+  checked inhabitation evidence: AgeLimit.minor_exists for AgeLimit.refuses_minors
+    ∃ age _h, True
     axioms: []
-1 rows: 1 proved, 0 conditional, 0 too weak or vacuous, 0 not stated (1 judged)
+1 rows: 1 proved, 0 conditional, 0 unknown nonvacuity, 0 inconsistent premises, 0 not stated (1 judged)
 ```
 
 **`gaps` finds the mismatch.** With a model configured,
@@ -146,7 +144,7 @@ commands to reproduce them. [Salon's first booking call](examples/owners/salon-c
   theorem under the specification's root is claimed by some row. These verdicts are computed, and
   the code computing them is proved (the `*Proofs` modules). In
   [`examples/refund`](examples/refund), a theorem whose hypothesis `used = 0 ∧ used > 0` can never
-  hold is reported `too weak or vacuous` with no model asked.
+  hold is reported as `inconsistent premises` with a checked contradiction certificate.
 - **A model proposes** only what needs reading the prose: a clause no statement covers, a statement
   weaker than its clause, a case the prose leaves undecided, a statement nobody asked for. Its
   answer must validate against a schema and name rows the ledger has; anything else is refused as

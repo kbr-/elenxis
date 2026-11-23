@@ -1,18 +1,18 @@
 import SpecTools.Gaps
 
 /-!
-`gaps`' guarantees: a row too weak or vacuous is reported with no proposal at all; a proposal naming
+`gaps`' guarantees: checked inconsistent premises are reported with no proposal; a proposal naming
 a row the ledger lacks is refused, never printed; each accepted proposal is printed under its kind.
 -/
 
 namespace SpecTools.Gaps
 open Lean SpecTools.Ledger
 
-/-- A too-weak row is reported even when the model proposes nothing. -/
-theorem tooWeak_without_model (facts : Facts) (rows : List Row) (r : Row) (hr : r ∈ rows)
-    (hv : verdict facts r = .tooWeakOrVacuous) :
-    ∃ g ∈ (gather facts rows []).byKind .tooWeak, g.row = r.id := by
-  refine ⟨⟨.tooWeak, r.id, "its theorems have hypotheses and no witness shows they can hold"⟩, ?_, rfl⟩
+/-- Checked inconsistent premises are reported even when the model proposes nothing. -/
+theorem contradiction_without_model (facts : Facts) (rows : List Row) (r : Row) (hr : r ∈ rows)
+    (checked : CheckedEvidence) (hv : verdict facts r checked = .inconsistentPremises) :
+    ∃ g ∈ (gather facts rows [] checked).byKind .tooWeak, g.row = r.id := by
+  refine ⟨⟨.tooWeak, r.id, "checked evidence proves a theorem's premises inconsistent"⟩, ?_, rfl⟩
   simp only [gather, List.filterMap_nil, List.append_nil, List.mem_filter, decided,
     List.mem_filterMap]
   exact ⟨⟨r, hr, by rw [hv]; rfl⟩, by decide⟩

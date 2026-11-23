@@ -11,26 +11,35 @@ import SpecTools.GapsRun
 def ledger : List SpecTools.Ledger.Row := [
   { id := "prerelease", source := "DESIGN.md, Tiers",
     clause := "a base whose version carries a pre-release suffix ... admits no space",
-    theorems := [``prerelease_admits_none], witnesses := [``wit_prerelease],
+    theorems := [``prerelease_admits_none],
+    evidence := [⟨``prerelease_admits_none, ``wit_prerelease, .inhabited⟩],
     tests := ["test_prerelease_admits_none"] } ]
 
 #eval SpecTools.Audit.run ledger `Root
 ```
 
-A row names the theorems stating its clause, the witnesses showing those theorems' hypotheses can
-hold, and the tests covering it in the implementation's language. Its `status` is `covered` (the
-default), `uncovered REASON`, `provisional DECISION` or `accepted DECISION`. A ledger kept as a
-Markdown table instead is read by `SpecTools.LedgerTable`; its header row is
-`| id | clause | source | theorems | witnesses | tests | status |`.
+A row names the theorems stating its clause, evidence about their premise domains, and the tests
+covering it in the implementation's language. An `evidence` binding names the subject theorem, the
+evidence theorem and its kind. For a statement `∀ n : Nat, n < 18 → P n`, an `.inhabited`
+certificate proves `∃ n : Nat, ∃ _h : n < 18, True`. An `.inconsistent` certificate proves the
+negation of that domain. Each certificate needs an accepted axiom inventory. Legacy `witnesses`
+entries still claim declarations for the audit's coverage check. Upgrade them by binding a
+certificate of the exact domain to each relevant theorem.
+
+A row's `status` is `covered` (the default), `uncovered REASON`, `provisional DECISION` or
+`accepted DECISION`. A ledger kept as a Markdown table instead is read by `SpecTools.LedgerTable`;
+its header row is `| id | clause | source | theorems | witnesses | tests | status |`.
 
 ## The audit's verdicts
 
 `SpecTools.Audit.run ledger Root` judges every row from its theorems' statements, axioms and
 hypotheses, and prints one verdict per row:
 
-- **proved**: every named theorem exists, rests only on `propext`, `Classical.choice` and
-  `Quot.sound`, and either has no hypotheses or the row names a witness;
-- **too weak or vacuous**: a theorem has hypotheses and the row gives no witness that they can hold;
+- **proved**: every named theorem exists and rests only on `propext`, `Classical.choice` and
+  `Quot.sound`. Each theorem with propositional premises has checked inhabitation evidence in that
+  row;
+- **unknown nonvacuity**: a theorem's premises lack a checked inhabitation certificate;
+- **inconsistent premises**: a checked certificate refutes the premise domain of a theorem;
 - **conditional**: a theorem rests on another axiom;
 - **not stated**: the row names no theorem;
 - **specified (unproved)**: in requirements mode, the row's declarations are proposition
@@ -38,7 +47,8 @@ hypotheses, and prints one verdict per row:
 
 It fails, rather than reports, on what makes the report itself wrong: a repeated identifier, a named
 theorem that is no theorem, a theorem under `Root` no row claims, a source module it doesn't import.
-With a digest file, rows whose clause and statements are unchanged are not judged again.
+With a digest file, rows whose clause, declarations and evidence results are unchanged are not
+judged again. An older digest format triggers a fresh audit.
 
 ## Specifying before implementing
 
@@ -69,11 +79,11 @@ establish its adequacy or truth. The default mode continues to require theorem d
 `#eval SpecTools.Gaps.runConfigured ledger prose` prints the four gaps between the prose and the
 statements, each naming its row: `uncovered` (a clause no statement establishes), `too weak` (a
 statement weaker than its clause), `undecided` (a case the prose leaves open that the statements
-decide), `extra` (a statement the prose neither asks for nor implies). Lean decides one of them with
-no model: a row whose theorems have hypotheses and no witness is too weak. The model proposes the
-rest; a proposal naming a row the ledger lacks, or of an unknown kind, is printed as refused, and an
-answer that breaks the schema is no answer. The model sees each row's witnesses apart from its
-statements, as facts showing the statements' hypotheses can hold.
+decide), `extra` (a statement the prose neither asks for nor implies). Lean reports a checked
+contradiction in a theorem's premises and prints missing nonvacuity evidence separately. The model
+proposes issues and sees checked premise evidence apart from the clause statements. A proposal
+naming an unknown row or kind is printed as refused, and an answer that breaks the schema is
+rejected.
 
 ## Adversarial admission
 

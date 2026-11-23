@@ -47,12 +47,12 @@ theorem verdict_missing (facts : Facts) (row : Row) (n : Name) (hn : n ∈ row.t
     have := firstMissing_none hm n hn
     simp [h] at this
 
-/-- A proved verdict means: every name is a theorem, there is at least one, none rests on an
-unaccepted axiom, and a hypothesis comes with a witness. -/
-theorem verdict_proved (facts : Facts) (row : Row) (h : verdict facts row = .proved) :
+/-- A proved verdict covers declarations with accepted axioms and checked premise evidence. -/
+theorem verdict_proved (facts : Facts) (row : Row) (checked : CheckedEvidence)
+    (h : verdict facts row checked = .proved) :
     (∀ n ∈ row.theorems ++ row.witnesses, (facts n).isSome) ∧ row.theorems ≠ [] ∧
       unaccepted facts (row.theorems ++ row.witnesses) = [] ∧
-      (row.theorems.any (fun n => (facts n).any (·.hypotheses)) → row.witnesses ≠ []) := by
+      premiseVerdict facts row checked = .proved := by
   unfold verdict at h
   split at h
   · cases h
@@ -68,14 +68,48 @@ theorem verdict_proved (facts : Facts) (row : Row) (h : verdict facts row = .pro
           · cases h
           · rename_i hu
             split at h
-            · split at h
-              · cases h
-              · rename_i hw
-                refine ⟨firstMissing_none hm, by simpa using hne, hu, ?_⟩
-                intro hany hnil
-                apply hw
-                simp [hnil, hany]
+            · exact ⟨firstMissing_none hm, by simpa using hne, hu, h⟩
             · cases h
+
+theorem proved_has_checked_premises (facts : Facts) (row : Row) (checked : CheckedEvidence)
+    (proved : verdict facts row checked = .proved) (subject : Name)
+    (member : subject ∈ row.theorems) (guarded : (facts subject).any (·.hypotheses) = true) :
+    ∃ binding ∈ row.evidence,
+      binding.subject = subject ∧ binding.kind = .inhabited ∧ checked binding = true := by
+  have premises := (verdict_proved facts row checked proved).2.2.2
+  have included : subject ∈ row.theorems.filter (fun n => (facts n).any (·.hypotheses)) :=
+    List.mem_filter.mpr ⟨member, guarded⟩
+  simp only [premiseVerdict] at premises
+  split at premises
+  · cases premises
+  · split at premises
+    · rename_i inhabited
+      have accepted := List.all_eq_true.mp inhabited subject included
+      simpa [hasEvidence, List.any_eq_true, Bool.and_eq_true, and_assoc] using accepted
+    · cases premises
+
+theorem unrelated_evidence_cannot_supply_domain (checked : CheckedEvidence)
+    (before after : List EvidenceBinding) (binding : EvidenceBinding) (subject : Name)
+    (unrelated : binding.subject ≠ subject ∨ checked binding = false) :
+    hasEvidence checked (before ++ binding :: after) subject .inhabited =
+      hasEvidence checked (before ++ after) subject .inhabited := by
+  rcases unrelated with wrongSubject | rejected
+  · simp [hasEvidence, List.any_append, wrongSubject]
+  · simp [hasEvidence, List.any_append, rejected]
+
+theorem contradiction_prevents_proved (facts : Facts) (row : Row) (checked : CheckedEvidence)
+    (subject : Name) (member : subject ∈ row.theorems)
+    (guarded : (facts subject).any (·.hypotheses) = true)
+    (contradiction : hasEvidence checked row.evidence subject .inconsistent = true) :
+    verdict facts row checked ≠ .proved := by
+  intro proved
+  have premises := (verdict_proved facts row checked proved).2.2.2
+  have included : subject ∈ row.theorems.filter (fun n => (facts n).any (·.hypotheses)) :=
+    List.mem_filter.mpr ⟨member, guarded⟩
+  have found : (row.theorems.filter (fun n => (facts n).any (·.hypotheses))).any
+      (hasEvidence checked row.evidence · .inconsistent) = true :=
+    List.any_eq_true.mpr ⟨subject, included, contradiction⟩
+  simp [premiseVerdict, found] at premises
 
 theorem proof_kinds_exclude (facts : Facts) (names : List Name)
     (proofs : ∀ n ∈ names, (facts n).any (·.kind == .theoremStatement) = true)
@@ -105,7 +139,7 @@ theorem verdict_conditional (facts : Facts) (row : Row) (hall : firstMissing fac
   have visible := proof_kinds_exclude facts _ proofs .unavailableBody (by decide)
   simp only [verdict, hall, valid.1, visible.1, this, Bool.false_eq_true, ↓reduceIte, hu]
 
-/-- Hypotheses with no witness make the row too weak or vacuous. -/
+/-- Hypotheses without checked evidence leave nonvacuity unknown. -/
 theorem verdict_vacuous (facts : Facts) (row : Row) (hall : firstMissing facts row.theorems = none)
     (hne : row.theorems ≠ []) (hw : row.witnesses = [])
     (hu : unaccepted facts row.theorems = [])
@@ -116,10 +150,11 @@ theorem verdict_vacuous (facts : Facts) (row : Row) (hall : firstMissing facts r
   have valid := proof_kinds_exclude facts _ proofs .notProposition (by decide)
   have visible := proof_kinds_exclude facts _ proofs .unavailableBody (by decide)
   have allProofs := List.all_eq_true.mpr proofs
-  simp only [verdict, hw, List.append_nil, hall, valid.1, visible.1, this,
-    Bool.false_eq_true, ↓reduceIte, hu, allProofs, List.isEmpty_nil, hyp, Bool.and_self]
+  simpa [verdict, hw, hall, valid.1, visible.1, this, hu, allProofs, premiseVerdict,
+    hasEvidence, List.any_eq_true] using hyp
 
-theorem proved_requires_theorems (facts : Facts) (row : Row) (h : verdict facts row = .proved) :
+theorem proved_requires_theorems (facts : Facts) (row : Row)
+    (checked : CheckedEvidence) (h : verdict facts row checked = .proved) :
     (row.theorems ++ row.witnesses).all (fun n => (facts n).any (·.kind == .theoremStatement)) = true := by
   unfold verdict at h
   split at h
@@ -136,12 +171,38 @@ theorem proved_requires_theorems (facts : Facts) (row : Row) (h : verdict facts 
             · assumption
             · cases h
 
+theorem proved_declarations_and_premises (facts : Facts) (row : Row) (checked : CheckedEvidence)
+    (proved : verdict facts row checked = .proved) :
+    (∀ subject ∈ row.theorems, ∃ fact, facts subject = some fact ∧
+      fact.kind = .theoremStatement ∧ fact.unacceptedAxioms = []) ∧
+    (∀ subject ∈ row.theorems, ∀ fact, facts subject = some fact → fact.hypotheses = true →
+      ∃ binding ∈ row.evidence, binding.subject = subject ∧
+        binding.kind = .inhabited ∧ checked binding = true) := by
+  refine ⟨?_, ?_⟩
+  · intro subject member
+    have named := List.mem_append_left row.witnesses member
+    have kind := List.all_eq_true.mp (proved_requires_theorems facts row checked proved) subject named
+    cases h : facts subject with
+    | none => simp [h] at kind
+    | some fact =>
+      refine ⟨fact, rfl, by simpa [h] using kind, ?_⟩
+      have trusted := (verdict_proved facts row checked proved).2.2.1
+      cases ax : fact.unacceptedAxioms with
+      | nil => rfl
+      | cons name rest =>
+        have listed : name ∈ unaccepted facts (row.theorems ++ row.witnesses) := by
+          simp only [unaccepted, List.mem_eraseDups, List.mem_flatMap]
+          exact ⟨subject, named, by simp [h, ax]⟩
+        simp [trusted] at listed
+  · intro subject member fact h guarded
+    exact proved_has_checked_premises facts row checked proved subject member (by simp [h, guarded])
+
 theorem unproved_requirement_never_proved (facts : Facts) (row : Row) (name : Name)
     (member : name ∈ row.theorems ++ row.witnesses) (fact : Fact)
     (found : facts name = some fact) (requirement : fact.kind = .requirement) :
     verdict facts row ≠ .proved := by
   intro claimed
-  have kinds := List.all_eq_true.mp (proved_requires_theorems facts row claimed) name member
+  have kinds := List.all_eq_true.mp (proved_requires_theorems facts row _ claimed) name member
   simp [found, requirement] at kinds
 
 theorem requirement_kind_exact (proposition body unsafeBody : Bool) :
@@ -242,7 +303,8 @@ example : SpecificationFinding.missing "clause" `second ∈ specificationFinding
 
 /-- A written theorem is reported exactly when no row claims it. -/
 theorem mem_unclaimed (rows : List Row) (written : List Name) (n : Name) :
-    n ∈ unclaimed rows written ↔ n ∈ written ∧ ∀ r ∈ rows, n ∉ r.theorems ++ r.witnesses := by
+    n ∈ unclaimed rows written ↔ n ∈ written ∧
+      ∀ r ∈ rows, n ∉ r.theorems ++ r.witnesses ++ r.evidence.map (·.proofName) := by
   simp [unclaimed]
 
 /-- A second run after storing a run's digests re-judges no row. -/
