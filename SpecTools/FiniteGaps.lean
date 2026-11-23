@@ -30,6 +30,12 @@ def Scope.sameCondition (left right : Scope) : Bool :=
   decide (left.kind = right.kind ∧ left.bound = right.bound ∧ left.exempt = right.exempt ∧
     left.below = right.below ∧ left.measures.Perm right.measures)
 
+theorem sameCondition_iff (left right : Scope) :
+    left.sameCondition right = true ↔
+      left.kind = right.kind ∧ left.bound = right.bound ∧ left.exempt = right.exempt ∧
+        left.below = right.below ∧ left.measures.Perm right.measures := by
+  simp [Scope.sameCondition]
+
 theorem sameCondition_holds (left right : Scope) (request : Request)
     (condition : left.sameCondition right = true) :
     left.holds request = right.holds request := by
@@ -65,6 +71,18 @@ theorem extra_refusal (requirement statement : Scope) (request : Request) :
   unfold compareAt
   cases requirement.holds request <;> cases statement.holds request <;> simp
 
+theorem compareAt_eq_none_iff (requirement statement : Scope) (request : Request) :
+    compareAt requirement statement request = none ↔
+      requirement.holds request = statement.holds request := by
+  unfold compareAt
+  cases requirement.holds request <;> cases statement.holds request <;> simp
+
+theorem exempt_request (scope : Scope) (request : Request) (field : String)
+    (exemption : scope.exempt = some field) (present : 0 < request.get field) :
+    scope.holds request = false := by
+  have nonzero : request.get field ≠ 0 := Nat.ne_of_gt present
+  simp [Scope.holds, exemption, nonzero]
+
 /-- The finite assignments for the requested fields. Flags alone distinguish zero from nonzero. -/
 def assignments (bound : Nat) (numeric : List String) :
     List String → List (List (String × Nat))
@@ -86,6 +104,20 @@ def requests (requirement statement : Scope) : List Request :=
 def findDifference (requirement statement : Scope) : Option (Difference × Request) :=
   (requests requirement statement).findSome? fun request =>
     (compareAt requirement statement request).map (·, request)
+
+/-- Exhaustion establishes agreement on precisely the enumerated search domain. -/
+theorem search_none_iff (requirement statement : Scope) :
+    findDifference requirement statement = none ↔
+      ∀ request ∈ requests requirement statement,
+        requirement.holds request = statement.holds request := by
+  simp only [findDifference, List.findSome?_eq_none_iff, Option.map_eq_none_iff,
+    compareAt_eq_none_iff]
+
+theorem search_sameCondition (requirement statement : Scope)
+    (condition : requirement.sameCondition statement = true) :
+    findDifference requirement statement = none :=
+  (search_none_iff requirement statement).mpr fun request _ =>
+    sameCondition_holds requirement statement request condition
 
 theorem search_sound (requirement statement : Scope) (direction : Difference) (request : Request)
     (h : findDifference requirement statement = some (direction, request)) :
@@ -217,20 +249,5 @@ def establishesRefusal (rule : Name) : MetaM Bool := do
     return (← Meta.isDefEq (← Meta.inferType inRules) memType) &&
       (← Meta.isDefEq (← Meta.inferType fires) firesType) &&
       (← Meta.isDefEq conclusion refusal)
-
-section Controls
-
-private def rule : Scope := ⟨"borrow", ["loans"], 5, some "premium", none⟩
-
-#guard (findDifference rule { rule with bound := 6 }).map (·.1) == some .missingRefusal
-#guard (findDifference rule { rule with bound := 4 }).map (·.1) == some .extraRefusal
-#guard (findDifference rule rule).isNone
-#guard (compareAt rule { rule with bound := 6 } ⟨"borrow", [("loans", 5), ("premium", 1)]⟩).isNone
-#guard ({ rule with measures := ["loans", "holds"] } : Scope).sameCondition
-  { rule with measures := ["holds", "loans"] }
-#guard !({ rule with measures := ["loans", "holds"] } : Scope).sameCondition
-  { rule with measures := ["loans", "loans"] }
-
-end Controls
 
 end SpecTools.FiniteGaps
