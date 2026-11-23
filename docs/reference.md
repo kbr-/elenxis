@@ -385,6 +385,17 @@ fixture](../examples/owners/salon-call/benchmark-cases.json). Supply the evaluat
 as a JSON array of objects with `id` and a versioned `key` in the `score-observations` format. The
 key stays with the scorer.
 
+From an active Codex session, use this command when the Lean build lives on another host.
+
+```bash
+bash adapters/benchmark-with-caller-codex.sh BUILD-HOST BUILD-DIR COMPUTE CASES KEY TIMEOUT-MS > JOURNAL
+```
+
+`BUILD-DIR` and `COMPUTE` are paths on that host, relative to its home directory or absolute. The
+launcher passes the originating host and session profile through the protected runner, so the Codex
+process runs on the original host with its existing login. It transfers the synthetic cases and
+scoring key to the build host. The key stays outside the adapter's working directory.
+
 The resulting JSON Lines file reports each pair's answers, checked witnesses, model usage and local
 timing. The summary separates row location, category and formal evidence. It also records intact
 controls, abstentions and owner questions, and groups diagnoses by paraphrase family.
