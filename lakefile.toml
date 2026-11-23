@@ -1,10 +1,13 @@
 name = "Elenxis"
 version = "0.1.0"
-defaultTargets = ["SpecTools", "spec-tools"]
+defaultTargets = ["SpecTools", "ProofInventory", "spec-tools"]
 testDriver = "spec_tools_tests"
 
 [[lean_lib]]
 name = "SpecTools"
+
+[[lean_lib]]
+name = "ProofInventory"
 
 [[lean_exe]]
 name = "spec-tools"

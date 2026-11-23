@@ -43,7 +43,7 @@ structure SupportingEntry where
   survivingModel : String
   deriving Inhabited
 
-def acceptedAxioms : List Name := [``propext, ``Classical.choice, ``Quot.sound]
+def acceptedAxioms : List Name := Ledger.acceptedAxioms
 
 def proofIssues (name : Name) : CommandElabM (List String) := do
   let env ← getEnv

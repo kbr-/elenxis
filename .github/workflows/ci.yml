@@ -18,7 +18,15 @@ jobs:
           auto-config: 'false'
           use-github-cache: 'false'
           use-mathlib-cache: 'false'
-      - run: lake build SpecTools
+      - run: lake build ProofInventory
+      - name: Reject a theorem using an unsupported axiom
+        run: |
+          if output=$(lake env lean integration/RejectedProofInventory.lean 2>&1); then
+            printf '%s\n' "$output"
+            exit 1
+          fi
+          printf '%s\n' "$output"
+          printf '%s\n' "$output" | grep -F 'mustBeRejected: unaccepted axiom unsupportedInventoryEvidence'
 
   integration:
     name: Integration and end-to-end

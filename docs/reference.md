@@ -1,5 +1,14 @@
 # Reference
 
+## Release proof inventory
+
+`lake build ProofInventory` checks the named release obligations against the ledger's transitive
+axiom policy. Their accepted foundations are `propext`, `Classical.choice` and `Quot.sound`. The
+inventory checks imported product declarations and lists compiler-dependent ones separately. The
+kernel release obligations and the ledger's `proved` status exclude compiler certificates. The
+default `lake build` includes this inventory. Process and toolchain checks run through the separate
+`lake test` driver.
+
 ## The ledger
 
 A ledger is a `List SpecTools.Ledger.Row`, written in Lean beside the specification:
