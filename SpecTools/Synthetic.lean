@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 /-!
 The synthetic test's variant generator: a variant is the complete fixture with some planted gaps,
 each a named set of exact-text edits; the key (which gaps, of which kind, on which clause) stays

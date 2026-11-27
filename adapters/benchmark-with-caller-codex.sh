@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
 # SSH and tar stage the synthetic input on the build host. Elenxis owns model routing.

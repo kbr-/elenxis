@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import SpecTools.Schema
 import SpecTools.Usage
 import SpecTools.UsageProofs

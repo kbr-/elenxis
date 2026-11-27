@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Lean.Data.Json
 
 /-! Directional comparison of two contracts on a common typed observation domain. -/

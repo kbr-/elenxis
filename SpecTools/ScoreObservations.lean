@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import SpecTools.Gaps
 import Std.Data.HashMap.Lemmas
 import Std.Data.HashSet.Lemmas

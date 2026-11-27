@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # CONFESSION: it reads the target's own Python with the ast module and runs its tests with pytest, both Python-only.
 """The Python adapter of `spec-tools tests`: which property tests notice each guard of a module.
 

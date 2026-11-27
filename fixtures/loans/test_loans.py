@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # CONFESSION: the fixture's implementation is Python, so its property tests run under pytest and Hypothesis.
 """Property tests of loans.py, one or more per clause of loans.md, named by the ledger row they cover.
 

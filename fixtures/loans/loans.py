@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # CONFESSION: the synthetic test specifies a Python implementation, so its fixture's implementation is Python.
 """The synthetic fixture's Python implementation of loans.md, the same operations as Loans.lean.
 

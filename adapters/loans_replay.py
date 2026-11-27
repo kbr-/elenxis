@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # CONFESSION: JSON transport for the existing synthetic fixture's Python operations.
 """Run the loans fixture's operations in order and return every observed state."""
 

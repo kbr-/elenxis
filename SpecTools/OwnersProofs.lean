@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import SpecTools.Owners
 import SpecTools.GeneratedProofs
 import SpecTools.Score

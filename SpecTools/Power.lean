@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 /-!
 The power of the forced-choice bar. A judge gets `n` pairs, one text of ours and one real owner's post in random
 order, and names the one a model wrote; a text set passes when the one-sided upper confidence bound on the judge's

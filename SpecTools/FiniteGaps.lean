@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Lean.Meta.AppBuilder
 import Lean.Data.Json
 

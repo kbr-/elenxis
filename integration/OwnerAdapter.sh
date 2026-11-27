@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
 # Deterministic replies for the owner process-boundary control.
 set -eu
 fixture=$1

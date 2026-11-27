@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import SpecTools.GapsRun
 
 /-! A signed owner decision and a separate Lean check against the approved baseline. -/
