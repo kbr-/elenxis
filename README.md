@@ -313,3 +313,13 @@ McClelland, 12 May 2026) names as still missing once AI writes the code: machine
 specification, a model that can "help a human author a faithful formal specification — proposing
 properties, surfacing implicit assumptions, flagging where the spec under-determines the system".
 The article is an inspiration only; its author has not reviewed or endorsed this project.
+
+## License
+
+Elenxis is licensed under the [Apache License, Version 2.0](LICENSE).
+
+Commercial use, modification, redistribution, and proprietary integrations are welcome under the
+terms of the license.
+
+See [NOTICE](NOTICE) for attribution information and [TRADEMARKS.md](TRADEMARKS.md) for the Elenxis
+trademark policy.
