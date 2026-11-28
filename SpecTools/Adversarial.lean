@@ -46,30 +46,37 @@ structure SupportingEntry where
 
 def acceptedAxioms : List Name := Ledger.acceptedAxioms
 
-def proofIssues (name : Name) : CommandElabM (List String) := do
+private def checkedProofIssues (name : Name) : CoreM (List String) := do
   let env ← getEnv
   let some (.thmInfo _) := env.find? name
     | return [s!"{name}: evidence must be a proved theorem"]
-  let axioms := (← liftCoreM <| collectAxioms name).toList
+  let axioms := (← collectAxioms name).toList
   return (axioms.filter (!acceptedAxioms.contains ·)).map fun axiomName =>
     s!"{name}: unaccepted axiom {axiomName}"
 
-def safeTerm (name : Name) : CommandElabM Expr := do
+def proofIssues (name : Name) : CommandElabM (List String) := liftCoreM <| checkedProofIssues name
+
+def safeTermMeta (name : Name) : MetaM Expr := do
   let some info := (← getEnv).find? name
     | throwError "Missing admission declaration {name}"
   if info.isUnsafe || (info.value? (allowOpaque := true)).isNone then
     throwError "{name}: admission terms need safe, inspectable bodies"
-  liftTermElabM <| mkConstWithFreshMVarLevels name
+  mkConstWithFreshMVarLevels name
 
-def requireProof (name : Name) (expected : Expr) : CommandElabM Unit := do
-  let issues ← proofIssues name
+def safeTerm (name : Name) : CommandElabM Expr := liftTermElabM <| safeTermMeta name
+
+def requireProofMeta (name : Name) (expected : Expr) : MetaM Unit := do
+  let issues ← checkedProofIssues name
   unless issues.isEmpty do throwError "{String.intercalate "; " issues}"
-  let proof ← safeTerm name
-  let agrees ← liftTermElabM do isDefEq (← inferType proof) expected
+  let proof ← safeTermMeta name
+  let agrees ← isDefEq (← inferType proof) expected
   unless agrees do
-    let actual ← liftTermElabM do ppExpr (← inferType proof)
-    let wanted ← liftTermElabM <| ppExpr expected
+    let actual ← ppExpr (← inferType proof)
+    let wanted ← ppExpr expected
     throwError "{name}: evidence has the wrong type\nActual: {actual}\nRequired: {wanted}"
+
+def requireProof (name : Name) (expected : Expr) : CommandElabM Unit :=
+  liftTermElabM <| requireProofMeta name expected
 
 def hypothesisType (statement : Expr) : MetaM Expr :=
   forallTelescopeReducing statement fun binders _ => Audit.existentialClosure binders

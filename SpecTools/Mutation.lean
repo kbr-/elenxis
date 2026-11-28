@@ -36,9 +36,10 @@ structure ScheduledCheck where
 
 /-- Construct a predicate in the local context of one observation. The original declaration
 stays intact. A shape mismatch leaves the requested mutation invalid. -/
-private def variantTerm (original : Expr) (variant : Variant) : CommandElabM Expr := do
-  if let .named name := variant then return ← Adversarial.safeTerm name
-  liftTermElabM do
+private def variantTerm (original : Expr) (variant : Variant) : MetaM Expr := do
+  if let .named name := variant then
+    Adversarial.safeTermMeta name
+  else
     forallBoundedTelescope (← inferType original) (some 1) fun xs _ => do
       let #[x] := xs | throwError "Mutation requires a predicate over observations"
       let body ← whnf (mkApp original x)
@@ -83,40 +84,46 @@ structure Candidate where
   ownerQuestion : Option OwnerQuestion := none
   deriving Inhabited
 
-private def obligation (challenge : Challenge) (original candidate : Expr) : CommandElabM Expr := do
+private def obligation (challenge : Challenge) (original candidate : Expr) : MetaM Expr := do
+  let candidate ← match challenge with
+    | .relation _ | .distinguishes .. => do
+      unless ← isDefEq (← inferType original) (← inferType candidate) do
+        throwError "The predicates must have a common observation domain"
+      instantiateMVars candidate
+    | _ => pure candidate
   match challenge with
   | .relation claim =>
-    liftTermElabM <| mkAppM ``Relation.Holds #[toExpr claim, original, candidate]
+    mkAppM ``Relation.Holds #[toExpr claim, original, candidate]
   | .distinguishes direction observation =>
-    let sample ← Adversarial.safeTerm observation
+    let sample ← Adversarial.safeTermMeta observation
     let direction := match direction with
       | .admitsExtra => mkConst ``Direction.admitsExtra
       | .rejectsRequired => mkConst ``Direction.rejectsRequired
-    liftTermElabM <| mkAppM ``Distinguishes #[original, candidate, direction, sample]
+    mkAppM ``Distinguishes #[original, candidate, direction, sample]
   | .satisfies | .refutes =>
-    let law ← liftTermElabM <| mkAppM' original #[candidate]
-    unless ← liftTermElabM (isProp law) do throwError "The law applied to the model must be a proposition"
+    let law ← mkAppM' original #[candidate]
+    unless ← isProp law do throwError "The law applied to the model must be a proposition"
     return if challenge matches .refutes then mkApp (mkConst ``Not) law else law
 
-private def certificateResult (expected : Expr) (certificate : Name) : CommandElabM (String × String × List Name) := do
+private def certificateResult (expected : Expr) (certificate : Name) : MetaM (String × String × List Name) := do
   try
-    Adversarial.requireProof certificate expected
-    return ("established", "", (← liftCoreM <| collectAxioms certificate).toList)
+    Adversarial.requireProofMeta certificate expected
+    return ("established", "", (← collectAxioms certificate).toList)
   catch ex =>
     if ex.isInterrupt then throw ex
     return ("inconclusive", ← ex.toMessageData.toString, [])
 
-private def assess (entry : Candidate) (attempt : Attempt) : CommandElabM Json := do
+private def assess (entry : Candidate) (attempt : Attempt) : MetaM Json := do
   let result (status : String) (reason : String) := Json.mkObj [
     ("challenge", toJson attempt.challenge), ("status", toJson status),
     ("certificate", toJson attempt.certificate), ("reason", toJson reason)]
   try
-    let _ ← Adversarial.safeTerm entry.original
+    let _ ← Adversarial.safeTermMeta entry.original
     let info ← getConstInfo entry.original
     let original := mkConst entry.original (info.levelParams.map Level.param)
     let candidate ← variantTerm original entry.candidate
     let expected ← obligation attempt.challenge original candidate
-    let statement := (← liftTermElabM <| ppExpr expected).pretty
+    let statement := (← ppExpr expected).pretty
     let some certificate := attempt.certificate
       | return (result "inconclusive" "No certificate supplied").setObjVal! "obligation" (toJson statement)
     let (status, reason, axioms) ← certificateResult expected certificate
@@ -137,7 +144,7 @@ def review (entries : List Candidate) (schedule : Option (List ScheduledCheck) :
     if (seen : Std.HashSet (String × String × String)).contains key then
       throwError "Repeated candidate {entry.id} for {entry.requirement} at {entry.revision}"
     seen := seen.insert key
-    let attempts ← entry.attempts.mapM (assess entry)
+    let attempts ← entry.attempts.mapM fun a => liftTermElabM <| assess entry a
     let definition (name : Name) := do
       let some info := (← getEnv).find? name | return Json.null
       let some body := info.value? (allowOpaque := true) | return Json.null

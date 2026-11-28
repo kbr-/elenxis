@@ -33,6 +33,13 @@ def sorted (sort : Sorter) : Prop := ∀ xs, (sort xs).Pairwise (· ≤ ·)
 def preservesLength (sort : Sorter) : Prop := ∀ xs, (sort xs).length = xs.length
 theorem sortedEmpty : sorted emptyOutput := fun _ => List.Pairwise.nil
 theorem losesElement : ¬ preservesLength emptyOutput := fun h => by have := h [0]; contradiction
+def preservesEmptyLength (sort : Sorter) : Prop := (sort []).length = 0
+theorem emptyLength : preservesEmptyLength emptyOutput := rfl
+
+universe u
+def hasElement (α : Type u) : Prop := Nonempty α
+theorem allUniverses : Relation.equivalent.Holds hasElement.{u} hasElement.{u} := fun _ => Iff.rfl
+theorem onlySmallTypes : Relation.equivalent.Holds hasElement.{0} hasElement.{0} := fun _ => Iff.rfl
 
 def base : Candidate := {
   id := "drop-nonzero", requirement := "number in range", revision := "fixture-v1",
@@ -52,7 +59,15 @@ run_cmd do
       candidate := .named ``emptyOutput, attempts := [⟨.satisfies, some ``sortedEmpty⟩] },
     { base with
       id := "empty-length", requirement := "sort length", original := ``preservesLength,
-      candidate := .named ``emptyOutput, attempts := [⟨.refutes, some ``losesElement⟩] }]
+      candidate := .named ``emptyOutput,
+      attempts := [⟨.refutes, some ``losesElement⟩, ⟨.satisfies, some ``emptyLength⟩] },
+    { id := "one-input", requirement := "sort length on empty input", revision := "fixture-v1",
+      origin := "named model", original := ``preservesEmptyLength, candidate := .named ``emptyOutput,
+      attempts := [⟨.satisfies, some ``emptyLength⟩] },
+    { id := "universe-scope", requirement := "type inhabitation", revision := "fixture-v1",
+      origin := "universe scope control", original := ``hasElement, candidate := .named ``hasElement,
+      attempts := [⟨.relation .equivalent, some ``allUniverses⟩,
+        ⟨.relation .equivalent, some ``onlySmallTypes⟩] }]
   let scheduled : ScheduledCheck := ⟨base.requirement, base.revision, base.id, base.original,
     base.candidate, .relation .strictlyWeaker⟩
   let absent := [{ scheduled with id := "not-submitted" }, { scheduled with revision := "other" },
@@ -65,7 +80,8 @@ run_cmd do
     let checks : Array Json ← Lean.ofExcept (c.getObjValAs? (Array Json) "checks")
     checks.mapM fun (check : Json) => Lean.ofExcept (check.getObjValAs? String "status")
   unless outcomes == #[#["established", "established"], #["inconclusive"], #["inconclusive"],
-      #["invalid", "invalid"], #[], #["established"], #["established"]] do
+      #["invalid", "invalid"], #[], #["established"], #["established", "inconclusive"],
+      #["established"], #["established", "inconclusive"]] do
     throwError "unexpected mutation results: {report}"
   unless (candidates[4]!.getObjValAs? Bool "attempted").toOption == some false do
     throwError "unattempted candidate lost"
