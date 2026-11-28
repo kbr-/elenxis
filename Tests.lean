@@ -11,6 +11,12 @@ open SpecTools.Model
 def ensure (condition : Bool) (message : String) : IO Unit :=
   unless condition do throw <| IO.userError message
 
+/-- On a shared machine, run each group and its nested process cases in the caller. -/
+private def testTask (action : IO α) : IO (Task (Except IO.Error α)) := do
+  if (← IO.getEnv "ELENXIS_SERIAL_TESTS") == some "1" then
+    return Task.pure (← action.toBaseIO)
+  IO.asTask action
+
 open Lean in
 def testSignedDecision : IO Unit := IO.FS.withTempDir fun dir => do
   let args := #["env", "lean", "examples/owners/salon-call/OwnerApproval.lean"]
@@ -415,13 +421,13 @@ def testAudit : IO Unit := do
       evidence := [⟨``guarded, ``witness, .inhabited⟩] }]
     `AuditCase (digestFile := some \"{digest}\")\n"
   -- The cases reading no digests run beside the three that share the digest file, in order.
-  let missing ← IO.asTask <| auditCase dir "missing" (base ++ "#eval SpecTools.Audit.run [
+  let missing ← testTask <| auditCase dir "missing" (base ++ "#eval SpecTools.Audit.run [
     { id := \"r1\", clause := \"c\", theorems := [`nonexistent, ``plain, ``guarded], witnesses := [``witness] }] `AuditCase\n")
-  let unclaimedCase ← IO.asTask <| auditCase dir "unclaimed" (base ++ "#eval SpecTools.Audit.run [
+  let unclaimedCase ← testTask <| auditCase dir "unclaimed" (base ++ "#eval SpecTools.Audit.run [
     { id := \"r1\", clause := \"c\", theorems := [``plain] }] `AuditCase\n")
-  let axiomCase ← IO.asTask <| auditCase dir "axiom" ("axiom myAxiom : 1 = 1\ntheorem leans : 1 = 1 := myAxiom\n\
+  let axiomCase ← testTask <| auditCase dir "axiom" ("axiom myAxiom : 1 = 1\ntheorem leans : 1 = 1 := myAxiom\n\
     #eval SpecTools.Audit.run [{ id := \"r1\", clause := \"c\", theorems := [``leans] }] `AuditCase\n")
-  let vacuous ← IO.asTask <| auditCase dir "vacuous" ("theorem guarded (n : Nat) (h : 0 < n) : n ≠ 0 := by omega\n\
+  let vacuous ← testTask <| auditCase dir "vacuous" ("theorem guarded (n : Nat) (h : 0 < n) : n ≠ 0 := by omega\n\
     #eval SpecTools.Audit.run [{ id := \"r1\", clause := \"c\", theorems := [``guarded] }] `AuditCase\n")
   let (code, out) ← auditCase dir "pass" (base ++ rows "one plus one")
   ensure (code == 0 && has out "proved: r1" && has out "proved: r2" &&
@@ -508,7 +514,7 @@ def testRequirementAudits : IO Unit := IO.FS.withTempDir fun dir => do
       theorems := [``guarded], witnesses := [``witness] }] `UnprovedWitness (requirements := true)\n",
       false, ["witness witness is not proved"])]
   let running ← cases.mapM fun (name, body, passes, messages) => do
-    let task ← IO.asTask (auditCase dir name body)
+    let task ← testTask (auditCase dir name body)
     return (name, passes, messages, task)
   for (name, passes, messages, task) in running do
     let (code, output) ← IO.ofExcept task.get
@@ -800,7 +806,7 @@ def testOwners : IO Unit := do
   let failureRow := row "start 1: review 5 failed" lastRevision
   let journal := "\n".intercalate (initial :: revisions ++ [failureRow])
   let reordered := "\n".intercalate (initial :: revisions.reverse ++ [failureRow])
-  let refusalJob ← IO.asTask (checkOwnerResumeRefusals draft journal reordered)
+  let refusalJob ← testTask (checkOwnerResumeRefusals draft journal reordered)
   let saved ← IO.ofExcept (SpecTools.Owners.decodeReviewPrefix draft journal { calls := 9 })
   let jobs ← [("kept", run [exact, exact]),
       ("judge revisions", run [exact, exact] ["70", "89"]),
@@ -813,7 +819,7 @@ def testOwners : IO Unit := do
       ("imported", run [exact, exact] [] 0 (some draft)),
       ("failed import", run (List.replicate 16 ruleWrong) [] 0 (some draft)),
       ("resumed", run [exact, exact] [] 0 (some draft) (some saved))].mapM fun (name, action) => do
-    return (name, ← IO.asTask action)
+    return (name, ← testTask action)
   let completed := jobs.map fun (name, job) => (name, job.get)
   let result (name : String) := do
     let some outcome := completed.lookup name | throw (IO.userError s!"Missing owner case: {name}")
@@ -926,7 +932,7 @@ def testPrepareReports : IO Unit := do
   IO.println "PASS: tool preparation stops on a failed check"
 
 /-- Run `act` as a task, printing its wall time when it ends, so a slow group is named. -/
-def timed (name : String) (act : IO Unit) : IO (Task (Except IO.Error Unit)) := IO.asTask do
+def timed (name : String) (act : IO Unit) : IO (Task (Except IO.Error Unit)) := testTask do
   let start ← IO.monoMsNow
   act
   IO.println s!"time: {name} {(← IO.monoMsNow) - start} ms"

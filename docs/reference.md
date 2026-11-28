@@ -510,6 +510,9 @@ lake env lean path/to/Spec.lean
 lake test
 ```
 
+On a shared machine, run `ELENXIS_SERIAL_TESTS=1 LEAN_NUM_THREADS=1 lake test` to execute
+the test groups and their nested cases sequentially.
+
 `lake build` builds the library and `spec-tools`; `lake env lean` checks a specification and runs
 its `#eval` lines (the audit, and `gaps` when the specification asks for it); `lake test` runs the
 tests, which call no model. `spec-tools` with no arguments lists its commands. The toolchain is
