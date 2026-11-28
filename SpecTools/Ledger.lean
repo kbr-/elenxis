@@ -34,6 +34,36 @@ structure EvidenceBinding where
   kind : EvidenceKind := .inhabited
   deriving Repr, DecidableEq, Inhabited
 
+/-- Binder counts refer to the theorem's outer telescope, including implicit arguments.
+Any remaining binders belong to the conclusion. -/
+inductive DomainScope where
+  | someInput (inputs : Nat)
+  | eachContext (contexts inputs : Nat)
+  | exclusion
+  | unsupported (obligation : Name)
+  deriving Repr, DecidableEq, Inhabited
+
+structure DomainClaim where
+  subject : Name
+  scope : DomainScope
+  supports : List Name := []
+  refutes : List Name := []
+  deriving Repr, DecidableEq, Inhabited
+
+inductive DomainResult where
+  | established | refuted | unresolved | conflicting
+  deriving DecidableEq, Repr
+
+def domainResult : Bool → Bool → DomainResult
+  | true, true => .conflicting
+  | true, false => .established
+  | false, true => .refuted
+  | false, false => .unresolved
+
+theorem domainResult_refuted_iff (positive negative : Bool) :
+    domainResult positive negative = .refuted ↔ positive = false ∧ negative = true := by
+  cases positive <;> cases negative <;> decide
+
 /-- One clause of the prose and what covers it. -/
 structure Row where
   id : String
@@ -52,6 +82,7 @@ structure Row where
   evidence : List EvidenceBinding := []
   /-- Optional integration checks covering the clause, by name. -/
   externalChecks : List String := []
+  applicability : List DomainClaim := []
   deriving Repr, Inhabited
 
 /-- Select all named external checks, including older rows, once each. -/
@@ -140,6 +171,12 @@ def premiseVerdict (facts : Facts) (row : Row) (checked : CheckedEvidence) : Ver
   if guarded.any (hasEvidence checked row.evidence · .inconsistent) then .inconsistentPremises
   else if guarded.all (hasEvidence checked row.evidence · .inhabited) then .proved
   else .tooWeakOrVacuous
+
+/-- Guarded subjects still governed by the original joint-witness check. -/
+def missingLegacyWitness (facts : Facts) (row : Row) (checked : CheckedEvidence) : Bool :=
+  row.theorems.any fun n =>
+    (facts n).any (·.hypotheses) && !row.applicability.any (·.subject == n) &&
+      !hasEvidence checked row.evidence n .inhabited
 
 /-- The row's verdict. A binding is evidence only after checking in the Lean environment. -/
 def verdict (facts : Facts) (row : Row) (checked : CheckedEvidence := fun _ => false) : Verdict :=
@@ -241,7 +278,8 @@ def specificationSuffix (requirements : Bool) (specified : Nat) : String :=
 
 /-- The written theorems no row claims. -/
 def unclaimed (rows : List Row) (written : List Name) : List Name :=
-  let claimed := rows.flatMap fun r => r.theorems ++ r.witnesses ++ r.evidence.map (·.proofName)
+  let claimed := rows.flatMap fun r => r.theorems ++ r.witnesses ++ r.evidence.map (·.proofName) ++
+    (r.applicability.flatMap fun c => c.supports ++ c.refutes)
   written.filter (!claimed.contains ·)
 
 /-! Following changes: a row is re-judged only when its clause or a statement it names changed. -/
@@ -252,7 +290,7 @@ def digestInput (facts : Facts) (row : Row) (checked : CheckedEvidence := fun _ 
     | some f => s!"{n} : {f.statement} / {f.axioms} / {f.hypotheses} / {reprStr f.kind}"
     | none => s!"{n} missing"
   let evidence := row.evidence.map fun binding => s!"{repr binding}: {checked binding}"
-  String.intercalate "\n" (row.clause :: named ++ evidence)
+  String.intercalate "\n" (row.clause :: named ++ evidence ++ row.applicability.map reprStr)
 
 def digest (facts : Facts) (row : Row) (checked : CheckedEvidence := fun _ => false) : UInt64 :=
   hash (digestInput facts row checked)

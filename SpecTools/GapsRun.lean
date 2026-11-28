@@ -114,9 +114,10 @@ def run (rows : List Row) (prose : String) (backend : Backend) (timeoutMs : Nat 
     (requirements : Bool := false) :
     CommandElabM Unit := do
   let (facts, checked) ← Audit.inspectRows rows requirements
-  IO.ofExcept (validateRequirements requirements facts rows checked)
+  let issues ← Audit.rowAuditIssues requirements facts rows checked
+  unless issues.isEmpty do throwError "{String.intercalate "\n" issues}"
   for row in rows do
-    if verdict facts row checked == .tooWeakOrVacuous then
+    if verdict facts row checked == .tooWeakOrVacuous && missingLegacyWitness facts row checked then
       IO.println s!"unknown nonvacuity: {row.id}"
   let count ← configuredReadingCount
   let mechanicalOnly := (← IO.getEnv "SPEC_TOOLS_MECHANICAL_GAPS").isSome

@@ -23,6 +23,70 @@ private def proofTypeMatches (name : Name) (expected : Expr) : MetaM Bool :=
     let proof ← mkConstWithFreshMVarLevels name
     isDefEq (← inferType proof) expected
 
+private def scopeProposition (type : Expr) (contexts inputs : Nat) : MetaM (Option Expr) :=
+  forallBoundedTelescope type (some (contexts + inputs)) fun xs _ => do
+    if xs.size != contexts + inputs then return none
+    let domain ← existentialClosure (xs.extract contexts xs.size)
+    return some (← mkForallFVars (xs.extract 0 contexts) domain)
+
+private def acceptedCertificate (name : Name) (expected : Expr) : CommandElabM Bool := do
+  unless (← getEnv).find? name matches some (.thmInfo _) do return false
+  let axioms ← liftCoreM <| collectAxioms name
+  unless axioms.all acceptedAxioms.contains do return false
+  liftTermElabM <| proofTypeMatches name expected
+
+/-- Report the exact scoped proposition alongside its evidence even on cached rows. -/
+def reportApplicability (rows : List Row) (strict : Bool) : CommandElabM (List String) := do
+  let mut issues := []
+  for row in rows do
+    for subject in row.theorems do
+      unless row.applicability.any (·.subject == subject) do
+        IO.println s!"  applicability {row.id} {subject}: unassessed"
+    for claim in row.applicability do
+      let label := s!"applicability {row.id} {claim.subject}"
+      unless row.theorems.contains claim.subject do
+        issues := issues ++ [s!"{label}: subject outside row"]
+        continue
+      let some (.thmInfo thm) := (← getEnv).find? claim.subject
+        | issues := issues ++ [s!"{label}: expected theorem"]; continue
+      let proposition ← match claim.scope with
+        | .someInput n => liftTermElabM <| scopeProposition thm.type 0 n
+        | .eachContext c n => liftTermElabM <| scopeProposition thm.type c n
+        | .exclusion => pure (some thm.type)
+        | .unsupported name =>
+          let some (.defnInfo obligation) := (← getEnv).find? name
+            | issues := issues ++ [s!"{label}: missing obligation definition {name}"]; continue
+          unless ← liftTermElabM (isDefEq obligation.type (mkSort .zero)) do
+            issues := issues ++ [s!"{label}: expected a proposition at {name}"]
+            continue
+          let body ← liftTermElabM <| ppExpr obligation.value
+          IO.println s!"  {label}: unsupported obligation {name} ({body})"
+          if strict then issues := issues ++ [s!"{label}: unsupported obligation {name}"]
+          continue
+      let some p := proposition
+        | issues := issues ++ [s!"{label}: scope exceeds theorem telescope"]; continue
+      let positive := match claim.scope with
+        | .exclusion => claim.subject :: claim.supports
+        | _ => claim.supports
+      let mut supports := false
+      let mut refutes := false
+      for (names, negative) in [(positive, false), (claim.refutes, true)] do
+        for proof in names do
+          let ok ← acceptedCertificate proof (if negative then mkApp (mkConst ``Not) p else p)
+          IO.println s!"  {label}: {if ok then "checked" else "rejected"} {proof} ({if negative then "against" else "for"})"
+          if negative then refutes := refutes || ok else supports := supports || ok
+      let result := domainResult supports refutes
+      let status := match result with
+        | .established => "established"
+        | .refuted => "refuted"
+        | .unresolved => "unresolved"
+        | .conflicting => "conflicting evidence"
+      let statement ← liftTermElabM <| withOptions (·.setBool `pp.explicit true) (ppExpr p)
+      IO.println s!"  {label}: {status} ({statement})"
+      if result == .conflicting || (strict && result != .established) then
+        issues := issues ++ [s!"{label}: {status}"]
+  return issues
+
 private def underRoot (env : Environment) (root : Name) (name : Name) : Bool :=
   match env.getModuleIdxFor? name with
   | some idx => env.header.moduleNames[idx.toNat]!.getRoot == root
@@ -140,7 +204,19 @@ def checkApprovedContracts (contracts : List ApprovedContract) : CommandElabM Un
     throwError "Specification differs from the approved Coverage draft:\n{String.intercalate "\n" issues}"
   IO.println s!"{contracts.length} specification declarations match their approved contracts."
 
-private def digestVersion : String := "spec-tools premise evidence v1"
+/-- Explicit scopes replace the legacy positive-witness heuristic for the named subject.
+Other premises, axioms and structural findings still go through the original gate. -/
+def rowAuditIssues (requirements : Bool) (facts : Facts) (rows : List Row)
+    (checked : CheckedEvidence) : CommandElabM (List String) := do
+  let domainIssues ← reportApplicability rows requirements
+  unless requirements do return domainIssues
+  let legacy := (specificationFindings facts rows checked).filter fun finding =>
+    match finding with
+    | .missingWitness id => rows.any fun row => row.id == id && missingLegacyWitness facts row checked
+    | _ => true
+  return legacy.map SpecificationFinding.render ++ domainIssues
+
+private def digestVersion : String := "spec-tools premise evidence v2"
 
 /-- Read versioned digests. Missing and earlier formats require a fresh audit. -/
 def readDigests (path : System.FilePath) : IO (List (String × UInt64)) := do
@@ -169,7 +245,7 @@ def run (rows : List Row) (root : Name) (sourceDir : Option System.FilePath := n
     | none => pure []
   let judged := toRejudge stored facts rows checked
   let mut errors : List String := (repeatedIds rows).map (s!"row {·} is listed twice")
-  errors := errors ++ auditIssues requirements facts rows checked
+  errors := errors ++ (← rowAuditIssues requirements facts rows checked)
   let mut counts : List (String × Nat) := []
   for row in rows do
     if !judged.any (·.id == row.id) then
@@ -180,7 +256,8 @@ def run (rows : List Row) (root : Name) (sourceDir : Option System.FilePath := n
     counts := match counts.lookup v.label with
       | some k => (v.label, k + 1) :: counts.filter (·.1 != v.label)
       | none => (v.label, 1) :: counts
-    IO.println s!"{v.label}: {row.id}: {row.clause}"
+    let verdictLabel := if row.applicability.isEmpty then v.label else s!"legacy verdict: {v.label}"
+    IO.println s!"{verdictLabel}: {row.id}: {row.clause}"
     for n in row.theorems ++ row.witnesses do
       if let some f := facts n then
         IO.println s!"  {n} : {f.statement}"

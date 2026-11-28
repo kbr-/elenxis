@@ -305,7 +305,8 @@ example : SpecificationFinding.missing "clause" `second ∈ specificationFinding
 /-- A written theorem is reported exactly when no row claims it. -/
 theorem mem_unclaimed (rows : List Row) (written : List Name) (n : Name) :
     n ∈ unclaimed rows written ↔ n ∈ written ∧
-      ∀ r ∈ rows, n ∉ r.theorems ++ r.witnesses ++ r.evidence.map (·.proofName) := by
+      ∀ r ∈ rows, n ∉ r.theorems ++ r.witnesses ++ r.evidence.map (·.proofName) ++
+        (r.applicability.flatMap fun c => c.supports ++ c.refutes) := by
   simp [unclaimed]
 
 /-- A second run after storing a run's digests re-judges no row. -/

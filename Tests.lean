@@ -910,7 +910,23 @@ def main : IO Unit := do
   -- The groups own their directories and child-process environments, so they run at once.
   -- The live runner's prohibition below is
   -- the one global, set after all of them end.
-  let groups ← [("command adapter", testCommandAdapter), ("usage", testUsage), ("prose", testProse),
+  let domainAudit := do
+    let run ← IO.Process.output { cmd := "lake", args := #["env", "lean", "fixtures/DomainAudit.lean"] }
+    ensure (run.exitCode == 0) (run.stdout ++ run.stderr)
+    for (id, subject, status) in [("global", "behavior", "established"),
+        ("uniform", "behavior", "refuted"), ("wrong", "behavior", "unresolved"),
+        ("missing", "impossible", "unresolved"), ("empty", "impossible", "refuted"),
+        ("exclusion", "guarded", "established"), ("legacy", "impossible", "unassessed"),
+        ("no-context-uniform", "noContextBehavior", "established"),
+        ("no-context-exists", "noContextBehavior", "refuted"),
+        ("nested-intent", "nested", "unsupported obligation DomainAudit.nestedObligation"),
+        ("joint", "joint", "refuted"), ("subtype", "nested", "refuted")] do
+      ensure (run.stdout.contains s!"applicability {id} DomainAudit.{subject}: {status}") run.stdout
+    IO.FS.withTempDir fun dir => do
+      let cache := dir / "digest"
+      IO.FS.writeFile cache "spec-tools premise evidence v1\nlegacy 1\n"
+      ensure (← SpecTools.Audit.readDigests cache).isEmpty "accepted an old premise-only digest"
+  let groups ← [("domain audit", domainAudit), ("command adapter", testCommandAdapter), ("usage", testUsage), ("prose", testProse),
       ("owners", testOwners), ("tool preparation", testPrepareReports),
       ("paired journals", testPairedJournals), ("effect protocol", testEffectProtocol),
       ("benchmark review", testBenchmarkReview),

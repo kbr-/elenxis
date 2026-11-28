@@ -163,6 +163,20 @@ interpretations](examples/owners/salon-call/Interpretations.lean)
   answer must validate against a schema and name rows the ledger has; anything else is refused as
   malformed.
 
+A theorem can hold on an empty input type. The audit prints a separate applicability result for each
+named theorem. A Lean ledger row can request `.someInput n` for joint feasibility of its first `n`
+binders, or `.eachContext c n` for feasibility under every assignment to the first `c` binders. The
+latter quantifies universally over those contexts and existentially over the next `n` inputs. Count
+implicit parameters and premise proofs too. Binders in the conclusion can be left outside that
+prefix. To require at least one realizable context as well, add a separate existential claim. Use
+`.exclusion` when the theorem itself states the intended impossibility.
+
+Supply named theorems in `supports` or `refutes`. The audit checks their types and axioms against
+the displayed obligation or its negation. Missing or mismatched evidence leaves a claim unresolved.
+An omitted claim is unassessed. Requirements mode reports an error for a declared obligation that
+lacks accepted support. The [domain audit fixture](fixtures/DomainAudit.lean) shows a model with an
+input in one context and a proof that another context has none.
+
 The model never gets the last word on anything Lean can decide, and every finding names the row of
 the clause it concerns.
 
