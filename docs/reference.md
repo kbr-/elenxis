@@ -82,6 +82,33 @@ unassessed. Their evidence comes from the corresponding checks:
 - `OwnerApproval.check` emits separate receipts for the signed decision and the formal contract
   comparison. Each receipt identifies the revision it covers.
 
+### Comparing mutations and interpretations
+
+Use `SpecTools.Mutation.review` on a list of candidate records. Its JSON result identifies the
+source file, requirement, revision, origin, original declaration, variant and certificates. Replay
+the source with `lake env lean` at the same revision. The supplied origin and revision are author
+annotations. A checked result applies to the declarations elaborated in that run.
+
+For predicates over a common observation type, request a directional witness, equivalence,
+implication, refinement, strict weakening or strengthening, incompatibility, inequivalence or
+incomparability. A strict result requires the implication in one direction and a distinguishing
+observation in the other. Incompatibility allows empty predicates. A difference on one input leaves
+the owner's preference open.
+
+For a behavioral model, request satisfaction or refutation of a named law applied to that model. The
+quantifiers in the law determine the scope. Named variants can express boundary, invariant, ordering
+and quantifier edits. Built-in operators remove either conjunct, reverse an implication, drop its
+precondition or replace a predicate with a constant. Generated variants exist only during the
+review.
+
+Each check is established, inconclusive (missing or rejected certificate), or invalid (malformed
+terms or an inapplicable mutation). A candidate with no scheduled checks has `attempted: false`.
+Human-readable scenarios, suggestions and assumptions are author annotations. For a runnable
+campaign including an empty-output sorting model, see the [mutation
+fixture](../fixtures/MutationReview.lean). The [salon
+comparison](../examples/owners/salon-call/Interpretations.lean) uses the same checker for two
+readings of a requirement.
+
 ## Specifying before implementing
 
 For a specification written before its implementation, opt into requirement declarations:

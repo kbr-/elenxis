@@ -1,5 +1,6 @@
 -- SPDX-License-Identifier: Apache-2.0
 import Lean.Data.Json
+import Lean.Elab.Deriving.ToExpr
 
 /-! Directional comparison of two contracts on a common typed observation domain. -/
 
@@ -21,8 +22,8 @@ inductive Direction where
   deriving DecidableEq, FromJson, ToJson
 
 def Direction.description : Direction → String
-  | .admitsExtra => "too weak (candidate admits behavior excluded by the reference)"
-  | .rejectsRequired => "too strong (candidate rejects behavior required by the reference)"
+  | .admitsExtra => "at this observation the candidate permits behavior excluded by the reference"
+  | .rejectsRequired => "at this observation the candidate excludes behavior permitted by the reference"
 
 def Distinguishes {Input : Type u} (reference candidate : Input → Prop)
     (direction : Direction) (input : Input) : Prop :=
@@ -33,6 +34,40 @@ def Distinguishes {Input : Type u} (reference candidate : Input → Prop)
 structure BoundDistinction {Input : Type u} (property : String) (reference candidate : Input → Prop)
     (direction : Direction) (input : Input) : Prop where
   distinguishes : Distinguishes reference candidate direction input
+
+/-- Relations read from the original predicate to the candidate on the same observation type. -/
+inductive Relation where
+  | equivalent | implies | refines | strictlyWeaker | strictlyStronger
+  | incompatible | inequivalent | incomparable
+  deriving DecidableEq, ToJson, ToExpr, Inhabited
+
+def Relation.Holds (relation : Relation) (original candidate : α → Prop) : Prop :=
+  let forward := ∀ x, original x → candidate x
+  let backward := ∀ x, candidate x → original x
+  let extra := ∃ x, Distinguishes original candidate .admitsExtra x
+  let missing := ∃ x, Distinguishes original candidate .rejectsRequired x
+  match relation with
+  | .equivalent => ∀ x, original x ↔ candidate x
+  | .implies => forward
+  | .refines => backward
+  | .strictlyWeaker => forward ∧ extra
+  | .strictlyStronger => backward ∧ missing
+  | .incompatible => ¬ ∃ x, original x ∧ candidate x
+  | .inequivalent => ¬ ∀ x, original x ↔ candidate x
+  | .incomparable => extra ∧ missing
+
+theorem distinction_inequivalent {original candidate : α → Prop} {direction : Direction} {x : α}
+    (w : Distinguishes original candidate direction x) : Relation.inequivalent.Holds original candidate := by
+  intro equivalent
+  cases direction with
+  | admitsExtra => exact w.2 ((equivalent x).mpr w.1)
+  | rejectsRequired => exact w.2 ((equivalent x).mp w.1)
+
+theorem incomparable_directions {original candidate : α → Prop}
+    (h : Relation.incomparable.Holds original candidate) :
+    ¬ Relation.implies.Holds original candidate ∧ ¬ Relation.refines.Holds original candidate := by
+  obtain ⟨⟨x, hx, noOriginal⟩, ⟨y, hy, noCandidate⟩⟩ := h
+  exact ⟨fun f => noCandidate (f y hy), fun f => noOriginal (f x hx)⟩
 
 theorem directions_disjoint {Input : Type u} {reference candidate : Input → Prop} {input : Input}
     (extra : Distinguishes reference candidate .admitsExtra input)

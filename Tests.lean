@@ -957,7 +957,10 @@ def main : IO Unit := do
       let cache := dir / "digest"
       IO.FS.writeFile cache "spec-tools premise evidence v1\nlegacy 1\n"
       ensure (← SpecTools.Audit.readDigests cache).isEmpty "accepted an old premise-only digest"
-  let groups ← [("semantic evidence", semanticEvidence), ("domain audit", domainAudit),
+  let mutationReview := do
+    let run ← IO.Process.output { cmd := "lake", args := #["env", "lean", "fixtures/MutationReview.lean"] }
+    ensure (run.exitCode == 0 && run.stdout.contains "elenxis.mutation.v1") (run.stdout ++ run.stderr)
+  let groups ← [("mutation review", mutationReview), ("semantic evidence", semanticEvidence), ("domain audit", domainAudit),
       ("command adapter", testCommandAdapter), ("usage", testUsage), ("prose", testProse),
       ("owners", testOwners), ("tool preparation", testPrepareReports),
       ("paired journals", testPairedJournals), ("effect protocol", testEffectProtocol),
