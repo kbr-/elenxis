@@ -18,11 +18,10 @@ or compare two readings of the same requirement. A configured language model can
 prose. When two readings permit different behavior, a concrete case gives the person who owns the
 requirement a decision they can make.
 
-Can three requirements each work in pairs and still leave an input with no valid output?
-The [relation audit example](fixtures/RelationReview.lean) checks exactly that case in Lean.
-Run `lake env lean fixtures/RelationReview.lean` to see the three requirement IDs and the
-certificate that rules out a shared result. The [reference](docs/reference.md#relation-evidence)
-shows how to collect the evidence for one requirement.
+Three rules allow outputs from `{0, 1}`, `{1, 2}` and `{2, 0}`. Every pair shares an output.
+All three together leave the input without one. Run `lake env lean fixtures/RelationReview.lean`
+to see Lean check the pairs and Elenxis report the conflicting group by requirement ID.
+[Relation audit example](fixtures/RelationReview.lean)
 
 ## Examples
 
@@ -233,9 +232,10 @@ approved contract (the draft a person accepted)
   ▼
 Lean specification and its ledger
   │  Audit.run                   proved, vacuous, conditional or unstated, row by row
+  │  RelationAudit.review        admissible inputs with or without a shared output
   │  Gaps.runConfigured          the statements against the prose
   ▼
-Lean implementation and proofs of its obligations
+Evidence for each requirement and questions for its owner
 ```
 
 The checks above the line "approved contract" compare the formalization with the prose; those below
@@ -248,6 +248,9 @@ decision.
 
 - **Audit** (`SpecTools.Audit`): every row's verdict from its theorems' statements, axioms and
   hypotheses.
+- **Requirement evidence** (`spec-tools evidence-view ID manifest.json`) brings the saved checks
+  for one requirement together. A replay shows whether their fingerprints still match after a
+  change. Without a replay, freshness is unknown. [Manifest format](docs/reference.md#replay-and-requirement-views)
 - **Gaps** (`SpecTools.Gaps`, `SpecTools.GapsRun`): the four gaps between the prose and the
   statements.
 - **Mutation review** (`SpecTools.Mutation.review`) checks proposed changes and behavioral models
