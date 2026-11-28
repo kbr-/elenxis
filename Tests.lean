@@ -11,6 +11,31 @@ open SpecTools.Model
 def ensure (condition : Bool) (message : String) : IO Unit :=
   unless condition do throw <| IO.userError message
 
+open Lean in
+def testSignedDecision : IO Unit := IO.FS.withTempDir fun dir => do
+  let args := #["env", "lean", "examples/owners/salon-call/OwnerApproval.lean"]
+  let snapshot ← IO.ofExcept <| Json.parse (← IO.Process.run { cmd := "lake", args })
+  let key := (dir / "owner").toString
+  let receipt := dir / "receipt.json"
+  let _ ← IO.Process.run { cmd := "ssh-keygen", args := #["-q", "-t", "ed25519", "-N", "", "-f", key] }
+  IO.FS.writeFile (dir / "allowed_signers") ("synthetic-owner " ++ (← IO.FS.readFile (key ++ ".pub")))
+  for (packet, expected) in [(snapshot, "verified"),
+      (snapshot.setObjVal! "prose" "Same revision, changed requirement.", "stale"),
+      (snapshot.setObjVal! "subject" "Different subject", "rejected")] do
+    let body := Json.mkObj [("version", 1), ("owner", "synthetic-owner"), ("decisionId", "test"),
+      ("origin", "fixture"), ("synthetic", true), ("accepted", true), ("snapshot", packet)]
+    IO.FS.writeFile receipt body.compress
+    let _ ← IO.Process.run { cmd := "ssh-keygen", args := #["-Y", "sign", "-f", key,
+      "-n", "elenxis-owner-approval-v1", receipt.toString] }
+    let run ← IO.Process.output {
+      cmd := "lake", args := args, env := #[("ELENXIS_OWNER_APPROVAL_DIR", some dir.toString)] }
+    let output := run.stdout ++ run.stderr
+    let receipts := (output.splitOn "\n").filterMap fun line =>
+      (Json.parse line >>= (·.getObjValAs? String "ownerAcceptance")).toOption
+    ensure ((run.exitCode == 0) == (expected == "verified")) output
+    ensure (receipts == (if expected == "rejected" then [] else [expected])) output
+    IO.FS.removeFile (dir / "receipt.json.sig")
+
 def scratch (name : String) : IO System.FilePath := do
   let dir := (← IO.FS.createTempDir) / name
   IO.FS.createDirAll dir
@@ -960,7 +985,8 @@ def main : IO Unit := do
   let mutationReview := do
     let run ← IO.Process.output { cmd := "lake", args := #["env", "lean", "fixtures/MutationReview.lean"] }
     ensure (run.exitCode == 0 && run.stdout.contains "elenxis.mutation.v1") (run.stdout ++ run.stderr)
-  let groups ← [("mutation review", mutationReview), ("semantic evidence", semanticEvidence), ("domain audit", domainAudit),
+  let groups ← [("signed decisions", testSignedDecision), ("mutation review", mutationReview),
+      ("semantic evidence", semanticEvidence), ("domain audit", domainAudit),
       ("command adapter", testCommandAdapter), ("usage", testUsage), ("prose", testProse),
       ("owners", testOwners), ("tool preparation", testPrepareReports),
       ("paired journals", testPairedJournals), ("effect protocol", testEffectProtocol),

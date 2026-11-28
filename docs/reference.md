@@ -80,7 +80,9 @@ unassessed. Their evidence comes from the corresponding checks:
   has a named law, certificate and outcome. One model can satisfy a supporting law and violate its
   parent law.
 - `OwnerApproval.check` emits separate receipts for the signed decision and the formal contract
-  comparison. Each receipt identifies the revision it covers.
+  comparison. Each receipt identifies the revision it covers. A valid acceptance signed for the
+  same owner and subject but a different snapshot emits `ownerAcceptance: stale` and fails the
+  check. Ask for review of the current packet even if its revision label stayed the same.
 
 ### Comparing mutations and interpretations
 
@@ -108,6 +110,24 @@ campaign including an empty-output sorting model, see the [mutation
 fixture](../fixtures/MutationReview.lean). The [salon
 comparison](../examples/owners/salon-call/Interpretations.lean) uses the same checker for two
 readings of a requirement.
+
+Pass an independent list of scheduled checks as `review entries (some schedule)` to find omitted
+attempts. Each schedule item pins the requirement, revision, candidate ID, declarations or mutation
+operator, and challenge. Read `missingScheduledChecks` together with the per-attempt status. An
+empty list accounts for the supplied schedule only. A null value means no schedule was supplied.
+
+| Report observation | Who acts and how |
+| --- | --- |
+| Missing scheduled check or unattempted candidate | The reviewer restores the omitted attempt and reruns the source. |
+| Invalid or inconclusive check | The proof author inspects the diagnostic, corrects the artifact or supplies a certificate for the displayed obligation. |
+| Established claim with axiom dependencies | The reviewer inspects the listed assumptions against the project's trust policy. |
+| Unknown applicability | The specification author checks the quantifier scope and supplies inhabitation or emptiness evidence for the stated domain. |
+| Conflicting outcomes or a model that exhibits suspected unwanted behavior | The reviewer supplies an `ownerQuestion` with both clauses and outcomes, a scenario and a concrete decision. A settling clause can be cited when available. |
+| Missing or stale owner acceptance | The owner reviews the current snapshot. The formal contract comparison is a separate check. |
+
+The salon dialogue leaves the cutoff open. A separate [synthetic owner
+decision](../examples/owners/salon-call/owner-requirements.md) settles it at two missed
+appointments for its own revision. The signed example binds that text and its reviewed contract.
 
 ## Specifying before implementing
 

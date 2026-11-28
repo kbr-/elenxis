@@ -46,6 +46,8 @@ def obligations : List Name := [
   ``Model.observe_success_reuses,
   ``SyntheticRun.runLockedCheck_refused,
   ``OwnerApproval.accepts_iff,
+  ``OwnerApproval.current_iff_accepts,
+  ``OwnerApproval.stale_iff_historical,
   ``Benchmark.same_budget,
   ``Benchmark.Review.hit_iff,
   ``Benchmark.Review.hits_bounded]

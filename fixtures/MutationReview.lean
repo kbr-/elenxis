@@ -53,7 +53,13 @@ run_cmd do
     { base with
       id := "empty-length", requirement := "sort length", original := ``preservesLength,
       candidate := .named ``emptyOutput, attempts := [⟨.refutes, some ``losesElement⟩] }]
-  let report ← review cases
+  let scheduled : ScheduledCheck := ⟨base.requirement, base.revision, base.id, base.original,
+    base.candidate, .relation .strictlyWeaker⟩
+  let absent := [{ scheduled with id := "not-submitted" }, { scheduled with revision := "other" },
+    { scheduled with challenge := .refutes }, { scheduled with candidate := .alwaysFalse }]
+  let report ← review cases (some (scheduled :: absent))
+  unless (report.getObjVal? "missingScheduledChecks").toOption == some (toJson absent) do
+    throwError "schedule mismatch: {report}"
   let candidates : Array Json ← Lean.ofExcept (report.getObjValAs? (Array Json) "candidates")
   let outcomes ← candidates.mapM fun (c : Json) => do
     let checks : Array Json ← Lean.ofExcept (c.getObjValAs? (Array Json) "checks")

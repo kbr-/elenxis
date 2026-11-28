@@ -11,7 +11,7 @@ inductive Challenge where
   | distinguishes (direction : Direction) (observation : Name)
   | satisfies
   | refutes
-  deriving ToJson, Inhabited
+  deriving DecidableEq, ToJson, Inhabited
 
 structure Attempt where
   challenge : Challenge
@@ -22,6 +22,16 @@ inductive Variant where
   | named (declaration : Name)
   | dropLeftConjunct | dropRightConjunct | reverseImplication | dropPrecondition
   | alwaysTrue | alwaysFalse
+  deriving DecidableEq, ToJson, Inhabited
+
+/-- An independently supplied review schedule pins both artifacts and the check requested. -/
+structure ScheduledCheck where
+  requirement : String
+  revision : String
+  id : String
+  original : Name
+  candidate : Variant
+  challenge : Challenge
   deriving ToJson, Inhabited
 
 /-- Construct a predicate in the local context of one observation. The original declaration
@@ -47,6 +57,17 @@ private def variantTerm (original : Expr) (variant : Variant) : CommandElabM Exp
         | .named _ => unreachable!
       mkLambdaFVars xs changed
 
+/-- An owner can answer the question from the cited wording and the two outcomes.
+A later clause may settle the question independently of the formal comparison. -/
+structure OwnerQuestion where
+  sourceClause : String
+  alternativeClause : String
+  originalOutcome : String
+  alternativeOutcome : String
+  question : String
+  settlingClause : Option String := none
+  deriving ToJson, Inhabited
+
 structure Candidate where
   id : String
   requirement : String
@@ -59,6 +80,7 @@ structure Candidate where
   suspectedWeakness : String := ""
   proposedProperty : String := ""
   assumptions : List String := []
+  ownerQuestion : Option OwnerQuestion := none
   deriving Inhabited
 
 private def obligation (challenge : Challenge) (original candidate : Expr) : CommandElabM Expr := do
@@ -105,7 +127,7 @@ private def assess (entry : Candidate) (attempt : Attempt) : CommandElabM Json :
     return result "invalid" (← ex.toMessageData.toString)
 
 /-- A campaign checks the supplied candidates against the named declarations in this environment. -/
-def review (entries : List Candidate) : CommandElabM Json := do
+def review (entries : List Candidate) (schedule : Option (List ScheduledCheck) := none) : CommandElabM Json := do
   let mut seen := ∅
   let mut records := #[]
   for entry in entries do
@@ -129,8 +151,12 @@ def review (entries : List Candidate) : CommandElabM Json := do
       ("originalDefinition", ← definition entry.original), ("namedCandidateDefinition", candidateBody),
       ("attempted", toJson (!attempts.isEmpty)), ("checks", toJson attempts), ("scenario", toJson entry.scenario),
       ("suspectedWeakness", toJson entry.suspectedWeakness), ("proposedProperty", toJson entry.proposedProperty),
-      ("assumptions", toJson entry.assumptions)]
+      ("ownerQuestion", toJson entry.ownerQuestion), ("assumptions", toJson entry.assumptions)]
+  let missing := schedule.map fun planned => planned.filter fun p => !entries.any fun e =>
+    p.requirement == e.requirement && p.revision == e.revision && p.id == e.id &&
+    p.original == e.original && p.candidate == e.candidate && e.attempts.any (fun a => a.challenge == p.challenge)
   return Json.mkObj [("schema", "elenxis.mutation.v1"), ("leanVersion", toJson Lean.versionString),
+    ("missingScheduledChecks", toJson missing),
     ("sourceFile", toJson (← getFileName)),
     ("candidates", .arr records)]
 

@@ -57,6 +57,30 @@ theorem accepts_iff (owner : String) (current : Snapshot) (receipt : Receipt) (a
       receipt.accepted = true ∧ receipt.snapshot = current := by
   simp [accepts, Bool.and_eq_true, and_assoc]
 
+inductive DecisionStatus where
+  | current | stale | rejected
+  deriving DecidableEq
+
+def decisionStatus (owner : String) (current : Snapshot) (receipt : Receipt) (authenticated : Bool) :
+    DecisionStatus :=
+  if accepts owner current receipt authenticated then .current
+  else if receipt.snapshot.subject == current.subject && accepts owner receipt.snapshot receipt authenticated then .stale
+  else .rejected
+
+theorem current_iff_accepts (owner current receipt authenticated) :
+    decisionStatus owner current receipt authenticated = .current ↔
+    accepts owner current receipt authenticated = true := by
+  unfold decisionStatus
+  split <;> simp_all
+  split <;> simp_all
+
+theorem stale_iff_historical (owner current receipt authenticated) :
+    decisionStatus owner current receipt authenticated = .stale ↔
+    accepts owner current receipt authenticated = false ∧ receipt.snapshot.subject = current.subject ∧
+    accepts owner receipt.snapshot receipt authenticated = true := by
+  unfold decisionStatus
+  split <;> simp_all
+
 private def decodeDraft (coverage : String) : CommandElabM (List DraftRow) :=
   ofExcept (Json.parse coverage >>= fromJson?)
 
@@ -111,8 +135,15 @@ def checkOwner (current : Snapshot) (proof : SignatureFiles) : CommandElabM Rece
     "-s", proof.signature.toString] } (some bytes)
   unless checked.exitCode == 0 do
     throwError "Owner signature is absent, invalid, or unauthorized for {proof.owner}."
-  unless accepts proof.owner current receipt true do
-    throwError "Owner receipt does not accept the current requirements and baseline."
+  match decisionStatus proof.owner current receipt true with
+  | .current => pure ()
+  | .stale =>
+      IO.println (Json.mkObj [("ownerAcceptance", "stale"), ("owner", toJson receipt.owner),
+        ("decisionId", toJson receipt.decisionId), ("subject", toJson current.subject),
+        ("signedRevision", toJson receipt.snapshot.revision), ("currentRevision", toJson current.revision),
+        ("synthetic", toJson receipt.synthetic)]).compress
+      throwError "The signed decision covers a different snapshot. Request a decision on the current packet."
+  | .rejected => throwError "Owner receipt does not accept the current requirements and baseline."
   IO.println (Json.mkObj [("ownerAcceptance", "verified"), ("owner", toJson receipt.owner),
     ("decisionId", toJson receipt.decisionId), ("origin", toJson receipt.origin),
     ("subject", toJson current.subject), ("revision", toJson current.revision),

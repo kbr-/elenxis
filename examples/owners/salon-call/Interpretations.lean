@@ -25,7 +25,11 @@ open SpecTools.Mutation in
     origin := "competing clauses in text.md", original := ``twoNoShowReading,
     candidate := .named ``fourNoShowReading, attempts := [⟨.relation .strictlyWeaker, some ``fourIsStrictlyWeaker⟩],
     scenario := "A parent books online after two missed appointments. The first rule refuses the booking; the second allows it.",
-    proposedProperty := "Should this parent have to call after two missed appointments, or only after four?" }]
+    ownerQuestion := some {
+      sourceClause := "Mae in text.md: Two no-shows and we don't take another booking for a kids' cut.",
+      alternativeClause := "Mae in text.md: It says we stop taking online bookings for children's haircuts after four missed appointments.",
+      originalOutcome := "The parent must call the salon.", alternativeOutcome := "The parent can book online.",
+      question := "After two missed appointments, can a parent still book a child's haircut online?" } }]
   IO.println report.compress
 
 #eval IO.println <| describeBound interpretationsDiffer `SalonCall.interpretationsDiffer fun noShows =>
