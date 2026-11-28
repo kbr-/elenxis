@@ -4,18 +4,19 @@ the spec?" width="600"> </picture> </p>
 
 # Elenxis
 
-**Review what your Lean specification promises, clause by clause.**
+**Find out what a Lean specification lets through before you build against it.**
 
-Elenxis links natural-language requirements to Lean contracts, counterexamples and proofs. Use it to
-spot missing or weaker-than-intended rules and audit what the proofs establish. Lean computes the
-audit verdicts. A configured model proposes gaps that need a reading of the prose, and a person
-judges those proposals.
+A sort function that always returns `[]` produces a sorted list for every input. Lean can prove
+that. Would your sorting specification accept it? In the Elenxis example, the sortedness rule
+accepts this function on every list. Adding length preservation exposes the failure on `[0]`.
+After `lake build`, run `lake env lean fixtures/MutationReview.lean`.
+[Example source](fixtures/MutationReview.lean)
 
-## The problem
-
-A proved theorem can cover only part of a requirement, rely on impossible hypotheses, or enforce a
-rule the user never requested. An entire requirement can also be missing from the specification.
-Those gaps matter even when the proofs compile.
+Elenxis connects each requirement to its Lean statement and the evidence behind it. Use it to
+challenge a rule with a deliberately broken model, check whether its premises can hold together,
+or compare two readings of the same requirement. A configured language model can flag gaps in the
+prose. When two readings permit different behavior, a concrete case gives the person who owns the
+requirement a decision they can make.
 
 ## Examples
 
@@ -146,9 +147,12 @@ kinds of ambiguity alongside rules deliberately missed by the Lean specification
 implementation and tests. The example includes the dialogue, scoring key, measured results and
 commands to reproduce them. [Salon's first booking call](examples/owners/salon-call/README.md)
 
-The Lean example checks one concrete consequence of the two no-show limits. At two no-shows, one
-reading refuses online booking and the other allows it. [Checked
-interpretations](examples/owners/salon-call/Interpretations.lean)
+Lean proves that the four-miss rule allows every booking the two-miss rule allows, plus others.
+The report asks the owner **“After two missed appointments, can a parent still book a child's
+haircut online?”** The answer determines which rule to keep. The signed decision example shows how
+a later change to the reviewed text makes an earlier approval stale.
+[Compare the rules](examples/owners/salon-call/Interpretations.lean) ·
+[Check a signed decision](examples/owners/salon-call/README.md#a-signed-synthetic-decision)
 
 ## What Lean checks, and what the model checks
 
@@ -240,6 +244,10 @@ decision.
   hypotheses.
 - **Gaps** (`SpecTools.Gaps`, `SpecTools.GapsRun`): the four gaps between the prose and the
   statements.
+- **Mutation review** (`SpecTools.Mutation.review`) checks proposed changes and behavioral models
+  against named certificates. The report shows which claims have proofs and which remain
+  inconclusive. Supply a schedule to see which checks were skipped. [Reviewing mutations and
+  interpretations](docs/reference.md#comparing-mutations-and-interpretations)
 - **Adversarial admission** (`SpecTools.Adversarial`): `adversarial_claim` admits a theorem only
   with a witness for its hypotheses and, for each attack, a proof that a cheap wrong implementation
   (a constant, doing nothing) fails the same law.
