@@ -70,6 +70,21 @@ observation describes the scoped proposition and the certificates checked for it
 declaration has unknown trust. A ledger annotation of `accepted` records the row author's words.
 Owner approval requires a verified signature on the current snapshot.
 
+To see why the legacy verdict and applicability are separate, run
+`lake env lean fixtures/DomainAudit.lean`. The fixture's `Fiber false` has one value and
+`Fiber true` is empty. These rows ask different questions about the same theorem:
+
+| Row | Applicability question | Evidence |
+| --- | --- | --- |
+| `global` | Is there any pair of a Boolean and a value in its fiber? | Established by the pair `(false, ())`. |
+| `uniform` | Does each Boolean have a value in its fiber? | Refuted by the empty fiber at `true`. |
+| `wrong` | Does each Boolean have a value in its fiber? | Unresolved when the only certificate supplied proves existence of one pair. |
+
+The fixture also includes `impossible (x : Empty) : False`. In its `empty` row a separate
+certificate refutes the existence of an input. In its `missing` row the same existence question
+remains unresolved because the row supplies no certificate. See the [declarations and ledger
+rows](../fixtures/DomainAudit.lean).
+
 The ordinary audit marks semantic correspondence, adversarial validation and owner approval
 unassessed. Their evidence comes from the corresponding checks:
 
