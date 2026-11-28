@@ -130,27 +130,31 @@ def capture (files : Files) (bindings : List ApprovedContract) : CommandElabM Sn
 def checkOwner (current : Snapshot) (proof : SignatureFiles) : CommandElabM Receipt := do
   let bytes ← IO.FS.readFile proof.receipt
   let receipt : Receipt ← ofExcept (Json.parse bytes >>= fromJson?)
+  let ids := (← decodeDraft receipt.snapshot.coverage).map (·.source.id)
+  let emit (status : String) := do
+    let report := Json.mkObj [("schema", "elenxis.owner.v1"), ("requirements", toJson ids),
+      ("ownerAcceptance", toJson status), ("owner", toJson proof.owner),
+      ("receiptKey", toJson (toString (hash (proof.owner, bytes)))),
+      ("decisionId", toJson receipt.decisionId), ("origin", toJson receipt.origin),
+      ("subject", toJson current.subject), ("revision", toJson current.revision),
+      ("signedRevision", toJson receipt.snapshot.revision), ("currentRevision", toJson current.revision),
+      ("synthetic", toJson receipt.synthetic)]
+    IO.println (← Evidence.contextualize report (← Evidence.readManifest)).compress
   let checked ← IO.Process.output { cmd := "ssh-keygen", args := #["-Y", "verify",
     "-f", proof.allowedSigners.toString, "-I", proof.owner, "-n", "elenxis-owner-approval-v1",
     "-s", proof.signature.toString] } (some bytes)
   unless checked.exitCode == 0 do
+    emit "invalid"
     throwError "Owner signature is absent, invalid, or unauthorized for {proof.owner}."
-  let ids := (← decodeDraft receipt.snapshot.coverage).map (·.source.id)
   match decisionStatus proof.owner current receipt true with
   | .current => pure ()
   | .stale =>
-      IO.println (Json.mkObj [("schema", "elenxis.owner.v1"), ("requirements", toJson ids),
-        ("ownerAcceptance", "stale"), ("owner", toJson receipt.owner),
-        ("decisionId", toJson receipt.decisionId), ("subject", toJson current.subject),
-        ("signedRevision", toJson receipt.snapshot.revision), ("currentRevision", toJson current.revision),
-        ("synthetic", toJson receipt.synthetic)]).compress
+      emit "stale"
       throwError "The signed decision covers a different snapshot. Request a decision on the current packet."
-  | .rejected => throwError "Owner receipt does not accept the current requirements and baseline."
-  IO.println (Json.mkObj [("schema", "elenxis.owner.v1"), ("requirements", toJson ids),
-    ("ownerAcceptance", "verified"), ("owner", toJson receipt.owner),
-    ("decisionId", toJson receipt.decisionId), ("origin", toJson receipt.origin),
-    ("subject", toJson current.subject), ("revision", toJson current.revision),
-    ("synthetic", toJson receipt.synthetic)]).compress
+  | .rejected =>
+      emit "invalid"
+      throwError "Owner receipt does not accept the current requirements and baseline."
+  emit "verified"
   return receipt
 
 /-- Successful owner approval and successful definition comparison yield distinct receipts. -/

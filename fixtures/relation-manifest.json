@@ -1,0 +1,7 @@
+{
+  "project": "relation-review",
+  "requirements": [
+    {"id": "A", "clause": "Admit zero or one.", "declarations": ["RelationReview.ab"]},
+    {"id": "B", "clause": "Admit one or two.", "declarations": ["RelationReview.bc"]}
+  ]
+}

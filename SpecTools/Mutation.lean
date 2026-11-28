@@ -196,7 +196,7 @@ def review (entries : List Candidate) (schedule : Option (List ScheduledCheck) :
     (match e.candidate with | .named n => [n] | _ => []) ++ (e.attempts.flatMap fun a =>
       a.certificate.toList ++ (match a.challenge with | .distinguishes _ n => [n] | _ => []))
   let source ← SpecTools.Evidence.requirementSource requirementsFile
-  return SpecTools.Evidence.attach (← getEnv) "mutation.v1" (toJson (entries, schedule, Ledger.acceptedAxioms, source)) roots <|
+  SpecTools.Evidence.attachReport `SpecTools.Mutation.review "mutation.v1" (toJson (entries, schedule, Ledger.acceptedAxioms, source)) roots <|
     Json.mkObj [("schema", "elenxis.mutation.v1"), ("leanVersion", toJson Lean.versionString),
     ("missingScheduledChecks", toJson missing),
     ("sourceFile", toJson (← getFileName)),

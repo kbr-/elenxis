@@ -73,10 +73,9 @@ private def generatedRequirements (prose : String) : IO (List Generated.Rule) :=
   if Generated.prose (rules.map Generated.View.plain) == prose then return rules
   return []
 
-private def verifyScopes (prose : String) (rows : List Row) (facts : Facts)
+private def verifyScopes (required : List Generated.Rule) (rows : List Row) (facts : Facts)
     (checked : CheckedEvidence) :
     CommandElabM Verified := do
-  let required ← generatedRequirements prose
   if required.isEmpty then return {}
   liftTermElabM do
     unless ← FiniteGaps.requestAccessMatches do return {}
@@ -109,6 +108,11 @@ private def withVerified (facts : Facts) (rows : List Row) (verification : Verif
       !(verification.covered.contains finding.row &&
         (finding.kind == .uncovered || finding.kind == .tooWeak))
 
+def reviewInputs (rows : List Row) (prose : String) (backend : Backend) (question : Question)
+    (count : Nat) (requirements mechanicalOnly : Bool) : Json :=
+  toJson (reprStr rows, prose, reprStr backend, commandRequest backend question,
+    count, requirements, mechanicalOnly, Ledger.acceptedAxioms)
+
 /-- Print the gaps of the ledger `rows` against `prose`, asking `backend` for what Lean can't decide. -/
 def run (rows : List Row) (prose : String) (backend : Backend) (timeoutMs : Nat := 300000)
     (requirements : Bool := false) (emitEvidence : Bool := false) :
@@ -121,7 +125,8 @@ def run (rows : List Row) (prose : String) (backend : Backend) (timeoutMs : Nat 
       IO.println s!"unknown nonvacuity: {row.id}"
   let count ← configuredReadingCount
   let mechanicalOnly := (← IO.getEnv "SPEC_TOOLS_MECHANICAL_GAPS").isSome
-  let verification ← if count > 1 || mechanicalOnly then verifyScopes prose rows facts checked else pure {}
+  let rules ← if count > 1 || mechanicalOnly then generatedRequirements prose else pure []
+  let verification ← verifyScopes rules rows facts checked
   IO.println s!"Requirements check: {backend.describe}"
   let question : Question := {
     prompt := gapsPrompt prose rows facts checked, schema := proposalSchema, timeoutMs
@@ -158,7 +163,13 @@ def run (rows : List Row) (prose : String) (backend : Backend) (timeoutMs : Nat 
     let findings := kinds.flatMap fun k => (report.byKind k).map fun g => Json.mkObj [
       ("row", toJson g.row), ("kind", toJson k.name), ("reason", toJson g.why),
       ("origin", toJson (if mechanical.contains g then "mechanical" else "model"))]
-    IO.println (Json.mkObj [("schema", "elenxis.gaps.v1"), ("rows", toJson (rows.map (·.id))),
+    let inputs := toJson (reviewInputs rows prose backend question count requirements mechanicalOnly,
+      rules.map Prose.ruleJson)
+    let scopeRoots := if rules.isEmpty then [] else
+      [`Loans.Req.get, `Loans.Req.kind, `Loans.Req.vals, `Loans.rules, `Loans.refused_of, `Loans.fires, `Loans.refused]
+    IO.println (← Evidence.attachWith (← Audit.rowManifest rows) `SpecTools.Gaps.run "gaps.v1" inputs
+      (Audit.evidenceRoots rows ++ scopeRoots) <|
+      Json.mkObj [("schema", "elenxis.gaps.v1"), ("rows", toJson (rows.map (·.id))),
       ("completedReadings", toJson readings.length), ("findings", toJson findings),
       ("refusedProposals", toJson report.refused), ("checkedRefusals", toJson verification.covered),
       ("semanticCompleteness", "unassessed")]).compress

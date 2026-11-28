@@ -531,8 +531,12 @@ difference. A distinguishing input gives the owner a concrete semantic question.
 
 ### Replay and requirement views
 
-Structured audit, relation, mutation, adversarial and discrimination reports carry a fingerprint of
-their review inputs, Lean version and reachable Lean declarations. Relation, mutation and
+Structured audit, gaps, relation, mutation, adversarial and discrimination reports carry a fingerprint of
+their review inputs, Lean version, reachable declarations and the Elenxis declarations reachable
+from the producer. The gaps fingerprint includes the question, schema, backend, timeout, reading
+count, review mode and ledger. Matching inputs do not predict what a model will answer.
+Changes outside the Lean environment, including provider updates behind a model name, need separate
+provenance. Relation, mutation and
 adversarial callers can supply `requirementsFile` to include the contents of an external prose
 document. An audit binds the quoted row clauses. Discrimination binds the supplied key, findings and
 review decisions. Keep the original inputs for replay. These structural hashes detect edits in
@@ -541,14 +545,32 @@ their separate signature and snapshot checks.
 
 Run `lake exe spec-tools evidence-view ID manifest.json` on a JSON array. Each entry has a `report`
 containing a saved JSON report and an optional `current` containing the corresponding report
-regenerated from current inputs. Compare the same review across versions. Matching fingerprints
-yield `current`, differing fingerprints yield `stale`, and a missing fingerprint or replay yields
-`unknown`. The command reads saved evidence and performs no proof or signature verification itself.
+regenerated from current inputs. Use a trusted replay of the same check. A report without a replay
+or a verifiable specification identity has unknown freshness. Older fingerprints lacking a producer
+build also have unknown freshness within the same snapshot.
+
+Set `set_option specTools.evidenceManifest "specification.json"` in each review driver to supply
+the same complete manifest, even when auditing different subsets. For example:
+
+```json
+{"project":"loans","requirements":[{"id":"minors","clause":"Refuse minors.","declarations":["Loans.refuses"]}]}
+```
+
+Use a distinct project key for each project. The snapshot covers the ordered manifest, its
+declaration closure and Lean version. Changing the manifest order changes the snapshot. Reports
+without a common snapshot appear in separate groups. Within a group, arrays refer to source indices
+in that group. Stale results appear under `staleEvidence`. A saved owner verification is historical.
+Only a trusted current verifier report for the same receipt and project supplies current validity.
+The view itself runs neither the verifier nor the proof checker.
 
 The output groups formal declarations, domain checks, relation and group claims, gaps, adversarial
 and mutation findings, discrimination, obligations and owner decisions by requirement ID. Each item
 cites its source index. Adversarial claims join by a subject theorem named in an audit row. Use one
-project's reports together and inspect their provenance when comparing revisions. An empty dimension
+project manifest throughout a review. Relation audits accept an optional ledger and expected truth
+value. Inspect the association status for missing, mismatched, ambiguous or stale links. A refuted
+claim remains visible even when its expected polarity is unspecified. The defects dimension requires
+an explicit expectation, evidence against it and validated associations. Ledger membership alone
+does not establish correspondence to the prose. An empty dimension
 means no associated evidence was supplied. A stale finding remains available for inspection.
 Semantic completeness and owner agreement require independent review.
 

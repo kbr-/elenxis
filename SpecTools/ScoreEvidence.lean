@@ -102,7 +102,7 @@ private def checked (binding : FormalBinding) (proof : ProofReference) :
 private def readJson (path : String) : CommandElabM Json := do
   ofExcept (Json.parse (← IO.FS.readFile path))
 
-private def journal (keyRaw findingsRaw : Json) (reviewFile : Option ReviewFile) :
+def journal (keyRaw findingsRaw : Json) (reviewFile : Option ReviewFile) :
     CommandElabM Json := do
   let key : KeyFile ← ofExcept (fromJson? keyRaw)
   let findings : FindingsFile ← ofExcept (fromJson? findingsRaw)
@@ -136,7 +136,7 @@ private def journal (keyRaw findingsRaw : Json) (reviewFile : Option ReviewFile)
   let roots := ((bindings.getD []).flatMap fun b => [b.reference, b.candidate]) ++
     (raw.flatMap fun j => ((optionalField j "formal").toOption.join : Option ProofReference).toList.flatMap
       (fun p => [p.theoremName, p.observation]))
-  return SpecTools.Evidence.attach (← getEnv) "discrimination.v1"
+  SpecTools.Evidence.attachReport `SpecTools.Score.Evidence.journal "discrimination.v1"
     (toJson (keyRaw, findingsRaw, reviewFile, Adversarial.acceptedAxioms)) roots <|
     summary.setObjVal! "schema" "elenxis.discrimination.v1"
     |>.setObjVal! "findings" (toJson raw)

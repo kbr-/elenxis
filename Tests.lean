@@ -39,7 +39,7 @@ def testSignedDecision : IO Unit := IO.FS.withTempDir fun dir => do
     let receipts := (output.splitOn "\n").filterMap fun line =>
       (Json.parse line >>= (·.getObjValAs? String "ownerAcceptance")).toOption
     ensure ((run.exitCode == 0) == (expected == "verified")) output
-    ensure (receipts == (if expected == "rejected" then [] else [expected])) output
+    ensure (receipts == [if expected == "rejected" then "invalid" else expected]) output
     IO.FS.removeFile (dir / "receipt.json.sig")
 
 def scratch (name : String) : IO System.FilePath := do
@@ -954,6 +954,7 @@ def main : IO Unit := do
       (row.getObjValAs? String "semanticCorrespondence").toOption == some "unassessed") run.stdout
     let some gaps := records.find? (fun r => (r.getObjValAs? String "schema").toOption == some "elenxis.gaps.v1")
       | throw <| IO.userError run.stdout
+    discard <| IO.ofExcept (gaps.getObjValAs? SpecTools.Evidence.Fingerprint "fingerprint")
     ensure ((gaps.getObjValAs? Nat "completedReadings").toOption == some 0 &&
       (gaps.getObjValAs? String "semanticCompleteness").toOption == some "unassessed" &&
       (gaps.getObjVal? "findings").toOption == some (.arr #[])) run.stdout

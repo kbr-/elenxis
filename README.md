@@ -249,8 +249,9 @@ decision.
 - **Audit** (`SpecTools.Audit`): every row's verdict from its theorems' statements, axioms and
   hypotheses.
 - **Requirement evidence** (`spec-tools evidence-view ID manifest.json`) brings the saved checks
-  for one requirement together. A replay shows whether their fingerprints still match after a
-  change. Without a replay, freshness is unknown. [Manifest format](docs/reference.md#replay-and-requirement-views)
+  for one requirement together when they share a project and specification snapshot. A replay
+  detects stale evidence. The view distinguishes refuted objectives, unresolved proofs and owner
+  decisions awaiting verification. [Manifest format](docs/reference.md#replay-and-requirement-views)
 - **Gaps** (`SpecTools.Gaps`, `SpecTools.GapsRun`): the four gaps between the prose and the
   statements.
 - **Mutation review** (`SpecTools.Mutation.review`) checks proposed changes and behavioral models

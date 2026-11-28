@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: Apache-2.0
 import SpecTools.RelationAudit
 import SpecTools.RequirementView
+import SpecTools.GapsRun
 
 namespace RelationReview
 open SpecTools.RelationAudit Lean Elab Command
@@ -63,6 +64,57 @@ run_cmd do
 
 end RelationReview
 
+open Lean SpecTools SpecTools.Model in
+run_cmd do
+  let inputs (prompt model : String) := Gaps.reviewInputs [] "unchanged"
+    ⟨.codex, model, "fixture", some "medium"⟩ ⟨prompt, Json.null, 123⟩ 1 false false
+  let env ← getEnv
+  let fingerprint (p m : String) := Evidence.capture env "gaps.v1" (inputs p m) []
+  let original := fingerprint "first" "A"
+  unless Evidence.freshness original (fingerprint "second" "A") == "stale" &&
+      Evidence.freshness original (fingerprint "first" "B") == "stale" do throwError "Lost review configuration"
+
+open Lean Elab Command SpecTools SpecTools.RequirementView in
+run_cmd do
+  let audit (clause : String) := Json.mkObj [("schema", "elenxis.audit.v1"), ("rows", toJson [
+    Json.mkObj [("id", "R"), ("clause", toJson clause), ("declarations", .arr #[]), ("applicability", .arr #[]) ]])]
+  let manifest (project clause : String) : Evidence.Manifest :=
+    ⟨project, [⟨"R", clause, [``RelationReview.ab]⟩, ⟨"S", "Other", [``RelationReview.bc]⟩]⟩
+  let a ← Evidence.contextualize (audit "Original") (some (manifest "A" "Original"))
+  let subset ← Evidence.contextualize ((audit "Original").setObjVal! "rows" (.arr #[])) (some (manifest "A" "Original"))
+  let together ← ofExcept (view "R" [⟨a, none⟩, ⟨subset, none⟩])
+  unless (together.getObjValAs? String "provenance").toOption == some "identified" do throwError "{together}"
+  for other in [← Evidence.contextualize (audit "Original") (some (manifest "B" "Original")),
+      ← Evidence.contextualize (audit "Changed") (some (manifest "A" "Changed")), audit "Legacy"] do
+    let split ← ofExcept (view "R" [⟨a, none⟩, ⟨other, none⟩])
+    unless (← ofExcept (split.getObjValAs? (List Json) "groups")).length == 2 do throwError "{split}"
+  let owner := a.setObjVal! "schema" "elenxis.owner.v1" |>.setObjVal! "requirements" (toJson ["R"])
+    |>.setObjVal! "receiptKey" "same decision" |>.setObjVal! "ownerAcceptance" "verified"
+  for (replay, expected) in [(none, "unassessed"), (some owner, "verified"),
+      (some (owner.setObjVal! "receiptKey" "different"), "unassessed"),
+      (some (owner.setObjVal! "ownerAcceptance" "stale"), "stale"),
+      (some (owner.setObjVal! "ownerAcceptance" "invalid"), "invalid")] do
+    let result ← ofExcept (view "R" [⟨owner, replay⟩])
+    let value ← ofExcept <| result.getObjVal? "dimensions" >>= (·.getObjVal? "ownerApproval") >>=
+      (·.getArrVal? 0) >>= (·.getObjVal? "evidence") >>= (·.getObjValAs? String "currentValidity")
+    unless value == expected do throwError "{result}"
+
+open Lean Elab Command SpecTools SpecTools.RelationAudit in
+run_cmd do
+  let members := [("A", ``RelationReview.ab), ("B", ``RelationReview.bc), ("C", ``RelationReview.ca)]
+  let ledger : List Ledger.Row := members.map fun (id, decl) => {id, clause := id, theorems := [decl]}
+  let claim : Claim := ⟨``RelationReview.allowed, members, .total, [], [``RelationReview.noTotal]⟩
+  for (expected, defects) in [(some true, 1), (some false, 0), (none, 0)] do
+    let report ← review claim (ledger := some ledger) (expected := expected)
+    let result ← ofExcept (RequirementView.view "B" [⟨report, none⟩])
+    let dims ← ofExcept (result.getObjVal? "dimensions")
+    for (field, count) in [("refutedObjectives", 1), ("defects", defects), ("obligations", 0)] do
+      unless (← ofExcept (dims.getObjValAs? (List Json) field)).length == count do throwError "{result}"
+  let r : Evidence.Requirement := ⟨"A", "Any", [``RelationReview.ab]⟩
+  for (rows, status) in [(none, "author-supplied"), (some [], "missing"), (some [r,r], "ambiguous"),
+      (some [{r with declarations := []}], "mismatched"), (some [r], "validated")] do
+    unless association rows "A" ``RelationReview.ab == status do throwError "{status}"
+
 open Lean Elab Command SpecTools.Evidence in
 run_cmd do
   let snapshot (boundary : Nat) (wording options : String) := withoutModifyingEnv do
@@ -74,6 +126,13 @@ run_cmd do
         hints := .abbrev, safety := .safe }
     return capture (← getEnv) "fixture" (toJson ("v1", wording, options)) [subject]
   let saved ← snapshot 24 "hours before" "inclusive"
+  let build (body : Nat) := withoutModifyingEnv do
+    let n := `SpecTools.Fixture.producer
+    liftCoreM <| addDecl <| .defnDecl {
+      name := n, type := mkConst ``Nat, value := mkNatLit body,
+      levelParams := [], hints := .abbrev, safety := .safe }
+    return capture (← getEnv) "fixed label" Json.null [] n
+  unless freshness (← build 1) (← build 2) == "stale" do throwError "Producer change was missed"
   unless freshness saved (← snapshot 24 "hours before" "inclusive") == "current" do
     throwError "Replay changed fingerprint"
   for changed in [← snapshot 23 "hours before" "inclusive", ← snapshot 24 "hours after" "inclusive",
@@ -81,3 +140,15 @@ run_cmd do
     unless freshness saved changed == "stale" do throwError "Missed change at the same revision"
   unless freshness none saved == "unknown" && freshness saved none == "unknown" do
     throwError "A missing snapshot acquired a freshness verdict"
+
+set_option specTools.evidenceManifest "fixtures/relation-manifest.json" in
+open Lean SpecTools SpecTools.RelationAudit in
+run_cmd do
+  let claim : Claim := ⟨``RelationReview.allowed, [("A", ``RelationReview.ab)],
+    .uniqueOutputs, [], [``RelationReview.ambiguous]⟩
+  let old : List Ledger.Row := [{id := "A", clause := "Old wording", theorems := [``RelationReview.ab]}]
+  for (ledger, status) in [(none, "validated"), (some old, "stale")] do
+    let report ← review claim (ledger := ledger)
+    let link ← ofExcept <| report.getObjVal? "associations" >>= (·.getArrVal? 0)
+    unless (link.getObjValAs? String "status").toOption == some status do throwError "{report}"
+    discard <| ofExcept (report.getObjValAs? Evidence.Context "specification")

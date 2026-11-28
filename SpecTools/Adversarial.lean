@@ -208,7 +208,7 @@ def audit (root : Name) (semantics : List SemanticEntry) (supporting : List Supp
     let roots := covered ++ (semantics.flatMap fun e => [e.law, e.implementation] ++ e.attacks.map (·.mutant)) ++
       (supporting.flatMap fun e => [e.law, e.implementation, e.parent, e.mutant])
     let source ← Evidence.requirementSource requirementsFile
-    IO.println (Evidence.attach (← getEnv) "adversarial.v1" (toJson (root, semantics, supporting, acceptedAxioms, source))
+    IO.println (← Evidence.attachReport `SpecTools.Adversarial.audit "adversarial.v1" (toJson (root, semantics, supporting, acceptedAxioms, source))
       roots <| Json.mkObj [("schema", "elenxis.adversarial.v1"), ("root", toJson root),
       ("sourceTheorems", toJson names), ("checkedClaims", toJson (rejected ++ satisfying))]).compress
 

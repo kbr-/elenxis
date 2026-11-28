@@ -309,6 +309,20 @@ theorem ordinaryAudit_review_scope (row : Row) (facts : Facts) (checked : Checke
     evidence.ownerApproval = "unassessed" := by
   exact ⟨rfl, rfl, rfl⟩
 
+def rowManifest (rows : List Row) : CommandElabM (Option Evidence.Manifest) := do
+  let manifest ← Evidence.readManifest
+  if let some m := manifest then
+    for row in rows do
+      unless m.requirements.any (fun r => r.id == row.id && r.clause == row.clause &&
+          row.theorems.all r.declarations.contains) do
+        throwError "Evidence manifest differs from ledger row {row.id}"
+  return manifest
+
+def evidenceRoots (rows : List Row) : List Name := rows.flatMap fun row =>
+  row.theorems ++ row.witnesses ++ (row.evidence.flatMap fun b => [b.subject, b.proofName]) ++
+    (row.applicability.flatMap fun c => [c.subject] ++ c.supports ++ c.refutes ++
+      (match c.scope with | .unsupported n => [n] | _ => []))
+
 /-- Judge the ledger's rows and print each verdict with the statements and axioms behind it. Fails
 on what makes the report wrong: a repeated identifier, a named theorem that is no theorem, a written
 theorem no row claims, a source module the audit doesn't import. A row not stated, conditional or
@@ -362,11 +376,9 @@ def run (rows : List Row) (root : Name) (sourceDir : Option System.FilePath := n
     let report := Json.mkObj [("schema", "elenxis.audit.v1"), ("requirementsMode", toJson requirements),
       ("acceptedAxioms", toJson acceptedAxioms), ("issues", toJson errors),
       ("rows", toJson (rows.zipIdx.map fun (row, index) => rowEvidence row facts checked (domains.getD index #[])))]
-    let roots := rows.flatMap fun row => row.theorems ++ row.witnesses ++
-      (row.evidence.flatMap fun b => [b.subject, b.proofName]) ++ (row.applicability.flatMap fun c =>
-        [c.subject] ++ c.supports ++ c.refutes ++ (match c.scope with | .unsupported n => [n] | _ => []))
+    let roots := evidenceRoots rows
     let inputs := toJson (reprStr rows, root, sourceDir.map toString, requirements, acceptedAxioms, errors)
-    IO.println (Evidence.attach env "audit.v1" inputs roots report).compress
+    IO.println (← Evidence.attachWith (← rowManifest rows) `SpecTools.Audit.run "audit.v1" inputs roots report).compress
   IO.println s!"{rows.length} rows: {count "proved"} proved{specificationSuffix requirements (count "specified (unproved)")}, \
     {count "conditional"} conditional, \
     {count "unknown nonvacuity"} unknown nonvacuity, \
