@@ -991,8 +991,23 @@ def main : IO Unit := do
   let mutationReview := do
     let run ← IO.Process.output { cmd := "lake", args := #["env", "lean", "fixtures/MutationReview.lean"] }
     ensure (run.exitCode == 0 && run.stdout.contains "elenxis.mutation.v1") (run.stdout ++ run.stderr)
+  let relationReview := do
+    let run ← IO.Process.output { cmd := "lake", args := #["env", "lean", "fixtures/RelationReview.lean"] }
+    ensure (run.exitCode == 0 && run.stdout.contains "elenxis.relation.v1") (run.stdout ++ run.stderr)
+    let some line := (run.stdout.splitOn "\n").find? (·.startsWith "{")
+      | throw <| IO.userError "Missing relation report"
+    let report ← IO.ofExcept (Lean.Json.parse line)
+    IO.FS.withTempDir fun dir => do
+      let path := dir / "reports.json"
+      IO.FS.writeFile path (Lean.toJson [Lean.Json.mkObj [("report", report)]]).compress
+      let result ← IO.Process.output { cmd := ".lake/build/bin/spec-tools", args := #["evidence-view", "B", path.toString] }
+      ensure (result.exitCode == 0) result.stderr
+      let view ← IO.ofExcept (Lean.Json.parse result.stdout)
+      let dimensions ← IO.ofExcept (view.getObjVal? "dimensions")
+      let found ← IO.ofExcept (dimensions.getObjValAs? (List Lean.Json) "consistency")
+      ensure (found.length == 1 && (dimensions.getObjVal? "ownerApproval").toOption == some (.arr #[])) result.stdout
   let groups ← [("signed decisions", testSignedDecision), ("mutation review", mutationReview),
-      ("semantic evidence", semanticEvidence), ("domain audit", domainAudit),
+      ("semantic evidence", semanticEvidence), ("domain audit", domainAudit), ("relation review", relationReview),
       ("command adapter", testCommandAdapter), ("usage", testUsage), ("prose", testProse),
       ("owners", testOwners), ("tool preparation", testPrepareReports),
       ("paired journals", testPairedJournals), ("effect protocol", testEffectProtocol),

@@ -18,6 +18,12 @@ or compare two readings of the same requirement. A configured language model can
 prose. When two readings permit different behavior, a concrete case gives the person who owns the
 requirement a decision they can make.
 
+Can three requirements each work in pairs and still leave an input with no valid output?
+The [relation audit example](fixtures/RelationReview.lean) checks exactly that case in Lean.
+Run `lake env lean fixtures/RelationReview.lean` to see the three requirement IDs and the
+certificate that rules out a shared result. The [reference](docs/reference.md#relation-evidence)
+shows how to collect the evidence for one requirement.
+
 ## Examples
 
 ### A one-minute demo (synthetic)

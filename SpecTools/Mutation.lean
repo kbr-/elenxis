@@ -16,12 +16,14 @@ inductive Challenge where
 structure Attempt where
   challenge : Challenge
   certificate : Option Name := none
-  deriving Inhabited
+  deriving ToJson, Inhabited
 
 inductive Variant where
   | named (declaration : Name)
   | dropLeftConjunct | dropRightConjunct | reverseImplication | dropPrecondition
   | alwaysTrue | alwaysFalse
+  | toggleStrictness | raiseNatBoundary | lowerNatBoundary
+  | toggleEquality | toggleQuantifier | negatePredicate
   deriving DecidableEq, ToJson, Inhabited
 
 /-- An independently supplied review schedule pins both artifacts and the check requested. -/
@@ -42,7 +44,11 @@ private def variantTerm (original : Expr) (variant : Variant) : MetaM Expr := do
   else
     forallBoundedTelescope (← inferType original) (some 1) fun xs _ => do
       let #[x] := xs | throwError "Mutation requires a predicate over observations"
-      let body ← whnf (mkApp original x)
+      let application := mkApp original x
+      let surface := (← unfoldDefinition? application (ignoreTransparency := true)).getD application
+      let body ← match variant with
+        | .dropLeftConjunct | .dropRightConjunct | .reverseImplication | .dropPrecondition => whnf application
+        | _ => pure surface.headBeta
       unless ← isProp body do throwError "Mutation requires a proposition-valued predicate"
       let changed ← match variant with
         | .dropLeftConjunct | .dropRightConjunct => do
@@ -55,6 +61,29 @@ private def variantTerm (original : Expr) (variant : Variant) : MetaM Expr := do
           if variant matches .dropPrecondition then pure consequence else mkArrow consequence premise
         | .alwaysTrue => pure (mkConst ``True)
         | .alwaysFalse => pure (mkConst ``False)
+        | .negatePredicate => mkAppM ``Not #[body]
+        | .toggleEquality => do
+          let op ← if body.isAppOfArity ``Eq 3 then pure ``Ne
+            else if body.isAppOfArity ``Ne 3 then pure ``Eq else throwError "Expected equality or inequality"
+          mkAppM op #[body.appFn!.appArg!, body.appArg!]
+        | .toggleStrictness | .raiseNatBoundary | .lowerNatBoundary => do
+          let strict := body.isAppOfArity ``LT.lt 4
+          unless strict || body.isAppOfArity ``LE.le 4 do throwError "Expected an order comparison"
+          let lhs := body.appFn!.appArg!
+          let rhs := body.appArg!
+          if variant == .toggleStrictness then
+            mkAppM (if strict then ``LE.le else ``LT.lt) #[lhs, rhs]
+          else
+            unless ← isDefEq (← inferType rhs) (mkConst ``Nat) do throwError "Expected a Nat boundary"
+            let shifted ← mkAppM (if variant == .raiseNatBoundary then ``Nat.succ else ``Nat.pred) #[rhs]
+            pure (mkApp body.appFn! shifted)
+        | .toggleQuantifier => do
+          if let .forallE n domain inner bi := body then
+            withLocalDecl n bi domain fun y => do
+              mkAppM ``Exists #[← mkLambdaFVars #[y] (inner.instantiate1 y)]
+          else if body.isAppOfArity ``Exists 2 then
+            withLocalDeclD `y body.appFn!.appArg! fun y => mkForallFVars #[y] (mkApp body.appArg! y)
+          else throwError "Expected an outer universal or existential quantifier"
         | .named _ => unreachable!
       mkLambdaFVars xs changed
 
@@ -82,7 +111,7 @@ structure Candidate where
   proposedProperty : String := ""
   assumptions : List String := []
   ownerQuestion : Option OwnerQuestion := none
-  deriving Inhabited
+  deriving ToJson, Inhabited
 
 private def obligation (challenge : Challenge) (original candidate : Expr) : MetaM Expr := do
   let candidate ← match challenge with
@@ -134,7 +163,8 @@ private def assess (entry : Candidate) (attempt : Attempt) : MetaM Json := do
     return result "invalid" (← ex.toMessageData.toString)
 
 /-- A campaign checks the supplied candidates against the named declarations in this environment. -/
-def review (entries : List Candidate) (schedule : Option (List ScheduledCheck) := none) : CommandElabM Json := do
+def review (entries : List Candidate) (schedule : Option (List ScheduledCheck) := none)
+    (requirementsFile : Option System.FilePath := none) : CommandElabM Json := do
   let mut seen := ∅
   let mut records := #[]
   for entry in entries do
@@ -162,7 +192,12 @@ def review (entries : List Candidate) (schedule : Option (List ScheduledCheck) :
   let missing := schedule.map fun planned => planned.filter fun p => !entries.any fun e =>
     p.requirement == e.requirement && p.revision == e.revision && p.id == e.id &&
     p.original == e.original && p.candidate == e.candidate && e.attempts.any (fun a => a.challenge == p.challenge)
-  return Json.mkObj [("schema", "elenxis.mutation.v1"), ("leanVersion", toJson Lean.versionString),
+  let roots := entries.flatMap fun e => [e.original] ++
+    (match e.candidate with | .named n => [n] | _ => []) ++ (e.attempts.flatMap fun a =>
+      a.certificate.toList ++ (match a.challenge with | .distinguishes _ n => [n] | _ => []))
+  let source ← SpecTools.Evidence.requirementSource requirementsFile
+  return SpecTools.Evidence.attach (← getEnv) "mutation.v1" (toJson (entries, schedule, Ledger.acceptedAxioms, source)) roots <|
+    Json.mkObj [("schema", "elenxis.mutation.v1"), ("leanVersion", toJson Lean.versionString),
     ("missingScheduledChecks", toJson missing),
     ("sourceFile", toJson (← getFileName)),
     ("candidates", .arr records)]

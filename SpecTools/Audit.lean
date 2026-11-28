@@ -1,5 +1,6 @@
 -- SPDX-License-Identifier: Apache-2.0
 import SpecTools.Ledger
+import SpecTools.Evidence
 
 /-!
 The audit: the ledger's rows judged against the Lean environment they're run in. This layer gathers
@@ -29,7 +30,7 @@ private def scopeProposition (type : Expr) (contexts inputs : Nat) : MetaM (Opti
     let domain ← existentialClosure (xs.extract contexts xs.size)
     return some (← mkForallFVars (xs.extract 0 contexts) domain)
 
-private def inspectCertificate (name : Name) (expected : Expr) :
+def inspectCertificate (name : Name) (expected : Expr) :
     CommandElabM (Bool × Option (List Name)) := do
   unless (← getEnv).find? name matches some (.thmInfo _) do return (false, none)
   let axioms := (← liftCoreM <| collectAxioms name).toList
@@ -361,7 +362,11 @@ def run (rows : List Row) (root : Name) (sourceDir : Option System.FilePath := n
     let report := Json.mkObj [("schema", "elenxis.audit.v1"), ("requirementsMode", toJson requirements),
       ("acceptedAxioms", toJson acceptedAxioms), ("issues", toJson errors),
       ("rows", toJson (rows.zipIdx.map fun (row, index) => rowEvidence row facts checked (domains.getD index #[])))]
-    IO.println report.compress
+    let roots := rows.flatMap fun row => row.theorems ++ row.witnesses ++
+      (row.evidence.flatMap fun b => [b.subject, b.proofName]) ++ (row.applicability.flatMap fun c =>
+        [c.subject] ++ c.supports ++ c.refutes ++ (match c.scope with | .unsupported n => [n] | _ => []))
+    let inputs := toJson (reprStr rows, root, sourceDir.map toString, requirements, acceptedAxioms, errors)
+    IO.println (Evidence.attach env "audit.v1" inputs roots report).compress
   IO.println s!"{rows.length} rows: {count "proved"} proved{specificationSuffix requirements (count "specified (unproved)")}, \
     {count "conditional"} conditional, \
     {count "unknown nonvacuity"} unknown nonvacuity, \

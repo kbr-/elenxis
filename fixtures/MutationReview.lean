@@ -7,6 +7,29 @@ open SpecTools.Mutation SpecTools.Score.Evidence
 def both (n : Nat) : Prop := n < 10 ∧ n ≠ 0
 def belowTen (n : Nat) : Prop := n < 10
 def zero : Nat := 0
+def ten : Nat := 10
+def nine : Nat := 9
+def atMost (n : Nat) := n ≤ 10
+def equalTen (n : Nat) := n = 10
+def unequalTen (n : Nat) := n ≠ 10
+def allEqual (n : Nat) := ∀ k : Nat, k = n
+def someEqual (n : Nat) := ∃ k : Nat, k = n
+theorem upper : Distinguishes belowTen atMost .admitsExtra ten := by
+  simp [Distinguishes, belowTen, atMost, ten]
+theorem stricter : Distinguishes atMost belowTen .rejectsRequired ten := by
+  simp [Distinguishes, atMost, belowTen, ten]
+theorem raised : Distinguishes belowTen (fun n => n < 11) .admitsExtra ten := by
+  simp [Distinguishes, belowTen, ten]
+theorem lowered : Distinguishes belowTen (fun n => n < 9) .rejectsRequired nine := by
+  simp [Distinguishes, belowTen, nine]
+theorem unequal : Distinguishes equalTen unequalTen .rejectsRequired ten := by
+  simp [Distinguishes, equalTen, unequalTen, ten]
+theorem equal : Distinguishes unequalTen equalTen .admitsExtra ten := by
+  simp [Distinguishes, equalTen, unequalTen, ten]
+theorem notAll : ¬ allEqual zero := fun h => Nat.one_ne_zero (h 1)
+theorem anyAtZero : someEqual zero := ⟨0, rfl⟩
+theorem existsExtra : Distinguishes allEqual someEqual .admitsExtra zero := ⟨anyAtZero, notAll⟩
+theorem forallMissing : Distinguishes someEqual allEqual .rejectsRequired zero := ⟨anyAtZero, notAll⟩
 
 theorem weaker : Relation.strictlyWeaker.Holds both belowTen :=
   ⟨fun _ h => h.1, ⟨0, (by decide : 0 < 10), fun h => h.2 rfl⟩⟩
@@ -97,7 +120,19 @@ run_cmd do
       id := "true", original := ``guarded, candidate := .alwaysTrue,
       attempts := [⟨.relation .equivalent, some ``totalEquivalent⟩] },
     { base with id := "false", candidate := .alwaysFalse, attempts := [⟨.relation .incompatible, some ``emptyDisjoint⟩] }]
-  let generated ← review operators
+  let boundary (id : String) (orig : Lean.Name) (op : Variant) (dir : Direction)
+      (obs cert : Lean.Name) : Candidate :=
+    { base with id, original := orig, candidate := op, attempts := [⟨.distinguishes dir obs, some cert⟩] }
+  let generated ← review (operators ++ [
+    boundary "strict" ``belowTen .toggleStrictness .admitsExtra ``ten ``upper,
+    boundary "nonstrict" ``atMost .toggleStrictness .rejectsRequired ``ten ``stricter,
+    boundary "increment" ``belowTen .raiseNatBoundary .admitsExtra ``ten ``raised,
+    boundary "decrement" ``belowTen .lowerNatBoundary .rejectsRequired ``nine ``lowered,
+    boundary "disequality" ``equalTen .toggleEquality .rejectsRequired ``ten ``unequal,
+    boundary "equality" ``unequalTen .toggleEquality .admitsExtra ``ten ``equal,
+    boundary "negate" ``equalTen .negatePredicate .rejectsRequired ``ten ``unequal,
+    boundary "exists" ``allEqual .toggleQuantifier .admitsExtra ``zero ``existsExtra,
+    boundary "forall" ``someEqual .toggleQuantifier .rejectsRequired ``zero ``forallMissing])
   let results : Array Json ← Lean.ofExcept (generated.getObjValAs? (Array Json) "candidates")
   for r in results do
     let check ← Lean.ofExcept (r.getObjVal? "checks" >>= (·.getArrVal? 0))

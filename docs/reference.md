@@ -502,6 +502,56 @@ missing-pair count give unknown precision and recall and an unknown `unattempted
 `reviewMillis`, `ownerMillis` and `humanCost` (with `currency` and `minorUnits`) report supplied
 observations.
 
+## Relation evidence
+
+`SpecTools.RelationAudit.review` accepts an admissibility predicate, a nonempty list of (requirement
+ID, relation declaration) pairs, a scope and optional positive and negative theorem names. Every
+member constrains the same input and the same output, whose type can depend on the input. Supply the
+exact group whose compatibility matters.
+
+| Scope | Obligation |
+| --- | --- |
+| `inhabited` | Some admissible input has a shared output. |
+| `total` | Every admissible input has a shared output. This existential in Prop supplies no executable implementation. |
+| `uniqueOutputs` | Each admissible input has at most one shared output. Request explicitly when required. |
+| `missingAt x` | The named input is admissible and admits no shared output. |
+| `admitsAt x y` | The named input is admissible and the named output satisfies every member there. |
+
+A positive certificate establishes exactly the requested scope. A negative certificate proves its
+negation. Both polarities are inspected under the audit's axiom policy. The result records each
+certificate and reports established, refuted, unresolved or conflicting evidence. Totality can hold
+vacuously when the admissible domain is empty. The [regression
+example](../fixtures/RelationReview.lean) checks compatible pairs and a jointly impossible triple.
+
+Mutation campaigns can toggle an outer order comparison or equality, negate a predicate, exchange an
+outer universal and existential quantifier, or shift the right operand of a natural-number order
+comparison by one. Lowering zero yields zero. Changing order requires the target order instance on
+the operand type. A generated candidate still needs a checked certificate for each claimed
+difference. A distinguishing input gives the owner a concrete semantic question.
+
+### Replay and requirement views
+
+Structured audit, relation, mutation, adversarial and discrimination reports carry a fingerprint of
+their review inputs, Lean version and reachable Lean declarations. Relation, mutation and
+adversarial callers can supply `requirementsFile` to include the contents of an external prose
+document. An audit binds the quoted row clauses. Discrimination binds the supplied key, findings and
+review decisions. Keep the original inputs for replay. These structural hashes detect edits in
+trusted local artifacts. They provide no cryptographic authentication. Signed owner decisions use
+their separate signature and snapshot checks.
+
+Run `lake exe spec-tools evidence-view ID manifest.json` on a JSON array. Each entry has a `report`
+containing a saved JSON report and an optional `current` containing the corresponding report
+regenerated from current inputs. Compare the same review across versions. Matching fingerprints
+yield `current`, differing fingerprints yield `stale`, and a missing fingerprint or replay yields
+`unknown`. The command reads saved evidence and performs no proof or signature verification itself.
+
+The output groups formal declarations, domain checks, relation and group claims, gaps, adversarial
+and mutation findings, discrimination, obligations and owner decisions by requirement ID. Each item
+cites its source index. Adversarial claims join by a subject theorem named in an audit row. Use one
+project's reports together and inspect their provenance when comparing revisions. An empty dimension
+means no associated evidence was supplied. A stale finding remains available for inspection.
+Semantic completeness and owner agreement require independent review.
+
 ## Running
 
 ```bash

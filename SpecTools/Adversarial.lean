@@ -23,7 +23,7 @@ structure Attack where
   description : String
   mutant : Name
   refutation : Name
-  deriving Inhabited
+  deriving Inhabited, ToJson
 
 structure SemanticEntry where
   theoremName : Name
@@ -31,7 +31,7 @@ structure SemanticEntry where
   implementation : Name
   witness : Name
   attacks : List Attack
-  deriving Inhabited
+  deriving Inhabited, ToJson
 
 structure SupportingEntry where
   theoremName : Name
@@ -42,7 +42,7 @@ structure SupportingEntry where
   mutant : Name
   survival : Name
   survivingModel : String
-  deriving Inhabited
+  deriving Inhabited, ToJson
 
 def acceptedAxioms : List Name := Ledger.acceptedAxioms
 
@@ -182,7 +182,7 @@ def inventory (root : Name) : CommandElabM (Array Json) := do
       ("axioms", toJson (fact.axioms.map toString))]
 
 def audit (root : Name) (semantics : List SemanticEntry) (supporting : List SupportingEntry)
-    (emitEvidence : Bool := false) : CommandElabM Unit := do
+    (emitEvidence : Bool := false) (requirementsFile : Option System.FilePath := none) : CommandElabM Unit := do
   if semantics.isEmpty then throwError "No semantic contracts admitted"
   let claims := semantics.map (·.theoremName) ++ supporting.map (·.theoremName)
   if claims.eraseDups.length != claims.length then throwError "Duplicate theorem admission entries"
@@ -205,7 +205,11 @@ def audit (root : Name) (semantics : List SemanticEntry) (supporting : List Supp
     let satisfying := supporting.map fun entry => Json.mkObj [
       ("subject", toJson entry.theoremName), ("law", toJson entry.law), ("model", toJson entry.mutant),
       ("status", "satisfies"), ("certificate", toJson entry.survival)]
-    IO.println (Json.mkObj [("schema", "elenxis.adversarial.v1"), ("root", toJson root),
+    let roots := covered ++ (semantics.flatMap fun e => [e.law, e.implementation] ++ e.attacks.map (·.mutant)) ++
+      (supporting.flatMap fun e => [e.law, e.implementation, e.parent, e.mutant])
+    let source ← Evidence.requirementSource requirementsFile
+    IO.println (Evidence.attach (← getEnv) "adversarial.v1" (toJson (root, semantics, supporting, acceptedAxioms, source))
+      roots <| Json.mkObj [("schema", "elenxis.adversarial.v1"), ("root", toJson root),
       ("sourceTheorems", toJson names), ("checkedClaims", toJson (rejected ++ satisfying))]).compress
 
 def enforceCoverage : CommandElabM Unit := do

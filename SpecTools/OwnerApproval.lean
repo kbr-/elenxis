@@ -135,16 +135,19 @@ def checkOwner (current : Snapshot) (proof : SignatureFiles) : CommandElabM Rece
     "-s", proof.signature.toString] } (some bytes)
   unless checked.exitCode == 0 do
     throwError "Owner signature is absent, invalid, or unauthorized for {proof.owner}."
+  let ids := (← decodeDraft receipt.snapshot.coverage).map (·.source.id)
   match decisionStatus proof.owner current receipt true with
   | .current => pure ()
   | .stale =>
-      IO.println (Json.mkObj [("ownerAcceptance", "stale"), ("owner", toJson receipt.owner),
+      IO.println (Json.mkObj [("schema", "elenxis.owner.v1"), ("requirements", toJson ids),
+        ("ownerAcceptance", "stale"), ("owner", toJson receipt.owner),
         ("decisionId", toJson receipt.decisionId), ("subject", toJson current.subject),
         ("signedRevision", toJson receipt.snapshot.revision), ("currentRevision", toJson current.revision),
         ("synthetic", toJson receipt.synthetic)]).compress
       throwError "The signed decision covers a different snapshot. Request a decision on the current packet."
   | .rejected => throwError "Owner receipt does not accept the current requirements and baseline."
-  IO.println (Json.mkObj [("ownerAcceptance", "verified"), ("owner", toJson receipt.owner),
+  IO.println (Json.mkObj [("schema", "elenxis.owner.v1"), ("requirements", toJson ids),
+    ("ownerAcceptance", "verified"), ("owner", toJson receipt.owner),
     ("decisionId", toJson receipt.decisionId), ("origin", toJson receipt.origin),
     ("subject", toJson current.subject), ("revision", toJson current.revision),
     ("synthetic", toJson receipt.synthetic)]).compress

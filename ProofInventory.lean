@@ -7,6 +7,9 @@ open Lean Elab Command
 
 /-- Named release obligations that must use the same foundations as the ledger. -/
 def obligations : List Name := [
+  ``RelationAudit.missing_refutes_total,
+  ``RelationAudit.joint_total_left,
+  ``Evidence.current_iff,
   ``Ledger.proved_declarations_and_premises,
   ``Ledger.unrelated_evidence_cannot_supply_domain,
   ``Ledger.contradiction_prevents_proved,

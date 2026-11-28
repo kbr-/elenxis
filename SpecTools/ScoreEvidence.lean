@@ -35,7 +35,7 @@ structure HumanDecision where
 private structure ReviewFile where
   version : Nat
   decisions : List HumanDecision
-  deriving FromJson
+  deriving FromJson, ToJson
 
 private def agree {α : Type} (compatible : α → α → Bool) (items : List α) : Option α := do
   let first ← items.head?
@@ -133,7 +133,13 @@ private def journal (keyRaw findingsRaw : Json) (reviewFile : Option ReviewFile)
       if let some binding := finding.property.bind (fun id => formalKey[id]?) then
         if let some report ← checked binding proof then
           distinctions := distinctions.push (report.setObjVal! "evidenceId" (toJson finding.evidenceId))
-  return summary.setObjVal! "findings" (toJson raw)
+  let roots := ((bindings.getD []).flatMap fun b => [b.reference, b.candidate]) ++
+    (raw.flatMap fun j => ((optionalField j "formal").toOption.join : Option ProofReference).toList.flatMap
+      (fun p => [p.theoremName, p.observation]))
+  return SpecTools.Evidence.attach (← getEnv) "discrimination.v1"
+    (toJson (keyRaw, findingsRaw, reviewFile, Adversarial.acceptedAxioms)) roots <|
+    summary.setObjVal! "schema" "elenxis.discrimination.v1"
+    |>.setObjVal! "findings" (toJson raw)
     |>.setObjVal! "distinguished" (if distinctions.isEmpty then toJson "unknown" else .arr distinctions)
     |>.setObjVal! "humanReviewed" (if judgments.isEmpty then toJson "unknown" else toJson judgments)
 

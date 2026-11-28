@@ -9,6 +9,7 @@ import SpecTools.Targets.Python
 
 /-- The commands, each with what it does. -/
 def commands : List (String × String) := [
+  ("evidence-view", "collect evidence for one requirement: evidence-view ID MANIFEST.json"),
   ("ask", "ask one question of a backend: ask HARNESS MODEL SCHEMA-FILE PROMPT-FILE [TIMEOUT-MS]"),
   ("clauses", "extract a prose file's clauses twice and print the differences: \
     clauses HARNESS MODEL PROSE-FILE [TIMEOUT-MS]"),
@@ -1017,6 +1018,11 @@ def checkCoverageDraft (args : List String) : IO UInt32 := do
 
 def main (args : List String) : IO UInt32 := do
   match args with
+  | ["evidence-view", id, file] =>
+    let manifest ← IO.FS.readFile file
+    match Lean.Json.parse manifest >>= Lean.fromJson? >>= SpecTools.RequirementView.view id with
+    | .ok report => IO.println report.compress; return 0
+    | .error reason => IO.eprintln reason; return 1
   | "ask" :: rest => ask rest
   | "clauses" :: rest => clauses rest
   | "draft-check" :: rest => checkCoverageDraft rest
