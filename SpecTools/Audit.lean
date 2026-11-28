@@ -29,19 +29,31 @@ private def scopeProposition (type : Expr) (contexts inputs : Nat) : MetaM (Opti
     let domain ← existentialClosure (xs.extract contexts xs.size)
     return some (← mkForallFVars (xs.extract 0 contexts) domain)
 
-private def acceptedCertificate (name : Name) (expected : Expr) : CommandElabM Bool := do
-  unless (← getEnv).find? name matches some (.thmInfo _) do return false
-  let axioms ← liftCoreM <| collectAxioms name
-  unless axioms.all acceptedAxioms.contains do return false
-  liftTermElabM <| proofTypeMatches name expected
+private def inspectCertificate (name : Name) (expected : Expr) :
+    CommandElabM (Bool × Option (List Name)) := do
+  unless (← getEnv).find? name matches some (.thmInfo _) do return (false, none)
+  let axioms := (← liftCoreM <| collectAxioms name).toList
+  unless axioms.all acceptedAxioms.contains do return (false, some axioms)
+  return (← liftTermElabM <| proofTypeMatches name expected, some axioms)
+
+structure DomainObservation where
+  subject : Name
+  status : String
+  proposition : Option String := none
+  scope : Option DomainScope := none
+  certificates : Array Json := #[]
+  deriving ToJson
 
 /-- Report the exact scoped proposition alongside its evidence even on cached rows. -/
-def reportApplicability (rows : List Row) (strict : Bool) : CommandElabM (List String) := do
+def reportApplicability (rows : List Row) (strict : Bool)
+    (observe : Nat → DomainObservation → CommandElabM Unit := fun _ _ => pure ()) :
+    CommandElabM (List String) := do
   let mut issues := []
-  for row in rows do
+  for (row, index) in rows.zipIdx do
     for subject in row.theorems do
       unless row.applicability.any (·.subject == subject) do
         IO.println s!"  applicability {row.id} {subject}: unassessed"
+        observe index { subject, status := "unassessed" }
     for claim in row.applicability do
       let label := s!"applicability {row.id} {claim.subject}"
       unless row.theorems.contains claim.subject do
@@ -61,6 +73,9 @@ def reportApplicability (rows : List Row) (strict : Bool) : CommandElabM (List S
             continue
           let body ← liftTermElabM <| ppExpr obligation.value
           IO.println s!"  {label}: unsupported obligation {name} ({body})"
+          observe index {
+            subject := claim.subject, scope := some claim.scope,
+            status := "unsupported", proposition := some body.pretty }
           if strict then issues := issues ++ [s!"{label}: unsupported obligation {name}"]
           continue
       let some p := proposition
@@ -70,9 +85,13 @@ def reportApplicability (rows : List Row) (strict : Bool) : CommandElabM (List S
         | _ => claim.supports
       let mut supports := false
       let mut refutes := false
+      let mut certificates := #[]
       for (names, negative) in [(positive, false), (claim.refutes, true)] do
         for proof in names do
-          let ok ← acceptedCertificate proof (if negative then mkApp (mkConst ``Not) p else p)
+          let (ok, axioms) ← inspectCertificate proof (if negative then mkApp (mkConst ``Not) p else p)
+          certificates := certificates.push <| Json.mkObj [
+            ("name", toJson proof), ("refutes", toJson negative), ("accepted", toJson ok),
+            ("axioms", toJson axioms)]
           IO.println s!"  {label}: {if ok then "checked" else "rejected"} {proof} ({if negative then "against" else "for"})"
           if negative then refutes := refutes || ok else supports := supports || ok
       let result := domainResult supports refutes
@@ -83,6 +102,9 @@ def reportApplicability (rows : List Row) (strict : Bool) : CommandElabM (List S
         | .conflicting => "conflicting evidence"
       let statement ← liftTermElabM <| withOptions (·.setBool `pp.explicit true) (ppExpr p)
       IO.println s!"  {label}: {status} ({statement})"
+      observe index {
+        subject := claim.subject, scope := some claim.scope, status,
+        proposition := some statement.pretty, certificates }
       if result == .conflicting || (strict && result != .established) then
         issues := issues ++ [s!"{label}: {status}"]
   return issues
@@ -207,8 +229,10 @@ def checkApprovedContracts (contracts : List ApprovedContract) : CommandElabM Un
 /-- Explicit scopes replace the legacy positive-witness heuristic for the named subject.
 Other premises, axioms and structural findings still go through the original gate. -/
 def rowAuditIssues (requirements : Bool) (facts : Facts) (rows : List Row)
-    (checked : CheckedEvidence) : CommandElabM (List String) := do
-  let domainIssues ← reportApplicability rows requirements
+    (checked : CheckedEvidence)
+    (observe : Nat → DomainObservation → CommandElabM Unit := fun _ _ => pure ()) :
+    CommandElabM (List String) := do
+  let domainIssues ← reportApplicability rows requirements observe
   unless requirements do return domainIssues
   let legacy := (specificationFindings facts rows checked).filter fun finding =>
     match finding with
@@ -231,13 +255,67 @@ def readDigests (path : System.FilePath) : IO (List (String × UInt64)) := do
 def writeDigests (path : System.FilePath) (ds : List (String × UInt64)) : IO Unit :=
   IO.FS.writeFile path (digestVersion ++ "\n" ++ String.join (ds.map fun (id, d) => s!"{id} {d}\n"))
 
+private def declarationEvidence (facts : Facts) (name : Name) : Json :=
+  match facts name with
+  | none => Json.mkObj [("name", toJson name), ("formal", "unavailable"), ("trust", Json.null)]
+  | some f =>
+    let formal := match f.kind with
+      | .theoremStatement => "kernel-checked theorem"
+      | .requirement => "specified (unproved)"
+      | .notProposition => "not a proposition"
+      | .unavailableBody => "unavailable body"
+    Json.mkObj [("name", toJson name), ("formal", toJson formal), ("statement", toJson f.statement),
+      ("trust", Json.mkObj [("axioms", toJson f.axioms), ("unacceptedAxioms", toJson f.unacceptedAxioms)])]
+
+structure RowEvidence where
+  id : String
+  clause : String
+  source : String
+  legacyVerdict : String
+  declarations : List Json
+  witnesses : List Json
+  premiseEvidence : List Json
+  applicability : Array DomainObservation
+  ledgerStatus : String
+  ledgerComment : String
+  semanticCorrespondence : String := "unassessed"
+  adversarialValidation : String := "unassessed"
+  ownerApproval : String := "unassessed"
+  deriving ToJson
+
+/-- Ordinary audit inspects Lean declarations. Reviews performed by other commands have their own
+receipts and cannot be inferred from the ledger annotation or the legacy verdict. -/
+def rowEvidence (row : Row) (facts : Facts) (checked : CheckedEvidence)
+    (domains : Array DomainObservation) : RowEvidence :=
+  let annotation := match row.status with
+    | .covered => ("covered", "")
+    | .uncovered reason => ("uncovered", reason)
+    | .provisional reason => ("provisional", reason)
+    | .accepted reason => ("accepted", reason)
+  { id := row.id, clause := row.clause, source := row.source
+    legacyVerdict := (verdict facts row checked).label
+    declarations := row.theorems.map (declarationEvidence facts)
+    witnesses := row.witnesses.map (declarationEvidence facts)
+    premiseEvidence := row.evidence.map fun b => Json.mkObj [
+      ("subject", toJson b.subject), ("kind", toJson b.kind.label), ("proof", declarationEvidence facts b.proofName),
+      ("accepted", toJson (row.theorems.contains b.subject && checked b))]
+    applicability := domains, ledgerStatus := annotation.1, ledgerComment := annotation.2 }
+
+theorem ordinaryAudit_review_scope (row : Row) (facts : Facts) (checked : CheckedEvidence)
+    (domains : Array DomainObservation) :
+    let evidence := rowEvidence row facts checked domains
+    evidence.semanticCorrespondence = "unassessed" ∧ evidence.adversarialValidation = "unassessed" ∧
+    evidence.ownerApproval = "unassessed" := by
+  exact ⟨rfl, rfl, rfl⟩
+
 /-- Judge the ledger's rows and print each verdict with the statements and axioms behind it. Fails
 on what makes the report wrong: a repeated identifier, a named theorem that is no theorem, a written
 theorem no row claims, a source module the audit doesn't import. A row not stated, conditional or
 too weak fails nothing: the report exists to show it. With `digestFile`, rows whose clause and named
 statements are unchanged since the last run are listed as unchanged and not re-judged. -/
 def run (rows : List Row) (root : Name) (sourceDir : Option System.FilePath := none)
-    (digestFile : Option System.FilePath := none) (requirements : Bool := false) : CommandElabM Unit := do
+    (digestFile : Option System.FilePath := none) (requirements : Bool := false)
+    (emitEvidence : Bool := false) : CommandElabM Unit := do
   let env ← getEnv
   let (facts, checked) ← inspectRows rows requirements
   let stored ← match digestFile with
@@ -245,7 +323,10 @@ def run (rows : List Row) (root : Name) (sourceDir : Option System.FilePath := n
     | none => pure []
   let judged := toRejudge stored facts rows checked
   let mut errors : List String := (repeatedIds rows).map (s!"row {·} is listed twice")
-  errors := errors ++ (← rowAuditIssues requirements facts rows checked)
+  let observations ← IO.mkRef ({} : Std.HashMap Nat (Array DomainObservation))
+  errors := errors ++ (← rowAuditIssues requirements facts rows checked fun id obs => do
+    if emitEvidence then observations.modify fun table => table.insert id ((table.getD id #[]).push obs))
+  IO.println "Audit scope: declarations, axiom dependencies and premise evidence. Semantic correspondence, adversarial validation and owner approval: unassessed by this run."
   let mut counts : List (String × Nat) := []
   for row in rows do
     if !judged.any (·.id == row.id) then
@@ -275,6 +356,12 @@ def run (rows : List Row) (root : Name) (sourceDir : Option System.FilePath := n
     for m in ← missingModules env dir do
       errors := errors ++ [s!"the audit does not import module {m}"]
   let count (label : String) := (counts.lookup label).getD 0
+  if emitEvidence then
+    let domains ← observations.get
+    let report := Json.mkObj [("schema", "elenxis.audit.v1"), ("requirementsMode", toJson requirements),
+      ("acceptedAxioms", toJson acceptedAxioms), ("issues", toJson errors),
+      ("rows", toJson (rows.zipIdx.map fun (row, index) => rowEvidence row facts checked (domains.getD index #[])))]
+    IO.println report.compress
   IO.println s!"{rows.length} rows: {count "proved"} proved{specificationSuffix requirements (count "specified (unproved)")}, \
     {count "conditional"} conditional, \
     {count "unknown nonvacuity"} unknown nonvacuity, \

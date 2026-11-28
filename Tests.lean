@@ -910,9 +910,35 @@ def main : IO Unit := do
   -- The groups own their directories and child-process environments, so they run at once.
   -- The live runner's prohibition below is
   -- the one global, set after all of them end.
+  let semanticEvidence := do
+    let run ← IO.Process.output {
+      cmd := "lake", args := #["env", "lean", "examples/age-limit/Wrong.lean"],
+      env := #[("SPEC_TOOLS_BACKEND", some "examples/backend.json"), ("SPEC_TOOLS_MECHANICAL_GAPS", some "1")] }
+    ensure (run.exitCode == 0) (run.stdout ++ run.stderr)
+    let records := (run.stdout.splitOn "\n").filterMap (fun line => (Lean.Json.parse line).toOption)
+    let some audit := records.find? (fun r => (r.getObjValAs? String "schema").toOption == some "elenxis.audit.v1")
+      | throw <| IO.userError run.stdout
+    let row ← IO.ofExcept <| audit.getObjVal? "rows" >>= (·.getArrVal? 0)
+    ensure ((row.getObjValAs? String "legacyVerdict").toOption == some "proved" &&
+      (row.getObjValAs? String "semanticCorrespondence").toOption == some "unassessed") run.stdout
+    let some gaps := records.find? (fun r => (r.getObjValAs? String "schema").toOption == some "elenxis.gaps.v1")
+      | throw <| IO.userError run.stdout
+    ensure ((gaps.getObjValAs? Nat "completedReadings").toOption == some 0 &&
+      (gaps.getObjValAs? String "semanticCompleteness").toOption == some "unassessed" &&
+      (gaps.getObjVal? "findings").toOption == some (.arr #[])) run.stdout
   let domainAudit := do
     let run ← IO.Process.output { cmd := "lake", args := #["env", "lean", "fixtures/DomainAudit.lean"] }
     ensure (run.exitCode == 0) (run.stdout ++ run.stderr)
+    let some line := (run.stdout.splitOn "\n").find? (·.startsWith "{")
+      | throw <| IO.userError run.stdout
+    let report ← IO.ofExcept (Lean.Json.parse line)
+    ensure ((report.getObjVal? "schema").toOption == some (.str "elenxis.audit.v1")) line
+    let rows ← IO.ofExcept <| report.getObjVal? "rows" >>= Lean.Json.getArr?
+    let some legacy := rows.find? (fun r => (r.getObjVal? "id").toOption == some (.str "legacy"))
+      | throw <| IO.userError "missing legacy row in evidence report"
+    ensure ((legacy.getObjVal? "ledgerStatus").toOption == some (.str "accepted")) line
+    for dim in ["semanticCorrespondence", "adversarialValidation", "ownerApproval"] do
+      ensure ((legacy.getObjVal? dim).toOption == some (.str "unassessed")) line
     for (id, subject, status) in [("global", "behavior", "established"),
         ("uniform", "behavior", "refuted"), ("wrong", "behavior", "unresolved"),
         ("missing", "impossible", "unresolved"), ("empty", "impossible", "refuted"),
@@ -922,11 +948,17 @@ def main : IO Unit := do
         ("nested-intent", "nested", "unsupported obligation DomainAudit.nestedObligation"),
         ("joint", "joint", "refuted"), ("subtype", "nested", "refuted")] do
       ensure (run.stdout.contains s!"applicability {id} DomainAudit.{subject}: {status}") run.stdout
+      let some row := rows.find? (fun r => (r.getObjVal? "id").toOption == some (.str id))
+        | throw <| IO.userError s!"missing {id}"
+      let applicability ← IO.ofExcept <| row.getObjVal? "applicability" >>= (·.getArrVal? 0)
+      let actual ← IO.ofExcept <| applicability.getObjVal? "status" >>= Lean.Json.getStr?
+      ensure (actual == status || (actual == "unsupported" && status.startsWith "unsupported obligation")) line
     IO.FS.withTempDir fun dir => do
       let cache := dir / "digest"
       IO.FS.writeFile cache "spec-tools premise evidence v1\nlegacy 1\n"
       ensure (← SpecTools.Audit.readDigests cache).isEmpty "accepted an old premise-only digest"
-  let groups ← [("domain audit", domainAudit), ("command adapter", testCommandAdapter), ("usage", testUsage), ("prose", testProse),
+  let groups ← [("semantic evidence", semanticEvidence), ("domain audit", domainAudit),
+      ("command adapter", testCommandAdapter), ("usage", testUsage), ("prose", testProse),
       ("owners", testOwners), ("tool preparation", testPrepareReports),
       ("paired journals", testPairedJournals), ("effect protocol", testEffectProtocol),
       ("benchmark review", testBenchmarkReview),

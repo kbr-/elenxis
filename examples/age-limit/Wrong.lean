@@ -39,9 +39,10 @@ end AgeLimit
 
 example : AgeLimit.decide 16 = .approved := by decide
 
-#eval SpecTools.Audit.run AgeLimit.ledger `AgeLimit
+#eval SpecTools.Audit.run AgeLimit.ledger `AgeLimit (emitEvidence := true)
 
 -- With `SPEC_TOOLS_BACKEND` naming a backend configuration, the gaps against `loans.md` too.
 #eval show Lean.Elab.Command.CommandElabM Unit from do
   if (← IO.getEnv "SPEC_TOOLS_BACKEND").isSome then
     SpecTools.Gaps.runConfigured AgeLimit.ledger (← IO.FS.readFile "examples/age-limit/loans.md")
+      (emitEvidence := true)

@@ -93,7 +93,7 @@ run_cmd do
     (checkSupporting {supporting with mutant := ``correct} [entry])
   expectRefusal "an omitted theorem" (audit `AdversarialFixture [entry] [])
   expectRefusal "automatic coverage before a completed audit" enforceCoverage
-  audit `AdversarialFixture [entry] [supporting]
+  audit `AdversarialFixture [entry] [supporting] (emitEvidence := true)
   enforceCoverage
   let declarations ← inventory `AdversarialFixture
   unless declarations.size == 6 do

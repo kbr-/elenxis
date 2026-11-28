@@ -50,9 +50,10 @@ def rows := [
   row "no-context-uniform" ``noContextBehavior (.eachContext 1 1) [``vacuousUniform],
   row "no-context-exists" ``noContextBehavior (.someInput 1) [] [``noInput],
   row "nested-intent" ``nested (.unsupported ``nestedObligation),
-  { id := "legacy", clause := "impossibility", theorems := [``impossible] }]
+  { id := "legacy", clause := "impossibility", theorems := [``impossible],
+    status := .accepted "recorded in ledger" }]
 
-#eval SpecTools.Audit.run rows `DomainAudit
+#eval SpecTools.Audit.run rows `DomainAudit (emitEvidence := true)
 
 open Lean Elab Command in
 run_cmd

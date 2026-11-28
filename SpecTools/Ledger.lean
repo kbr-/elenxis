@@ -41,7 +41,7 @@ inductive DomainScope where
   | eachContext (contexts inputs : Nat)
   | exclusion
   | unsupported (obligation : Name)
-  deriving Repr, DecidableEq, Inhabited
+  deriving Repr, DecidableEq, Inhabited, ToJson
 
 structure DomainClaim where
   subject : Name

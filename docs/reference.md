@@ -60,6 +60,28 @@ theorem that is no theorem, a theorem under `Root` no row claims, a source modul
 With a digest file, rows whose clause, declarations and evidence results are unchanged are not
 judged again. An older digest format triggers a fresh audit.
 
+### Reading evidence by scope
+
+`#eval SpecTools.Audit.run ledger Root (emitEvidence := true)` prints one compact JSON object
+alongside the human-readable diagnostics. Select the object with schema `elenxis.audit.v1`. Its rows
+include cached entries. Read `issues` and the process exit status for audit failures. Each
+declaration carries its formal status, statement and axiom dependencies. Each applicability
+observation describes the scoped proposition and the certificates checked for it. A missing
+declaration has unknown trust. A ledger annotation of `accepted` records the row author's words.
+Owner approval requires a verified signature on the current snapshot.
+
+The ordinary audit marks semantic correspondence, adversarial validation and owner approval
+unassessed. Their evidence comes from the corresponding checks:
+
+- `Gaps.runConfigured` with `emitEvidence := true` emits `elenxis.gaps.v1` with the rows, completed
+  model readings, mechanical findings, model findings and refused proposals. Zero findings leaves
+  semantic completeness open.
+- `Adversarial.audit` with `emitEvidence := true` emits `elenxis.adversarial.v1`. Each checked model
+  has a named law, certificate and outcome. One model can satisfy a supporting law and violate its
+  parent law.
+- `OwnerApproval.check` emits separate receipts for the signed decision and the formal contract
+  comparison. Each receipt identifies the revision it covers.
+
 ## Specifying before implementing
 
 For a specification written before its implementation, opt into requirement declarations:

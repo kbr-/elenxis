@@ -111,7 +111,7 @@ private def withVerified (facts : Facts) (rows : List Row) (verification : Verif
 
 /-- Print the gaps of the ledger `rows` against `prose`, asking `backend` for what Lean can't decide. -/
 def run (rows : List Row) (prose : String) (backend : Backend) (timeoutMs : Nat := 300000)
-    (requirements : Bool := false) :
+    (requirements : Bool := false) (emitEvidence : Bool := false) :
     CommandElabM Unit := do
   let (facts, checked) ← Audit.inspectRows rows requirements
   let issues ← Audit.rowAuditIssues requirements facts rows checked
@@ -152,12 +152,22 @@ def run (rows : List Row) (prose : String) (backend : Backend) (timeoutMs : Nat 
   for e in report.refused do IO.println s!"refused as malformed: {e}"
   for row in verification.covered.reverse do IO.println s!"mechanically verified refusal: {row}"
   IO.println s!"{total} gaps, {report.refused.length} proposals refused"
+  IO.println "Semantic completeness: unassessed."
+  if emitEvidence then
+    let mechanical := verification.issues ++ decided facts rows checked
+    let findings := kinds.flatMap fun k => (report.byKind k).map fun g => Json.mkObj [
+      ("row", toJson g.row), ("kind", toJson k.name), ("reason", toJson g.why),
+      ("origin", toJson (if mechanical.contains g then "mechanical" else "model"))]
+    IO.println (Json.mkObj [("schema", "elenxis.gaps.v1"), ("rows", toJson (rows.map (·.id))),
+      ("completedReadings", toJson readings.length), ("findings", toJson findings),
+      ("refusedProposals", toJson report.refused), ("checkedRefusals", toJson verification.covered),
+      ("semanticCompleteness", "unassessed")]).compress
   IO.println usageLine
 
 /-- The same checker with its backend selected by deployment configuration. -/
 def runConfigured (rows : List Row) (prose : String) (timeoutMs : Nat := 300000)
-    (requirements : Bool := false) : CommandElabM Unit := do
-  run rows prose (← configuredBackend) timeoutMs requirements
+    (requirements : Bool := false) (emitEvidence : Bool := false) : CommandElabM Unit := do
+  run rows prose (← configuredBackend) timeoutMs requirements emitEvidence
 
 structure DraftSource where
   id : String

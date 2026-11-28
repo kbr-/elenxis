@@ -174,8 +174,8 @@ def inventory (root : Name) : CommandElabM (Array Json) := do
       ("hasHypotheses", toJson fact.hypotheses),
       ("axioms", toJson (fact.axioms.map toString))]
 
-def audit (root : Name) (semantics : List SemanticEntry) (supporting : List SupportingEntry) :
-    CommandElabM Unit := do
+def audit (root : Name) (semantics : List SemanticEntry) (supporting : List SupportingEntry)
+    (emitEvidence : Bool := false) : CommandElabM Unit := do
   if semantics.isEmpty then throwError "No semantic contracts admitted"
   let claims := semantics.map (·.theoremName) ++ supporting.map (·.theoremName)
   if claims.eraseDups.length != claims.length then throwError "Duplicate theorem admission entries"
@@ -191,6 +191,15 @@ def audit (root : Name) (semantics : List SemanticEntry) (supporting : List Supp
   modifyEnv fun env => auditedNames.modifyState env fun admitted =>
     covered.foldl (fun names name => names.insert name) admitted
   IO.println s!"Adversarial audit: {names.length} written theorems covered"
+  if emitEvidence then
+    let rejected := semantics.flatMap fun entry => entry.attacks.map fun attack => Json.mkObj [
+      ("subject", toJson entry.theoremName), ("law", toJson entry.law), ("model", toJson attack.mutant),
+      ("status", "refuted"), ("certificate", toJson attack.refutation)]
+    let satisfying := supporting.map fun entry => Json.mkObj [
+      ("subject", toJson entry.theoremName), ("law", toJson entry.law), ("model", toJson entry.mutant),
+      ("status", "satisfies"), ("certificate", toJson entry.survival)]
+    IO.println (Json.mkObj [("schema", "elenxis.adversarial.v1"), ("root", toJson root),
+      ("sourceTheorems", toJson names), ("checkedClaims", toJson (rejected ++ satisfying))]).compress
 
 def enforceCoverage : CommandElabM Unit := do
   let root := specTools.adversarial.root.get (← getOptions)
